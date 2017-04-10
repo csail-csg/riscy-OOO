@@ -1,0 +1,6 @@
+[submodule "connectal"]
+	path = connectal
+	url = https://github.com/csail-csg/connectal.git
+[submodule "fpgamake"]
+	path = fpgamake
+	url = https://github.com/csail-csg/fpgamake.git
