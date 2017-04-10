@@ -4,3 +4,15 @@
 [submodule "fpgamake"]
 	path = fpgamake
 	url = https://github.com/csail-csg/fpgamake.git
+[submodule "tools/riscv-isa-sim"]
+	path = tools/riscv-isa-sim
+	url = https://github.com/csail-csg/riscv-isa-sim.git
+[submodule "tools/riscv-fesvr"]
+	path = tools/riscv-fesvr
+	url = https://github.com/csail-csg/riscv-fesvr.git
+[submodule "tools/riscv-pk"]
+	path = tools/riscv-pk
+	url = https://github.com/riscv/riscv-pk.git
+[submodule "tools/riscv-gnu-toolchain"]
+	path = tools/riscv-gnu-toolchain
+	url = https://github.com/riscv/riscv-gnu-toolchain.git
