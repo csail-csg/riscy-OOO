@@ -16,3 +16,9 @@
 [submodule "tools/riscv-gnu-toolchain"]
 	path = tools/riscv-gnu-toolchain
 	url = https://github.com/riscv/riscv-gnu-toolchain.git
+[submodule "coherence"]
+	path = coherence
+	url = https://github.com/csail-csg/coherence.git
+[submodule "fpgautils"]
+	path = fpgautils
+	url = https://github.com/csail-csg/fpgautils.git
