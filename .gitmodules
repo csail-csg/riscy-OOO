@@ -22,3 +22,6 @@
 [submodule "fpgautils"]
 	path = fpgautils
 	url = https://github.com/csail-csg/fpgautils.git
+[submodule "tools/riscv-linux"]
+	path = tools/riscv-linux
+	url = https://github.com/csail-csg/riscv-linux.git
