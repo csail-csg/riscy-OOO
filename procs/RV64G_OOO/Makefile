@@ -1,52 +1,46 @@
-CONNECTALDIR := $(RISCV_VENDOR)/connectal
+CONNECTALDIR := $(RISCY_HOME)/connectal
 
-PROC := RV64G_OoO
+PROC := RV64G_OOO
 
 # FPGA is congested, use a slow clk...
 USER_CLK_PERIOD := 50
-
-CORE_NUM ?= 1
-DIR_PRED ?= gselect
-CHECK_DEADLOCK ?= true
-LSQ_VTAG ?= true
-SUP_ROB ?= true
-WIRE_MSHR ?= false
-TLB_SIZE ?= 32
-PERF_COUNT ?= true
 # sync fifo type can be: normal, bsv, connectal, xilinx
-SYNC_FIFO_TYPE ?= xilinx
+SYNC_FIFO_TYPE := xilinx
+# use superscalar ROB
+SUP_ROB := true
+# use virtual tag in LSQ
+LSQ_VTAG := true
+# always include perf counter
+PERF_COUNT := true
+# branch predictor can be: bht, gselect, tour
+DIR_PRED := gselect
+# 32-entry L1 TLB
+TLB_SIZE := 32
+
+# default 1 core
+CORE_NUM ?= 1
+# default check cache deadlock
+CHECK_DEADLOCK ?= true
 
 # directories
-BUILD_DIR := $(RISCV_BUILD)/procs/$(PROC).core_$(CORE_NUM).sync_$(SYNC_FIFO_TYPE).$(USER_CLK_PERIOD)ns.tlb_$(TLB_SIZE).$(DIR_PRED)
-ifeq ($(SUP_ROB),true)
-BUILD_DIR := $(BUILD_DIR).sup_rob
-endif
-ifeq ($(LSQ_VTAG),true)
-BUILD_DIR := $(BUILD_DIR).lsq_vtag
-endif
-ifeq ($(WIRE_MSHR),true)
-BUILD_DIR := $(BUILD_DIR).wire_mshr
-endif
+BUILD_DIR := $(RISCY_HOME)/procs/build/$(PROC).core_$(CORE_NUM)
 ifeq ($(CHECK_DEADLOCK),true)
 BUILD_DIR := $(BUILD_DIR).check_deadlock
-endif
-ifeq ($(PERF_COUNT),true)
-BUILD_DIR := $(BUILD_DIR).perf
 endif
 
 PROJECTDIR = $(BUILD_DIR)/$(BOARD)
 
-PROC_DIR := $(RISCV_HOME)/procs
+PROC_DIR := $(RISCY_HOME)/procs
 PROC_LIB_DIR := $(PROC_DIR)/lib
 PROC_CPP_DIR := $(PROC_DIR)/cpp
 PROC_BSV_DIR := $(PROC_DIR)/$(PROC)
 
-COHERENCE_DIR := $(RISCV_HOME)/coherence/src_new
+COHERENCE_DIR := $(RISCY_HOME)/coherence/src
 
-MULTIFPGA_DIR := $(RISCV_HOME)/multifpga
-DDR3_LIB_DIR := $(MULTIFPGA_DIR)/lib
-XILINX_IP_DIR := $(MULTIFPGA_DIR)/xilinx
-CORE_SCRIPT_DIR := $(MULTIFPGA_DIR)/core-scripts
+FPGAUTILS_DIR := $(RISCY_HOME)/fpgautils
+DDR3_LIB_DIR := $(FPGAUTILS_DIR)/lib
+XILINX_IP_DIR := $(FPGAUTILS_DIR)/xilinx
+CORE_SCRIPT_DIR := $(FPGAUTILS_DIR)/core-scripts
 
 # interfaces
 S2H_INTERFACES = ProcRequest:ProcDmaWrapper.procReq \
@@ -73,8 +67,8 @@ CONNECTALFLAGS += --bscflags=" -D USER_CLK_PERIOD=$(USER_CLK_PERIOD) "
 CONNECTALFLAGS += --bsvpath=$(DDR3_LIB_DIR) --bsvpath=$(PROC_LIB_DIR) --bsvpath=$(PROC_BSV_DIR) --bsvpath=$(COHERENCE_DIR)
 CONNECTALFLAGS += --verilog $(XILINX_IP_DIR)/reset_regs
 CONNECTALFLAGS += --cflags=" -std=c++0x "
-CONNECTALFLAGS += --clibdir=$(RISCV_TOOLS)/lib --clib=riscv --clib=fesvr
-CONNECTALFLAGS += -I$(RISCV_TOOLS)/include/spike -I$(RISCV_TOOLS)/include
+CONNECTALFLAGS += --clibdir=$(RISCY_TOOLS)/lib --clib=riscv --clib=fesvr
+CONNECTALFLAGS += -I$(RISCY_TOOLS)/include/spike -I$(RISCY_TOOLS)/include
 
 # core num
 ifeq ($(CORE_NUM),1)
@@ -135,33 +129,23 @@ CONNECTALFLAGS += --bscflags=" +RTS -K1G -RTS " --bscflags=" -steps-max-interval
 CONNECTALFLAGS += --bscflags=" -check-assert "
 # suppress "duplicate folder" and "unfolding over ... steps" warnings
 CONNECTALFLAGS += --bscflags=" -suppress-warnings S0073:G0024 "
-# something just for zynq (harmless to keep it...)
-CONNECTALFLAGS += -D USE_ACP
+# verilator flags 
 VERILATOR_DEFINES = VM_PARALLEL_BUILDS=1 VERILATOR_PROJECT_ARGS="-output-split 10000"
 
-#CONNECTALFLAGS += --bsimsource=$(PROC_LIB_DIR)/BluesimSqrt.c
 
-
-ifneq (,$(filter $(BOARD),vc707 vc707g2))
-# synthesize for vc707 or vc707g2
+ifeq ($(BOARD),vc707)
+# synthesize for vc707
 
 # ddr3
 PIN_TYPE = DDR3TopPins
 PIN_TYPE_INCLUDE = DDR3TopPins
 AUTOTOP = --interface pins:ProcDmaWrapper.pins
-CONNECTALFLAGS += --verilog $(XILINX_IP_DIR)/ddr3_bluespec/
+CONNECTALFLAGS += --verilog $(XILINX_IP_DIR)/vc707/ddr3_1GB_bluespec/
 
 # constraints
-ifeq ($(BOARD),vc707)
-CONNECTALFLAGS += -C $(XILINX_IP_DIR)/constraints/clocks.xdc \
-				  -C $(XILINX_IP_DIR)/constraints/ddr3_bluespec.xdc \
-				  -C $(PROC_DIR)/constraints/user_clocks.xdc \
-				  -C $(PROC_DIR)/constraints/no_poweropt.xdc
-else
-CONNECTALFLAGS += -C $(XILINX_IP_DIR)/constraints/ddr3_bluespec_vc707g2.xdc \
-				  -C $(PROC_DIR)/constraints/user_clocks_vc707g2.xdc \
-				  -C $(PROC_DIR)/constraints/no_poweropt.xdc
-endif
+CONNECTALFLAGS += -C $(XILINX_IP_DIR)/vc707/constraints/clocks.xdc \
+				  -C $(XILINX_IP_DIR)/vc707/constraints/ddr3_1GB_bluespec.xdc \
+				  -C $(PROC_DIR)/constraints/user_clocks.xdc
 
 # sync fifo IP
 SYNC_FIFO_XCI = $(CONNECTALDIR)/out/$(BOARD)/sync_fifo_w32_d16/sync_fifo_w32_d16.xci
@@ -181,7 +165,7 @@ CONNECTALFLAGS += --xci $(SYNC_FIFO_XCI) \
 endif
 
 
-ifneq (,$(filter $(BOARD),bluesim verilator))
+ifeq ($(BOARD),verilator)
 # simulation
 # define BSIM to use simulation version of DDR3 ctrl
 # and enable debug assertions

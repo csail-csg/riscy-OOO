@@ -7,7 +7,6 @@
 import Types::*;
 import ProcTypes::*;
 import Fifo::*;
-import BluesimSqrt::*;
 import ClientServer::*;
 import GetPut::*;
 import Divide_Riscy::*;
