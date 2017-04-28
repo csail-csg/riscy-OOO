@@ -82,24 +82,17 @@ fi
 #make install &>> $OUTPUT_FILE
 
 # Build riscv-tests
-#OUTPUT_FILE=$OUTPUT_PATH/riscv-tests.log
-#echo "Building riscv-tests... (writing output to $OUTPUT_FILE)"
-#cd $RISCV
-#mkdir build-tests
-#cd build-tests
-#../../riscv-tests/configure --prefix=$RISCV/riscv$XLEN-unknown-elf --with-xlen=$XLEN &> $OUTPUT_FILE
-## This may fail since some riscv-tests require ISA extensions
-## Also there is an issue with building 32-bit executables when gcc is
-## configured with --with-arch=<isa>
-#set +e
-#make &>> $OUTPUT_FILE
-#if [ $? -eq 0 ] ; then
-#    make install &>> $OUTPUT_FILE
-#    RISCV_TEST_FAILED=0
-#else
-#    RISCV_TEST_FAILED=1
-#fi
-#set -e
+OUTPUT_FILE=$OUTPUT_PATH/riscv-tests.log
+echo "Building riscv-tests... (writing output to $OUTPUT_FILE)"
+cd $RISCV
+mkdir build-tests
+cd build-tests
+../../riscv-tests/configure --prefix=$RISCV/riscv$XLEN-unknown-elf &> $OUTPUT_FILE
+# This may fail since some riscv-tests require ISA extensions
+# Also there is an issue with building 32-bit executables when gcc is
+# configured with --with-arch=<isa>
+make &>> $OUTPUT_FILE
+make install &>> $OUTPUT_FILE
 
 # Build riscv-fesvr
 OUTPUT_FILE=$OUTPUT_PATH/riscv-fesvr.log
@@ -133,11 +126,5 @@ make install &>> $OUTPUT_FILE
 
 cd $STARTINGDIR
 
-#if [ $RISCV_TEST_FAILED -eq 1 ] ; then
-#    echo ""
-#    echo "[WARNING] $ISA toolchain compiled successfully, but riscv-tests compilation failed."
-#    echo "If you need riscv-tests, try compiling them with a RV64G toolchain using ./build.sh"
-#else
 echo ""
 echo "$ISA toolchain and riscv-tests compiled successfully."
-#fi

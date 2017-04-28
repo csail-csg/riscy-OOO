@@ -175,13 +175,18 @@ endif
 
 include $(CONNECTALDIR)/Makefile.connectal
 
-run.%:
-	@$(MAKE) -C $(RISCV_HOME)/programs/$(PROG) --no-print-directory run PROC_BUILD_DIR=$(BUILD_DIR)/$*
-	
-clean.%:
-	rm -rf $(BUILD_DIR)/$*
-
 clean:
 	@echo "Use make clean.boardname"
 
+clean.%:
+	rm -rf $(BUILD_DIR)/$*
+
+# run tests
+TEST ?= assembly
+
+run:
+	@echo "Use make run.boardname"
+
+run.%:
+	./run_test.py -e $(BUILD_DIR)/$*/bin/ubuntu.exe -t $(TEST)
 

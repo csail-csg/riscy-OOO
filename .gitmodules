@@ -25,3 +25,6 @@
 [submodule "tools/riscv-linux"]
 	path = tools/riscv-linux
 	url = https://github.com/csail-csg/riscv-linux.git
+[submodule "tools/riscv-tests"]
+	path = tools/riscv-tests
+	url = https://github.com/csail-csg/riscv-tests.git

@@ -567,12 +567,12 @@ void ProcIndicationAssembly::to_host(uint8_t core, uint64_t v) {
             }
             // don't bother passing it to the htif
             // the only thing that goes in to_host are exit codes
-            if (v == 0) {
+            if (v == 1) {
                 fprintf(stderr, "[32;1mPASSED[0m\n");
             } else {
-                fprintf(stderr, "[31;1mFAILED %lld[0m\n", (long long) v);
+                fprintf(stderr, "[31;1mFAILED %lld[0m\n", (long long)(v >> 1));
             }
-            result = v;
+            result = v >> 1;
             done = true;
         }
         sem_post(&sem);

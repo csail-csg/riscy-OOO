@@ -41,33 +41,7 @@ void ProcIndication::ToHostHandler::handler() {
         // process msg
         if(msg_valid) {
             uint64_t v = msg.v;
-            if ((v >> 56) == 0xFF) {
-                // exit device for benchmarks
-                if(msg.core == 0) {
-                    {
-                        std::lock_guard<std::mutex> lock(proc_ind->proc_mu);
-                        if (proc_ind->error_found) {
-                            // print output_buff
-                            proc_ind->print_buff->flush_print();
-                        }
-                        uint64_t code = (v << 56) >> 56;
-                        if (code == 0) {
-                            fprintf(stderr, "[32;1mPASSED[0m\n");
-                        } else {
-                            fprintf(stderr, "[31;1mFAILED %lld[0m\n", (long long) code);
-                        }
-                        proc_ind->result = v;
-                        proc_ind->done = true;
-                    }
-                    sem_post(&(proc_ind->sem)); // notify program finish
-                    return; // exit thread
-                }
-                else {
-                    fprintf(stderr, "[ToHostHandler] recv exit code %016llx from core %d\n",
-                            (long long unsigned)v, (int)(msg.core));
-                }
-            }
-            else {
+            {
                 // normal processing of HTIF msg, need to lock htif
                 proc_ind->riscy_htif->lock();
                 if (v == 0) {
@@ -79,7 +53,7 @@ void ProcIndication::ToHostHandler::handler() {
                     proc_ind->riscy_htif->get_to_host(msg.core, v);
                 }
                 bool htif_done = false;
-                bool exit_code = 0;
+                int exit_code = 0;
                 if (proc_ind->riscy_htif->done()) {
                     htif_done = true;
                     exit_code = proc_ind->riscy_htif->exit_code();
@@ -97,6 +71,12 @@ void ProcIndication::ToHostHandler::handler() {
                             // print output_buff
                             proc_ind->print_buff->flush_print();
                         }
+                    }
+                    if(exit_code == 0) {
+                        fprintf(stderr, "[32;1mPASSED[0m\n");
+                    }
+                    else {
+                        fprintf(stderr, "[31;1mFAILED %lld[0m\n", (long long)exit_code);
                     }
                     sem_post(&(proc_ind->sem)); // notify program finish
                     return; // exit thread
