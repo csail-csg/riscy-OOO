@@ -306,7 +306,7 @@ typedef enum {
 } FpuPrecision deriving(Bits, Eq, FShow);
 typedef struct {
     FpuFunc         func;
-    RoundMode       rm;
+    RVRoundMode     rm;
     FpuPrecision    precision;
 } FpuInst deriving(Bits, Eq, FShow);
 
@@ -320,7 +320,7 @@ typedef union tagged {
    void        Other;
    } ExecFunc deriving(Bits, Eq, FShow);
 
-// Rounding Modes
+// Rounding Modes (encoding by risc-v, not general fpu)
 typedef enum {
    RNE  = 3'b000,
    RTZ  = 3'b001,
@@ -328,7 +328,7 @@ typedef enum {
    RUP  = 3'b011,
    RMM  = 3'b100,
    RDyn = 3'b111
-   } RoundMode deriving(Bits, Eq, FShow);
+   } RVRoundMode deriving(Bits, Eq, FShow);
 
 // helper functions
 function Bool isAluFunc(ExecFunc f);
