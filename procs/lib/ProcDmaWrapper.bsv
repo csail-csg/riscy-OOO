@@ -145,18 +145,6 @@ module mkProcDmaWrapper#(
             //inited <= True;
             $fdisplay(stderr, "[ProcDmaWrapper] WARNING: reset has no effect now");
         endmethod
-        //method Action stop;
-        //    $fdisplay(stderr, "[ProcDmaWrapper] ERROR: stop is not implemented");
-        //    $finish;
-        //endmethod
-        //method Action noFlying;
-        //    $fdisplay(stderr, "[ProcDmaWrapper] ERROR: noFlying is not implemented");
-        //    $finish;
-        //endmethod
-        //method Action initSharedMem(Bit#(32) refPointer, Bit#(64) memSize);
-        //    $fdisplay(stderr, "[ProcDmaWrapper] ERROR: use DDR3 now, initSharedMem is obsolete");
-        //    $finish;
-        //endmethod
     endinterface
     interface hostDmaReq = proc.hostDmaReq;
     interface deadlockReq = proc.deadlockReq;

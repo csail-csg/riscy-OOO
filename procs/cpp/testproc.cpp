@@ -47,8 +47,6 @@
 #error fesvr will not work with NDEBUG defined
 #endif
 
-#define CONNECTAL_MEMORY
-
 #define BLURT fprintf (stderr, "CPPDEBUG: %s(%s):%d\n",\
                       __func__, __FILE__, __LINE__)
 

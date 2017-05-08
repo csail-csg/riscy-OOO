@@ -515,20 +515,6 @@ module mkCore#(CoreId coreId)(Core);
         fetchStage.done_flushing();
     endrule
 
-    // [sizhuo] this debug rule blocks redirection at doCommit
-    //rule debugBackground(verbose);
-    //if (htifStall) begin
-    //    $fdisplay(stdout, "stall htif");
-    //end
-    //if (from_fetch_fifo.notEmpty) begin
-    //    $fdisplay(stdout, fshow(from_fetch_fifo.first));
-    //end
-    //if (rob.isEmpty) begin
-    //    $fdisplay(stdout, "The ROB is empty");
-    //end
-    //endrule
-
-
     // send to host msg
     rule csrfToHost;
         let ret <- csrf.csrfToHost;
@@ -836,25 +822,9 @@ module mkCore#(CoreId coreId)(Core);
             commitStage.startRenameDebug;
         endmethod
 
-        //method Action noFlying() if (axi_mem_bridge.numberFlyingOperations == 0);
-        //    noAction;
-        //endmethod
-
-        //method Action stop();
-        //    axi_mem_bridge.flushRespReqMem;
-        //    fetchStage.stop();
-        //    started <= False;
-        //endmethod
-
         method Action from_host(Bit#(64) v);
             fromHostQ.enq(v);
         endmethod
-
-    //`ifdef CONNECTAL_MEMORY
-    //    method Action initSharedMem(Bit#(32) refPointer, Addr memSize);
-    //        axi_mem_bridge.initSharedMem(refPointer, memSize);
-    //    endmethod
-    //`endif
 
         method Action perfReq(PerfLocation loc, PerfType t);
             perfReqQ.enq(ProcPerfReq {

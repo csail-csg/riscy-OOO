@@ -21,8 +21,6 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-`define CONNECTAL_MEMORY
-`define IN_ORDER // though OOO core, this macro is defined for ProcTypes.bsv
 `define rv64 True
 `define m True
 `define a True
@@ -109,7 +107,6 @@
     `define RS_MEM_SIZE 4 // match LSQ size
     `define RS_FPUMULDIV_SIZE 4 // not expecting FPU/MUL/DIV num > ROB_SIZE / 2
     // book keeping fifo sizes
-    `define BOOKKEEPING_ALU_SIZE 1 // ALU has 0 cycle latency
     `define BOOKKEEPING_MEM_SIZE 2 // TLB has 1 cycle latency
     `define BOOKKEEPING_FPUMULDIV_SIZE 4 // not expecting FPU/MUL/DIV num > ROB_SIZE / 2
     // be lazy in reservation station wake and phy reg file
