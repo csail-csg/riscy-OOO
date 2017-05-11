@@ -12,7 +12,7 @@ How to get started with this repository (tested in Ubuntu 14.04):
 
 2. Get dependencies for building the RISC-V toolchain and building using connectal.
 
-        $ sudo apt-get install autoconf automake autotools-dev curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc python-ply connectal
+        $ sudo apt-get install autoconf automake autotools-dev curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc python-ply
 
 3. Build RISC-V tools.
 `build.sh` builds the tools into `tools/RV64G`.
@@ -31,7 +31,7 @@ We use a PPA to provide a newer version of Verilator.
 
         $ sudo apt-add-repository -y ppa:jamey-hicks/connectal
         $ sudo apt-get update
-        $ sudo apt-get install verilator
+        $ sudo apt-get install verilator connectal
 
 6. Copy DDR3 IP from Bluespec installation.
 
