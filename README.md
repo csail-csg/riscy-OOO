@@ -21,7 +21,7 @@ How to get started with this repository (tested in Ubuntu 14.04):
         $ ./build.sh
         $ cd ..
 
-4. Setup environment variables for the Riscy project (`RISCY_HOME` should be the path to this risy-OOO repo).
+4. Setup environment variables for the Riscy project (`RISCY_HOME` should be the path to this riscy-OOO repo).
 
         $ source ./setup.sh
 
@@ -55,11 +55,11 @@ We use a PPA to provide a newer version of Verilator.
 
 2. Run tests in simulation
 
-        $ make run.verilator TEST=asembly
+        $ make run.verilator TEST=assembly
         $ make run.verilator TEST=benchmarks
 
 ## FPGA
-1. Build the OOO processor for FPGA (Xilinx Vivado should have been set up). BUild result is in `$RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/vc707/bin`.
+1. Build the OOO processor for FPGA (Xilinx Vivado should have been set up). Build result is in `$RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/vc707/bin`.
 
         $ cd procs/RV64G_OOO
         $ make build.vc707
