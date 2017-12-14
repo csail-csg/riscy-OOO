@@ -35,7 +35,6 @@ import FIFO::*;
 import Fifo::*;
 import Ehr::*;
 import Connectable::*;
-import ConnectalConfig::*;
 
 import Types::*;
 import ProcTypes::*;

@@ -26,7 +26,7 @@ CONNECTALDIR := $(RISCY_HOME)/connectal
 PROC := RV64G_OOO
 
 # FPGA is congested, use a slow clk...
-USER_CLK_PERIOD := 50
+USER_CLK_PERIOD := 40
 # sync fifo type can be: normal, bsv, connectal, xilinx
 SYNC_FIFO_TYPE := xilinx
 # use superscalar ROB
