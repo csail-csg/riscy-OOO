@@ -12,7 +12,7 @@ How to get started with this repository (tested in Ubuntu 14.04):
 
 2. Get dependencies for building the RISC-V toolchain and building using connectal.
 
-        $ sudo apt-get install autoconf automake autotools-dev curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc python-ply connectal
+        $ sudo apt-get install autoconf automake autotools-dev curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc python-ply
 
 3. Build RISC-V tools.
 `build.sh` builds the tools into `tools/RV64G`.
@@ -21,7 +21,7 @@ How to get started with this repository (tested in Ubuntu 14.04):
         $ ./build.sh
         $ cd ..
 
-4. Setup environment variables for the Riscy project (`RISCY_HOME` should be the path to this risy-OOO repo).
+4. Setup environment variables for the Riscy project (`RISCY_HOME` should be the path to this riscy-OOO repo).
 
         $ source ./setup.sh
 
@@ -31,7 +31,7 @@ We use a PPA to provide a newer version of Verilator.
 
         $ sudo apt-add-repository -y ppa:jamey-hicks/connectal
         $ sudo apt-get update
-        $ sudo apt-get install verilator
+        $ sudo apt-get install verilator connectal
 
 6. Copy DDR3 IP from Bluespec installation.
 
@@ -55,11 +55,11 @@ We use a PPA to provide a newer version of Verilator.
 
 2. Run tests in simulation
 
-        $ make run.verilator TEST=asembly
+        $ make run.verilator TEST=assembly
         $ make run.verilator TEST=benchmarks
 
 ## FPGA
-1. Build the OOO processor for FPGA (Xilinx Vivado should have been set up). BUild result is in `$RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/vc707/bin`.
+1. Build the OOO processor for FPGA (Xilinx Vivado should have been set up). Build result is in `$RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/vc707/bin`.
 
         $ cd procs/RV64G_OOO
         $ make build.vc707
