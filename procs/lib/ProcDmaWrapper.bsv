@@ -28,8 +28,6 @@ import ConnectalConfig::*;
 import FIFO::*;
 import GetPut::*;
 import HostInterface::*;
-import MemTypes::*;
-import Pipe::*;
 import Vector::*;
 import StmtFSM::*;
 import ProcIF::*;
