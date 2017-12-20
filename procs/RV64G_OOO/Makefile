@@ -149,7 +149,7 @@ VERILATOR_DEFINES = VM_PARALLEL_BUILDS=1 VERILATOR_PROJECT_ARGS="-output-split 1
 ifneq (,$(filter $(BOARD),vc707 awsf1))
 # synthesize for vc707 or awsf1
 
-AUTOTOP = --interface pins:DRTestWrapper.pins
+AUTOTOP = --interface pins:ProcDmaWrapper.pins
 
 # sync FIFOs
 SYNC_FIFO_XCI = $(CONNECTALDIR)/out/$(BOARD)/sync_fifo_w32_d16/sync_fifo_w32_d16.xci

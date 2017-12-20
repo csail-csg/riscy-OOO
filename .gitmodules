@@ -1,11 +1,9 @@
 [submodule "connectal"]
 	path = connectal
 	url = https://github.com/csail-csg/connectal.git
-    ignore = dirty
 [submodule "fpgamake"]
 	path = fpgamake
 	url = https://github.com/csail-csg/fpgamake.git
-    ignore = dirty
 [submodule "tools/riscv-isa-sim"]
 	path = tools/riscv-isa-sim
 	url = https://github.com/csail-csg/riscv-isa-sim.git
@@ -21,11 +19,9 @@
 [submodule "coherence"]
 	path = coherence
 	url = https://github.com/csail-csg/coherence.git
-    ignore = dirty
 [submodule "fpgautils"]
 	path = fpgautils
 	url = https://github.com/csail-csg/fpgautils.git
-    ignore = dirty
 [submodule "tools/riscv-linux"]
 	path = tools/riscv-linux
 	url = https://github.com/csail-csg/riscv-linux.git
