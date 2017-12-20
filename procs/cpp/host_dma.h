@@ -85,9 +85,6 @@ public:
         fprintf(stderr, "[ERROR] DRAM error code %d\n", (int)err);
         exit(1);
     }
-    virtual void dramStatus (const int init) {
-        fprintf(stderr, "[INFO] DRAM init = %d\n", init);
-    }
 
     void set_req_proxy(HostDmaRequestProxy *p) {
         reqProxy = p;

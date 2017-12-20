@@ -27,8 +27,6 @@ PROC := RV64G_OOO
 
 # FPGA is congested, use a slow clk...
 USER_CLK_PERIOD := 40
-# sync fifo type can be: normal, bsv, connectal, xilinx
-SYNC_FIFO_TYPE := xilinx
 # use superscalar ROB
 SUP_ROB := true
 # use virtual tag in LSQ
@@ -39,6 +37,8 @@ PERF_COUNT := true
 DIR_PRED := gselect
 # 32-entry L1 TLB
 TLB_SIZE := 32
+# dram type in simulation: VC707 or AWSF1
+SIM_DRAM_TYPE := AWSF1
 
 # default 1 core
 CORE_NUM ?= 1
@@ -61,7 +61,7 @@ PROC_BSV_DIR := $(PROC_DIR)/$(PROC)
 COHERENCE_DIR := $(RISCY_HOME)/coherence/src
 
 FPGAUTILS_DIR := $(RISCY_HOME)/fpgautils
-DDR3_LIB_DIR := $(FPGAUTILS_DIR)/lib
+FPGA_LIB_DIR := $(FPGAUTILS_DIR)/lib
 XILINX_IP_DIR := $(FPGAUTILS_DIR)/xilinx
 CORE_SCRIPT_DIR := $(FPGAUTILS_DIR)/core-scripts
 
@@ -87,7 +87,7 @@ CPPFILES = $(PROC_CPP_DIR)/testproc.cpp \
 
 CONNECTALFLAGS += -D IMPORT_HOSTIF -D XILINX_SYS_CLK --nocache -v
 CONNECTALFLAGS += --bscflags=" -D USER_CLK_PERIOD=$(USER_CLK_PERIOD) "
-CONNECTALFLAGS += --bsvpath=$(DDR3_LIB_DIR) --bsvpath=$(PROC_LIB_DIR) --bsvpath=$(PROC_BSV_DIR) --bsvpath=$(COHERENCE_DIR)
+CONNECTALFLAGS += --bsvpath=$(FPGA_LIB_DIR) --bsvpath=$(PROC_LIB_DIR) --bsvpath=$(PROC_BSV_DIR) --bsvpath=$(COHERENCE_DIR)
 CONNECTALFLAGS += --verilog $(XILINX_IP_DIR)/reset_regs
 CONNECTALFLAGS += --cflags=" -std=c++0x "
 CONNECTALFLAGS += --clibdir=$(RISCY_TOOLS)/lib --clib=riscv --clib=fesvr
@@ -116,16 +116,8 @@ ifeq ($(PERF_COUNT),true)
 CONNECTALFLAGS += --bscflags=" -D PERF_COUNT "
 endif
 
-# sync fifo type
-ifeq ($(SYNC_FIFO_TYPE),bsv)
-CONNECTALFLAGS += --bscflags " -D USE_BSV_BRAM_SYNC_FIFO "
-endif
-ifeq ($(SYNC_FIFO_TYPE),connectal)
-CONNECTALFLAGS += --bscflags " -D USE_CONNECTAL_BRAM_SYNC_FIFO "
-endif
-ifeq ($(SYNC_FIFO_TYPE),xilinx)
+# always use xilinx sync fifo
 CONNECTALFLAGS += --bscflags " -D USE_XILINX_SYNC_FIFO "
-endif
 
 # use superscalar ROB
 ifeq ($(SUP_ROB),true)
@@ -137,10 +129,8 @@ ifeq ($(LSQ_VTAG),true)
 CONNECTALFLAGS += --bscflags=" -D LSQ_VTAG "
 endif
 
-# use wire-based MSHR (otherwise use EHR-based MSHR)
-ifeq ($(WIRE_MSHR),true)
-CONNECTALFLAGS += --bscflags=" -D UNSAFE_L1_CRQ_MSHR -D UNSAFE_L1_PRQ_MSHR -D UNSAFE_LL_CRQ_MSHR "
-endif
+# DO NOT use wire-based MSHR; it does not work
+#CONNECTALFLAGS += --bscflags=" -D UNSAFE_L1_CRQ_MSHR -D UNSAFE_L1_PRQ_MSHR -D UNSAFE_LL_CRQ_MSHR "
 
 # check deadlock
 ifeq ($(CHECK_DEADLOCK),true)
@@ -156,23 +146,16 @@ CONNECTALFLAGS += --bscflags=" -suppress-warnings S0073:G0024 "
 VERILATOR_DEFINES = VM_PARALLEL_BUILDS=1 VERILATOR_PROJECT_ARGS="-output-split 10000"
 
 
-ifeq ($(BOARD),vc707)
-# synthesize for vc707
+ifneq (,$(filter $(BOARD),vc707 awsf1))
+# synthesize for vc707 or awsf1
 
-# ddr3
-PIN_TYPE = DDR3TopPins
-PIN_TYPE_INCLUDE = DDR3TopPins
-AUTOTOP = --interface pins:ProcDmaWrapper.pins
-CONNECTALFLAGS += --verilog $(XILINX_IP_DIR)/vc707/ddr3_1GB_bluespec/
+AUTOTOP = --interface pins:DRTestWrapper.pins
 
-# constraints
-CONNECTALFLAGS += -C $(XILINX_IP_DIR)/vc707/constraints/clocks.xdc \
-				  -C $(XILINX_IP_DIR)/vc707/constraints/ddr3_1GB_bluespec.xdc \
-				  -C $(PROC_DIR)/constraints/user_clocks.xdc
-
-# sync fifo IP
+# sync FIFOs
 SYNC_FIFO_XCI = $(CONNECTALDIR)/out/$(BOARD)/sync_fifo_w32_d16/sync_fifo_w32_d16.xci
 SYNC_BRAM_FIFO_XCI = $(CONNECTALDIR)/out/$(BOARD)/sync_bram_fifo_w36_d512/sync_bram_fifo_w36_d512.xci
+
+CONNECTALFLAGS += --xci $(SYNC_FIFO_XCI) --xci $(SYNC_BRAM_FIFO_XCI)
 
 prebuild:: $(SYNC_FIFO_XCI) $(SYNC_BRAM_FIFO_XCI)
 
@@ -182,17 +165,35 @@ $(SYNC_FIFO_XCI): $(CORE_SCRIPT_DIR)/synth_sync_fifo.tcl
 $(SYNC_BRAM_FIFO_XCI): $(CORE_SCRIPT_DIR)/synth_sync_bram_fifo.tcl
 	(cd $(PROJECTDIR); vivado -mode batch -source $^)
 
-CONNECTALFLAGS += --xci $(SYNC_FIFO_XCI) \
-				  --xci $(SYNC_BRAM_FIFO_XCI)
-
+# AWS needs to know sync fifo is used
+ifeq ($(BOARD),awsf1)
+CONNECTALFLAGS += -D AWSF1_SYNC_FIFO
 endif
 
+# VC707 needs some more clocking constraints
+ifeq ($(BOARD),vc707)
+CONNECTALFLAGS += -C $(XILINX_IP_DIR)/vc707/constraints/clocks.xdc
+endif
 
-ifeq ($(BOARD),verilator)
+# DRAM
+ifeq ($(BOARD),vc707)
+PIN_TYPE = DDR3_1GB_Pins
+PIN_TYPE_INCLUDE = DDR3Common
+CONNECTALFLAGS += --bscflags " -D USE_VC707_DRAM " \
+				  --verilog $(XILINX_IP_DIR)/vc707/ddr3_1GB_bluespec/ \
+				  -C $(XILINX_IP_DIR)/vc707/constraints/ddr3_1GB_bluespec.xdc
+else
+PIN_TYPE = AWSDramPins
+PIN_TYPE_INCLUDE = AWSDramCommon
+CONNECTALFLAGS += -D AWSF1_DDR_A
+CONNECTALFLAGS += --bscflags " -D USE_AWSF1_DRAM "
+endif
+
+else
 # simulation
-# define BSIM to use simulation version of DDR3 ctrl
-# and enable debug assertions
-CONNECTALFLAGS += --bscflags " -D BSIM " --cflags " -D BSIM "
+# define BSIM to use simulation version of DRAM and enable assert
+CONNECTALFLAGS += --bscflags " -D BSIM " --cflags " -D BSIM " \
+				  --bscflags " -D USE_$(SIM_DRAM_TYPE)_DRAM "
 
 endif
 

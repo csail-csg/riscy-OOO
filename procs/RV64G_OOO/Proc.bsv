@@ -49,8 +49,8 @@ interface Proc;
     interface HostDmaRequest hostDmaReq;
     method ActionValue#(HostDmaRdData) rdDataToHost;
     method Action wrDoneToHost;
-    // LLC ifc to DDR3
-    interface LLCMemFifoClient toDDR3;
+    // LLC ifc to Dram
+    interface LLCMemFifoClient toDram;
     // detect deadlock request & indication inverse, under portal clock domain
     interface DeadlockRequest deadlockReq;
     interface DeadlockIndInv deadlockIndInv;
@@ -123,7 +123,7 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
     interface hostDmaReq = host.reqFromHost;
     method rdDataToHost = host.rdDataToHost;
     method wrDoneToHost = host.wrDoneToHost;
-    interface toDDR3 = llc.to_mem;
+    interface toDram = llc.to_mem;
     interface deadlockReq = deadlock.req;
     interface deadlockIndInv = deadlock.indInv;
     interface renameDebugIndInv = renameDebug.indInv;

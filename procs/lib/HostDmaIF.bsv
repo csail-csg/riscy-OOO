@@ -40,5 +40,4 @@ interface HostDmaIndication;
     method Action wrDone;
     // FPGA DRAM status
     method Action dramErr(Bit#(8) err);
-    method Action dramStatus(Bool init);
 endinterface

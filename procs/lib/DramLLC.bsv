@@ -30,23 +30,22 @@ import FShow::*;
 import Types::*;
 import CacheUtils::*;
 import CCTypes::*;
-import DDR3Wrapper::*;
-import DDR3Common::*;
+import DramCommon::*;
 import LLCache::*;
 
-module mkDDR3LLC#(
-    DDR3User ddr3,
+module mkDramLLC#(
+    DramUser#(dramReadNum, dramWriteNum, dramSimDelay, dramErrT) dram,
     MemFifoClient#(idT, childT) llc,
     Integer maxReadNum, Bool useBramFifo
 )(Empty) provisos(
     Alias#(idT, LdMemRqId#(LLCRqMshrIdx)), // LLC Ld mem req ID
-    Alias#(childT, void), // single LLC as child of DDR3
-    Add#(SizeOf#(Line), 0, DDR3UserDataSz) // make sure Line sz = DDR3 data sz
+    Alias#(childT, void), // single LLC as child of DRAM
+    Add#(SizeOf#(Line), 0, DramUserDataSz) // make sure Line sz = Dram data sz
 );
     Bool verbose = True;
 
-    function DDR3UserAddr getDDR3AddrFromLLC(Addr a);
-        return truncate(a >> valueof(TLog#(TDiv#(DDR3UserDataSz, 8))));
+    function DramUserAddr getDramAddrFromLLC(Addr a);
+        return truncate(a >> valueof(TLog#(DramUserBESz)));
     endfunction
 
     FIFO#(Tuple2#(idT, childT)) pendRdQ = ?;
@@ -61,28 +60,28 @@ module mkDDR3LLC#(
         llc.toM.deq;
         case(llc.toM.first) matches
             tagged Ld .ld: begin
-                let ddr3Req = DDR3UserReq {
-                    addr: getDDR3AddrFromLLC(ld.addr),
+                let dramReq = DramUserReq {
+                    addr: getDramAddrFromLLC(ld.addr),
                     data: ?,
                     wrBE: 0
                 };
-                ddr3.req(ddr3Req);
+                dram.req(dramReq);
                 pendRdQ.enq(tuple2(ld.id, ld.child));
                 if(verbose) begin
-                    $display("  [DDR3LLC doReq] Ld: ", fshow(ld), " ; ", fshow(ddr3Req));
+                    $display("  [DramLLC doReq] Ld: ", fshow(ld), " ; ", fshow(dramReq));
                 end
             end
             tagged Wb .wb: begin
-                let ddr3Req = DDR3UserReq {
-                    addr: getDDR3AddrFromLLC(wb.addr),
+                let dramReq = DramUserReq {
+                    addr: getDramAddrFromLLC(wb.addr),
                     data: pack(wb.data),
                     wrBE: pack(wb.byteEn)
                 };
-                ddr3.req(ddr3Req);
+                dram.req(dramReq);
                 if(verbose) begin
-                    $display("  [DDR3LLC doReq] St: ", fshow(wb), " ; ", fshow(ddr3Req));
+                    $display("  [DramLLC doReq] St: ", fshow(wb), " ; ", fshow(dramReq));
                 end
-                doAssert(ddr3Req.wrBE != 0, "St req cannot have all 0 BE");
+                doAssert(dramReq.wrBE != 0, "St req cannot have all 0 BE");
             end
             default: begin
                 doAssert(False, "unknown LLC req");
@@ -91,7 +90,7 @@ module mkDDR3LLC#(
     endrule
 
     rule doLdResp;
-        let data <- ddr3.rdResp;
+        let data <- dram.rdResp;
         let {id, child} <- toGet(pendRdQ).get;
         MemRsMsg#(idT, childT) resp = MemRsMsg {
             data: unpack(data),
@@ -100,7 +99,7 @@ module mkDDR3LLC#(
         };
         llc.rsFromM.enq(resp);
         if(verbose) begin
-            $display("  [DDR3LLC doLdResp] ", fshow(resp));
+            $display("  [DramLLC doLdResp] ", fshow(resp));
         end
     endrule
 endmodule

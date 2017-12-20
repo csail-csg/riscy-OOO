@@ -119,7 +119,7 @@
 `endif
 
 // common settings
-`define DDR3LLC_MAX_READS 8 // match LLC MSHR size
+`define DRAMLLC_MAX_READS 8 // match LLC MSHR size
 `define LOG_DEADLOCK_CYCLES 26 // 64M cycles for deadlock detection
 
 `define PHYS_REG_COUNT TAdd#(64,`ROB_SIZE)

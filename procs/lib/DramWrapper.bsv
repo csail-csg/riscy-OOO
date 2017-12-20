@@ -21,18 +21,44 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+
 import DDR3Common::*;
 import DDR3Controller::*;
-import DefaultValue::*;
+import AWSDramCommon::*;
+import AWSDramController::*;
 
+// VC707 1GB DDR3 instance
 typedef 128 DDR3MaxReadNum;
 typedef 10 DDR3SimDelay;
 
-typedef DDR3_1GB_User#(DDR3MaxReadNum, DDR3SimDelay) DDR3User;
-typedef DDR3_1GB_Controller#(DDR3MaxReadNum, DDR3SimDelay) DDR3Wrapper;
+typedef DDR3_1GB_User#(DDR3MaxReadNum, DDR3SimDelay) DDR3UserWrapper;
+typedef DDR3_1GB_Full#(DDR3MaxReadNum, DDR3SimDelay) DDR3FullWrapper;
 
 (* synthesize *)
-module mkDDR3Wrapper#(Clock sys_clk, Reset sys_rst)(DDR3Wrapper);
-    let m <- mkDDR3_1GB_Controller(sys_clk, sys_rst, defaultValue);
+module mkDDR3Wrapper#(Clock sys_clk, Reset sys_rst)(DDR3FullWrapper);
+    let m <- mkDDR3_1GB_Controller(sys_clk, sys_rst, True);
+    return m;
+endmodule
+
+// AWS DRAM instance
+typedef 128 AWSDramMaxReadNum;
+typedef 16 AWSDramMaxWriteNum;
+typedef 10 AWSDramSimDelay;
+
+typedef AWSDramUser#(
+    AWSDramMaxReadNum,
+    AWSDramMaxWriteNum,
+    AWSDramSimDelay
+) AWSDramUserWrapper;
+
+typedef AWSDramFull#(
+    AWSDramMaxReadNum,
+    AWSDramMaxWriteNum,
+    AWSDramSimDelay
+) AWSDramFullWrapper;
+
+(* synthesize *)
+module mkAWSDramWrapper#(Clock dramAxiClk, Reset dramAxiRst)(AWSDramFullWrapper);
+    let m <- mkAWSDramController(dramAxiClk, dramAxiRst, True);
     return m;
 endmodule

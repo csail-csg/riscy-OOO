@@ -70,7 +70,7 @@ typedef Bit#(TLog#(SBSize)) SBIndex;
 typedef `LDSTQ_SIZE LdStQSize;
 typedef Bit#(TLog#(LdStQSize)) LdStQTag;
 
-typedef `DDR3LLC_MAX_READS DDR3LLCMaxReads;
+typedef `DRAMLLC_MAX_READS DramLLCMaxReads;
 
 typedef Bit#(`LOG_DEADLOCK_CYCLES) DeadlockTimer;
 

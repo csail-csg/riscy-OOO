@@ -42,19 +42,33 @@ import RenameDebugSync::*;
 import SyncFifo::*;
 
 // DRAM stuff
-import DDR3Wrapper::*;
+import DramCommon::*;
 import DDR3Common::*;
-import DDR3TopPins::*;
+import AWSDramCommon::*;
+import DramWrapper::*;
 import UserClkRst::*;
-import DDR3LLC::*;
+import DramLLC::*;
 import HostDmaLLC::*;
+
+`ifdef USE_VC707_DRAM
+typedef DDR3Err DramErr;
+typedef DDR3UserWrapper DramUserWrapper;
+typedef DDR3FullWrapper DramFullWrapper;
+typedef DDR3_1GB_Pins DramPins;
+`endif
+`ifdef USE_AWSF1_DRAM
+typedef AWSDramErr DramErr;
+typedef AWSDramUserWrapper DramUserWrapper;
+typedef AWSDramFullWrapper DramFullWrapper;
+typedef AWSDramPins DramPins;
+`endif
 
 interface ProcDmaWrapper;
     interface ProcRequest procReq;
     interface HostDmaRequest hostDmaReq;
     interface DeadlockRequest deadlockReq;
 `ifndef BSIM
-    interface DDR3TopPins pins;
+    interface DramPins pins;
 `endif
 endinterface
 
@@ -81,28 +95,26 @@ module mkProcDmaWrapper#(
 `endif
 
     // instantiate DDR3
+`ifdef USE_VC707_DRAM
     Clock sys_clk = host.tsys_clk_200mhz_buf;
     Reset sys_rst_n <- mkAsyncResetFromCR(4, sys_clk);
-    DDR3Wrapper ddr3Ifc <- mkDDR3Wrapper(sys_clk, sys_rst_n, clocked_by userClk, reset_by userRst);
+    DramFullWrapper dram <- mkDDR3Wrapper(
+        sys_clk, sys_rst_n, clocked_by userClk, reset_by userRst
+    );
+`endif
+`ifdef USE_AWSF1_DRAM
+    DramFullWrapper dram <- mkAWSDramWrapper(
+        portalClk, portalRst, clocked_by userClk, reset_by userRst
+    );
+`endif
 
     // DRAM controller error
-    SyncFIFOIfc#(DDR3Err) dramErrQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
-    mkConnection(toPut(dramErrQ).put, ddr3Ifc.user.err);
+    SyncFIFOIfc#(DramErr) dramErrQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
+    mkConnection(toPut(dramErrQ).put, dram.user.err);
     rule doDramErr;
-        DDR3Err e <- toGet(dramErrQ).get;
+        DramErr e <- toGet(dramErrQ).get;
         hostDmaInd.dramErr(zeroExtend(pack(e)));
     endrule
-
-    // DRAM initialized bit
-    //Reg#(Bool) inited <- mkReg(False); // cannot send before connectal is inited
-    //Reg#(Bool) lastDDR3Status <- mkReg(False);
-    //rule doDramStatus(inited);
-    //    Bool ddr3_init = ddr3Ifc.user.initDone;
-    //    if(ddr3_init != lastDDR3Status) begin
-    //        lastDDR3Status <= ddr3_init;
-    //        hostDmaInd.dramStatus(ddr3_init);
-    //    end
-    //endrule
 
     // instantiate processor
     let proc <- mkProc(portalClk, portalRst, clocked_by userClk, reset_by userRst);
@@ -121,8 +133,8 @@ module mkProcDmaWrapper#(
     endrule
 
     // connect to DDR3
-    mkDDR3LLC(
-        ddr3Ifc.user, proc.toDDR3, valueof(DDR3LLCMaxReads), False,
+    mkDramLLC(
+        dram.user, proc.toDram, valueof(DramLLCMaxReads), False,
         clocked_by userClk, reset_by userRst
     );
     
@@ -147,8 +159,6 @@ module mkProcDmaWrapper#(
     interface hostDmaReq = proc.hostDmaReq;
     interface deadlockReq = proc.deadlockReq;
 `ifndef BSIM
-    interface DDR3TopPins pins;
-        interface ddr3 = ddr3Ifc.ddr3;
-    endinterface
+    interface pins = dram.pins;
 `endif
 endmodule
