@@ -70,10 +70,19 @@ We are using Xilinx Vivado 2015.4 on Ubuntu 14.04.
     The build result will be in `$RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/vc707/bin`.
     
 2. Boot Linux on FPGA.
+Since VC707 board only has 1GB DRAM, we boot Linux with 1GB memory (`--mem-size 1024`).
 
         $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/vc707/bin/ubuntu.exe --just-run --mem-size 1024 -- +ramdisk=/path/to/disk/image $RISCY_TOOLS/bin/bbl $RISCY_HOME/tools/riscv-linux/vmliux
  
      Hit `ctrl-c` when you want to exit.
+     
+     The processor detects potential deadlock by checking if a user level instruction has been executed during a period of time.
+     This will output a lot of "deadlock" warnings when the processor is booting linux or idling in shell.
+     To avoid such warnings, we can use the `--deadlock-check-after` option as follows.
+     
+         $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/vc707/bin/ubuntu.exe --just-run --mem-size 1024 --deadlock-check-after 1000000000000 -- +ramdisk=/path/to/disk/image $RISCY_TOOLS/bin/bbl $RISCY_HOME/tools/riscv-linux/vmliux
+      
+      This makes the processor only start checking deadlock after committing a trillion instructions.
   
 ## AWS F1 FPGA
 We compile the design on a C4 (c4.4xlarge) machine which runs the FPGA Developer AMI provided by AWS.
@@ -136,9 +145,10 @@ We finish the compilation by building the host software part of the design.
         $ sudo fpga-load-local-image -S 0 -I agfi-yyy
 
 3. Run the design to boot Linux.
+This is pretty much the same as running on VC707.
+Since F1 has much larger DRAM, we can boot Linux with 2GB memory.
+(Linux is configured as embedded, so it can at most support 2GB memory.)
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/awsf1/bin/ubuntu.exe --just-run --mem-size 1024 -- +ramdisk=/path/to/disk/image $RISCY_TOOLS/bin/bbl $RISCY_HOME/tools/riscv-linux/vmliux
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/awsf1/bin/ubuntu.exe --just-run --mem-size 2048 --deadlock-check-after 1000000000000 -- +ramdisk=/path/to/disk/image $RISCY_TOOLS/bin/bbl $RISCY_HOME/tools/riscv-linux/vmliux
 
-    Hit `ctrl-c` when you want to exit.
-
-It should be noted that we need to program the FPGA before each run of the design.
+    It should be noted that we need to program the FPGA before each run of the design (even if the design does not change).
