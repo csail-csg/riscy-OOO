@@ -31,7 +31,7 @@
 #include <stddef.h>
 #include <poll.h>
 #include "htif_riscy.h"
-#include "encoding.h"
+#include "spike/encoding.h"
 
 htif_riscy_t::htif_riscy_t(const std::vector<std::string>& args, uint32_t _core_num) :
     htif_t(args),
