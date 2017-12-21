@@ -84,7 +84,9 @@ It should be noted that the build of RISC-V tools should be done in the F1 machi
 This is because the design (the host software part) will use shared libraries built from the RISC-V tools when it is being run on the FPGA.
 (We can also build the RISC-V tools in another Ubuntu machine with same OS version as F1, and then copy the libraries `$RISCY_TOOLS/lib` and headers `$RISCY_TOOLS/include` to AWS.)
 
-`sudo apt-get install verilator connectal` can be skipped, because AWS has provided ways to program the FPGA and  it is unlikely that we want to use the F1 machine for simulation.
+Installation of Verilator (`sudo apt-get install verilator`) can be skipped if we are not using AWS for simulation.
+
+Installation of connectal utilities (`sudo apt-get install connectal`) is not needed on C4 (but may be needed on F1).
 
 ### Compilation on C4
 1. Setup.
