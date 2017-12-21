@@ -135,7 +135,7 @@ We finish the compilation by building the host software part of the design.
 
 3. Run the design to boot Linux.
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/vc707/bin/ubuntu.exe --just-run --mem-size 1024 -- +ramdisk=/path/to/disk/image $RISCY_TOOLS/bin/bbl $RISCY_HOME/tools/riscv-linux/vmliux
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/awsf1/bin/ubuntu.exe --just-run --mem-size 1024 -- +ramdisk=/path/to/disk/image $RISCY_TOOLS/bin/bbl $RISCY_HOME/tools/riscv-linux/vmliux
 
     Hit `ctrl-c` when you want to exit.
 
