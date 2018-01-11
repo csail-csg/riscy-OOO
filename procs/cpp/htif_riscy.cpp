@@ -31,7 +31,9 @@
 #include <stddef.h>
 #include <poll.h>
 #include "htif_riscy.h"
-#include "spike/encoding.h"
+// this file is also used to build spike, so we cannot include from installed
+// spike headers, and have to include from spike source
+#include "encoding.h"
 
 htif_riscy_t::htif_riscy_t(const std::vector<std::string>& args, uint32_t _core_num) :
     htif_t(args),
