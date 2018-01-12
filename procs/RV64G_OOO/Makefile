@@ -39,6 +39,8 @@ DIR_PRED := gselect
 TLB_SIZE := 32
 # dram type in simulation: VC707 or AWSF1
 SIM_DRAM_TYPE := AWSF1
+# use Xilinx FPU IP cores
+USE_XILINX_FPU := true
 
 # default 1 core
 CORE_NUM ?= 1
@@ -88,7 +90,7 @@ CPPFILES = $(PROC_CPP_DIR)/testproc.cpp \
 CONNECTALFLAGS += -D IMPORT_HOSTIF -D XILINX_SYS_CLK --nocache -v
 CONNECTALFLAGS += --bscflags=" -D USER_CLK_PERIOD=$(USER_CLK_PERIOD) "
 CONNECTALFLAGS += --bsvpath=$(FPGA_LIB_DIR) --bsvpath=$(PROC_LIB_DIR) --bsvpath=$(PROC_BSV_DIR) --bsvpath=$(COHERENCE_DIR)
-CONNECTALFLAGS += --verilog $(XILINX_IP_DIR)/reset_regs
+CONNECTALFLAGS += --verilog $(XILINX_IP_DIR)/reset_regs --verilog $(XILINX_IP_DIR)/fpu
 CONNECTALFLAGS += --cflags=" -std=c++0x "
 CONNECTALFLAGS += --clibdir=$(RISCY_TOOLS)/lib --clib=riscv --clib=fesvr
 CONNECTALFLAGS += -I$(RISCY_TOOLS)/include/spike -I$(RISCY_TOOLS)/include
@@ -135,6 +137,11 @@ endif
 # check deadlock
 ifeq ($(CHECK_DEADLOCK),true)
 CONNECTALFLAGS += --bscflags=" -D CHECK_DEADLOCK "
+endif
+
+# FPU implementation
+ifeq ($(USE_XILINX_FPU),true)
+CONNECTALFLAGS += --bscflags=" -D USE_XILINX_FPU "
 endif
 
 CONNECTALFLAGS += --bscflags=" +RTS -K1G -RTS " --bscflags=" -steps-max-intervals 200 "
@@ -187,6 +194,39 @@ PIN_TYPE = AWSDramPins
 PIN_TYPE_INCLUDE = AWSDramCommon
 CONNECTALFLAGS += -D AWSF1_DDR_A
 CONNECTALFLAGS += --bscflags " -D USE_AWSF1_DRAM "
+endif
+
+# FPU
+FP_FMA_XCI = $(CONNECTALDIR)/out/$(BOARD)/fp_fma/fp_fma.xci
+FP_DIV_XCI = $(CONNECTALDIR)/out/$(BOARD)/fp_div/fp_div.xci
+FP_SQRT_XCI = $(CONNECTALDIR)/out/$(BOARD)/fp_sqrt/fp_sqrt.xci
+
+# also configure the latency and rate (number of cycles per input) of IP core
+FP_FMA_LATENCY = 4
+FP_DIV_LATENCY = 12
+FP_DIV_RATE = 1
+FP_SQRT_LATENCY = 8
+FP_SQRT_RATE = 1
+
+CONNECTALFLAGS += --xci $(FP_FMA_XCI) --xci $(FP_DIV_XCI) --xci $(FP_SQRT_XCI)
+
+prebuild:: $(FP_FMA_XCI) $(FP_DIV_XCI) $(FP_SQRT_XCI)
+
+$(FP_FMA_XCI): $(CORE_SCRIPT_DIR)/synth_fp_fma.tcl
+	(cd $(PROJECTDIR); vivado -mode batch -source $^ -tclargs $(FP_FMA_LATENCY))
+
+$(FP_DIV_XCI): $(CORE_SCRIPT_DIR)/synth_fp_div.tcl
+	(cd $(PROJECTDIR); vivado -mode batch -source $^ -tclargs $(FP_DIV_LATENCY) $(FP_DIV_RATE))
+
+$(FP_SQRT_XCI): $(CORE_SCRIPT_DIR)/synth_fp_sqrt.tcl
+	(cd $(PROJECTDIR); vivado -mode batch -source $^ -tclargs $(FP_SQRT_LATENCY) $(FP_SQRT_RATE))
+
+# Force to generate IP core, because we pass args to synth tcl
+.PHONY: $(FP_FMA_XCI) $(FP_DIV_XCI) $(FP_SQRT_XCI)
+
+# AWS needs to know xilinx FPU is used
+ifeq ($(BOARD),awsf1)
+CONNECTALFLAGS += -D AWSF1_FPU
 endif
 
 else
