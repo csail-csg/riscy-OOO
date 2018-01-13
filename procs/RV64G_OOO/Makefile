@@ -26,7 +26,7 @@ CONNECTALDIR := $(RISCY_HOME)/connectal
 PROC := RV64G_OOO
 
 # FPGA is congested, use a slow clk...
-USER_CLK_PERIOD := 40
+USER_CLK_PERIOD ?= 40
 # use superscalar ROB
 SUP_ROB := true
 # use virtual tag in LSQ

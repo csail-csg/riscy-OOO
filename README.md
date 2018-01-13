@@ -135,9 +135,7 @@ We run the following command to monitor the state of the FPGA image.
 1. Finish compilation.
 We finish the compilation by building the host software part of the design.
 
-        $ cd $RISCY_HOME/procs/RV64G_OOO
-        $ make gen.awsf1
-        $ cd ../build/RV64G_OOO.core_1.check_deadlock/awsf1
+        $ cd $RISCY_HOME/procs/build/RV64G_OOO.core_1.check_deadlock/awsf1
         $ make exe
  
 2. Program FPGA.
