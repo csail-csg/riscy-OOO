@@ -25,32 +25,16 @@
 # Abort on error
 set -e
 
-# do RV64G by default
-XLEN=64
-
-# input arg may say do soft-fp
-SOFTFP="no"
-if [ $# -eq 1 ] ; then
-    if [ $1 = "softfp" ]; then
-        SOFTFP="yes"
-    else
-        echo "Usage: $0 [softfp]"
-        return 1
-    fi
-fi
-
-if [ $SOFTFP = "yes" ]; then
-    ISA="RV${XLEN}IMA"
-    WITH_ARCH=" --with-arch=IMA --with-xlen=$XLEN "
+if [ $# -ne 0 ]; then
+    JOBS=$1
 else
-    ISA="RV${XLEN}G"
-    WITH_ARCH=" --with-arch=IMAFD --with-xlen=$XLEN "
+    JOBS=1
 fi
 
-echo "Building $ISA toolchain..."
+echo "Building RV64G toolchain..."
 
 STARTINGDIR=$PWD
-export RISCV=$PWD/$ISA
+export RISCV=$PWD/RV64G
 export PATH=$RISCV/bin:$PATH
 OUTPUT_PATH=$RISCV/build-log
 
@@ -63,23 +47,9 @@ echo "Building riscv-gnu-toolchain... (writing output to $OUTPUT_FILE)"
 cd $RISCV
 mkdir -p build-gnu-toolchain
 cd build-gnu-toolchain
-../../riscv-gnu-toolchain/configure --prefix=$RISCV $WITH_ARCH &> $OUTPUT_FILE
-make &>> $OUTPUT_FILE
-# gnu-linux-gcc won't build with soft fp
-if [ $SOFTFP = "no" ]; then
-    make linux &>> $OUTPUT_FILE
-fi
-
-# [sizhuo] XXX why rebuild??
-## Rebuild newlib with -mcmodel=medany
-#OUTPUT_FILE=$OUTPUT_PATH/newlib.log
-#echo "Rebuilding newlib... (writing output to $OUTPUT_FILE)"
-#cd build-gcc-newlib/riscv$XLEN-unknown-elf/newlib
-#sed 's/^CFLAGS = /CFLAGS = -mcmodel=medany /' Makefile > Makefile.sed
-#mv Makefile.sed Makefile
-#make clean &> $OUTPUT_FILE
-#make &>> $OUTPUT_FILE
-#make install &>> $OUTPUT_FILE
+../../riscv-gnu-toolchain/configure --prefix=$RISCV --with-arch=rv64imafd &> $OUTPUT_FILE
+make -j$JOBS &>> $OUTPUT_FILE
+make linux -j$JOBS &>> $OUTPUT_FILE
 
 # Build riscv-fesvr
 OUTPUT_FILE=$OUTPUT_PATH/riscv-fesvr.log
@@ -88,7 +58,7 @@ cd $RISCV
 mkdir -p build-fesvr
 cd build-fesvr
 ../../riscv-fesvr/configure --prefix=$RISCV &> $OUTPUT_FILE
-make &>> $OUTPUT_FILE
+make -j$JOBS &>> $OUTPUT_FILE
 make install &>> $OUTPUT_FILE
 
 # Build riscv-tests
@@ -97,11 +67,8 @@ echo "Building riscv-tests... (writing output to $OUTPUT_FILE)"
 cd $RISCV
 mkdir -p build-tests
 cd build-tests
-../../riscv-tests/configure --prefix=$RISCV/riscv$XLEN-unknown-elf &> $OUTPUT_FILE
-# This may fail since some riscv-tests require ISA extensions
-# Also there is an issue with building 32-bit executables when gcc is
-# configured with --with-arch=<isa>
-make &>> $OUTPUT_FILE
+../../riscv-tests/configure --prefix=$RISCV/riscv64-unknown-elf &> $OUTPUT_FILE
+make -j$JOBS &>> $OUTPUT_FILE
 make install &>> $OUTPUT_FILE
 
 # Build riscv-isa-sim
@@ -110,8 +77,8 @@ echo "Building riscv-isa-sim... (writing output to $OUTPUT_FILE)"
 cd $RISCV
 mkdir -p build-isa-sim
 cd build-isa-sim
-../../riscv-isa-sim/configure --prefix=$RISCV --with-fesvr=$RISCV &> $OUTPUT_FILE
-make &>> $OUTPUT_FILE
+../../riscv-isa-sim/configure --prefix=$RISCV --with-fesvr=$RISCV --with-isa=RV64IMAFD &> $OUTPUT_FILE
+make -j$JOBS &>> $OUTPUT_FILE
 make install &>> $OUTPUT_FILE
 
 # Build riscv-pk
@@ -120,11 +87,11 @@ echo "Building riscv-pk... (writing output to $OUTPUT_FILE)"
 cd $RISCV
 mkdir -p build-pk
 cd build-pk
-../../riscv-pk/configure --prefix=$RISCV --host=riscv${XLEN}-unknown-elf &> $OUTPUT_FILE
-make &>> $OUTPUT_FILE
+../../riscv-pk/configure --prefix=$RISCV --host=riscv64-unknown-elf &> $OUTPUT_FILE
+make -j$JOBS &>> $OUTPUT_FILE
 make install &>> $OUTPUT_FILE
 
 cd $STARTINGDIR
 
 echo ""
-echo "$ISA toolchain and riscv-tests compiled successfully."
+echo "RV64G toolchain and riscv-tests compiled successfully."

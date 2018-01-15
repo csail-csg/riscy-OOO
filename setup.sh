@@ -28,14 +28,6 @@
 export RISCY_HOME=$PWD
 # Points to toolchain
 export RISCY_TOOLS=$RISCY_HOME/tools/RV64G
-if [ $# -eq 1 ]; then
-    if [ $1 = "softfp" ]; then
-        export RISCY_TOOLS=$RISCY_HOME/tools/RV64IMA
-    else
-        echo "Usage: $0 [softfp]"
-        return 1
-    fi
-fi
 # Adding to path and ld library path
 export PATH=$RISCY_TOOLS/bin:$PATH
 export LD_LIBRARY_PATH=$RISCY_TOOLS/lib:$LD_LIBRARY_PATH
