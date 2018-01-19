@@ -146,6 +146,12 @@ ifeq ($(BOARD),vc707)
 CONNECTALFLAGS += -C $(XILINX_IP_DIR)/vc707/constraints/clocks.xdc
 endif
 
+# cross clock domain for creating user reset (TODO AWS)
+ifeq ($(BOARD),vc707)
+CONNECTALFLAGS += -C $(RISCY_HOME)/procs/constraints/vc707_user_reset.xdc
+else
+endif
+
 # DRAM
 ifeq ($(BOARD),vc707)
 PIN_TYPE = DDR3_1GB_Pins
