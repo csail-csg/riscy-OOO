@@ -62,7 +62,8 @@ instance Connectable#(RenameDebugIndInv, RenameDebugIndication);
             ind.renameErr(
                 zeroExtend(c), r.err, r.pc, pack(r.iType),
                 isException, isInterrupt, trapVal,
-                r.specBits, isValid(r.specTag), zeroExtend(fromMaybe(maxBound, r.specTag))
+                zeroExtend(r.specBits), isValid(r.specTag),
+                zeroExtend(fromMaybe(maxBound, r.specTag))
             );
         endrule
     endmodule

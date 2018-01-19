@@ -1,0 +1,11 @@
+For ALU (in fact CSRXXX) inst, rVal1 is CSR instead of rs1, and rVal2 may be
+rs1.
+
+FMA (3-source) insts are not implemented (decoded as illegal inst).
+
+htifStall should be set precisely before any inst pass the stalling stage. A
+better way is to change CSRF to return if mtohost is written.
+
+When external world try to change a CSR, this change should be done when no
+inst is in-flight, because an inst may do read-modify-write on the CSR, and
+read and write are performed separately in different pipeline stages.
