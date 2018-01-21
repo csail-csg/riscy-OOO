@@ -51,9 +51,6 @@ typedef Bit#(TAdd#(1, TLog#(SingleScalarSize))) SingleScalarLen;
 // This indicates older/younger inst
 typedef Bit#(TLog#(NumInstTags)) InstTime;
 
-//typedef `ROB_SIZE NumRenamingTags;
-//typedef Bit#(TLog#(NumRenamingTags)) RenamingTag; // index in renaming table for fast killing
-
 `ifdef SUP_ROB
 typedef struct {
     SupWaySel way; // which way in superscalar
@@ -75,34 +72,39 @@ typedef `DRAMLLC_MAX_READS DramLLCMaxReads;
 typedef Bit#(`LOG_DEADLOCK_CYCLES) DeadlockTimer;
 
 typedef struct {
-   Bool rv64;
-   // ISA modes
-   Bool h;
-   Bool s;
-   Bool u;
-   // standard ISA extensions
-   Bool m;
-   Bool a;
-   Bool f;
-   Bool d;
-   // non-standard extensions
-   Bool x;
-   } RiscVISASubset deriving (Bits, Eq, FShow);
+    Bool rv64;
+    // ISA modes
+    Bool h;
+    Bool s;
+    Bool u;
+    // standard ISA extensions
+    Bool m;
+    Bool a;
+    Bool f;
+    Bool d;
+    // non-standard extensions
+    Bool x;
+} RiscVISASubset deriving (Bits, Eq, FShow);
 
 instance DefaultValue#(RiscVISASubset);
-  function RiscVISASubset defaultValue = RiscVISASubset{ rv64: `rv64 , h: False, s: True, u: True, m: `m , a: `a , f: `f , d: `d , x: False };
+    function RiscVISASubset defaultValue = RiscVISASubset {
+        rv64: `rv64 ,
+        h: False, s: True, u: True,
+        m: `m , a: `a , f: `f , d: `d ,
+        x: False
+    };
 endinstance
 
-function Data getMCPUID(RiscVISASubset isa);
-  Data mcpuid = 0;
-  if (isa.rv64) mcpuid = mcpuid | {2'b10, 0, 26'b00000000000000000000000000};
-  // include S and I by default
-  mcpuid = mcpuid | {2'b00, 0, 26'b00000001000000000100000000};
-  if (isa.m) mcpuid = mcpuid | {2'b00, 0, 26'b00000000000001000000000000};
-  if (isa.a) mcpuid = mcpuid | {2'b00, 0, 26'b00000000000000000000000001};
-  if (isa.f) mcpuid = mcpuid | {2'b00, 0, 26'b00000000000000000000100000};
-  if (isa.d) mcpuid = mcpuid | {2'b00, 0, 26'b00000000000000000000001000};
-  return mcpuid;
+function Data getMISA(RiscVISASubset isa);
+    Data misa = 0;
+    if (isa.rv64) misa = misa | {2'b10, 0, 26'b00000000000000000000000000};
+    // include S and I by default
+    misa = misa | {2'b00, 0, 26'b00000001000000000100000000};
+    if (isa.m) misa = misa | {2'b00, 0, 26'b00000000000001000000000000};
+    if (isa.a) misa = misa | {2'b00, 0, 26'b00000000000000000000000001};
+    if (isa.f) misa = misa | {2'b00, 0, 26'b00000000000000000000100000};
+    if (isa.d) misa = misa | {2'b00, 0, 26'b00000000000000000000001000};
+    return misa;
 endfunction
 
 typedef Bit#(5) GprRIndx;
@@ -152,160 +154,131 @@ function Bool allRegsReady(RegsReady x);
 endfunction
 
 typedef enum {
-   Load    = 7'b0000011,
-   LoadFp  = 7'b0000111,
-   MiscMem = 7'b0001111,
-   OpImm   = 7'b0010011,
-   Auipc   = 7'b0010111,
-   OpImm32 = 7'b0011011,
-   Store   = 7'b0100011,
-   StoreFp = 7'b0100111,
-   Amo     = 7'b0101111,
-   Op      = 7'b0110011,
-   Lui     = 7'b0110111,
-   Op32    = 7'b0111011,
-   Fmadd   = 7'b1000011,
-   Fmsub   = 7'b1000111,
-   Fnmsub  = 7'b1001011,
-   Fnmadd  = 7'b1001111,
-   OpFp    = 7'b1010011,
-   Branch  = 7'b1100011,
-   Jalr    = 7'b1100111,
-   Jal     = 7'b1101111,
-   System  = 7'b1110011
-   } Opcode deriving(Bits, Eq, FShow);
+    Load    = 7'b0000011,
+    LoadFp  = 7'b0000111,
+    MiscMem = 7'b0001111,
+    OpImm   = 7'b0010011,
+    Auipc   = 7'b0010111,
+    OpImm32 = 7'b0011011,
+    Store   = 7'b0100011,
+    StoreFp = 7'b0100111,
+    Amo     = 7'b0101111,
+    Op      = 7'b0110011,
+    Lui     = 7'b0110111,
+    Op32    = 7'b0111011,
+    Fmadd   = 7'b1000011,
+    Fmsub   = 7'b1000111,
+    Fnmsub  = 7'b1001011,
+    Fnmadd  = 7'b1001111,
+    OpFp    = 7'b1010011,
+    Branch  = 7'b1100011,
+    Jalr    = 7'b1100111,
+    Jal     = 7'b1101111,
+    System  = 7'b1110011
+} Opcode deriving(Bits, Eq, FShow);
 
 typedef enum {
-   CSRfflags    = 'h001,
-   CSRfrm       = 'h002,
-   CSRfcsr      = 'h003,
-   CSRstoreaddr = 'h008,
-   CSRstore8    = 'h009,
-   CSRstore16   = 'h00a,
-   CSRstore32   = 'h00b,
-   CSRload8     = 'h00d,
-   CSRload16    = 'h00e,
-   CSRload32    = 'h00f,
-   CSRstats     = 'h0c0,
-   CSRsstatus   = 'h100,
-   CSRstvec     = 'h101,
-   CSRsie       = 'h104,
-   CSRstimecmp  = 'h121,
-   CSRsscratch  = 'h140,
-   CSRsepc      = 'h141,
-   CSRsip       = 'h144,
-   CSRsptbr     = 'h180,
-   CSRsasid     = 'h181,
-   CSRhstatus   = 'h200,
-   CSRhtvec     = 'h201,
-   CSRhepc      = 'h241,
-   CSRmstatus   = 'h300,
-   CSRmtvec     = 'h301,
-   CSRmtdeleg   = 'h302,
-   CSRmie       = 'h304,
-   CSRmtimecmp  = 'h321,
-   CSRmscratch  = 'h340,
-   CSRmepc      = 'h341,
-   CSRmcause    = 'h342,
-   CSRmbadaddr  = 'h343,
-   CSRmip       = 'h344,
-   CSRmbase     = 'h380,
-   CSRmbound    = 'h381,
-   CSRmibase    = 'h382,
-   CSRmibound   = 'h383,
-   CSRmdbase    = 'h384,
-   CSRmdbound   = 'h385,
-   CSRsup0      = 'h500,
-   CSRsup1      = 'h501,
-   CSRepc       = 'h502,
-   CSRbadvaddr  = 'h503,
-   CSRptbr      = 'h504,
-   CSRasid      = 'h505,
-   CSRcount     = 'h506,
-   CSRcompare   = 'h507,
-   CSRevec      = 'h508,
-   CSRcause     = 'h509,
-   CSRstatus    = 'h50a,
-   CSRhartid    = 'h50b,
-   CSRimpl      = 'h50c,
-   CSRfatc      = 'h50d,
-   //CSRsendipi   = 'h50e, // [sizhuo] where are these two coming from?
-   //CSRclearipi  = 'h50f,
-   CSRtohost    = 'h51e,
-   CSRfromhost  = 'h51f,
-   CSRmtime     = 'h701,
-   CSRmtimeh    = 'h741,
-   CSRmtohost   = 'h780,
-   CSRmfromhost = 'h781,
-   CSRmreset    = 'h782,
-   CSRsend_ipi  = 'h783,
-   // user-defined non-standard CSR: rw in user space
-   CSRterminate = 'h800,
-   /////////////
-   CSRcyclew    = 'h900,
-   CSRtimew     = 'h901,
-   CSRinstretw  = 'h902,
-   CSRcyclehw   = 'h980,
-   CSRtimehw    = 'h981,
-   CSRinstrethw = 'h982,
-   CSRstimew    = 'ha01,
-   CSRstimehw   = 'ha81,
-   CSRcycle     = 'hc00,
-   CSRtime      = 'hc01,
-   CSRinstret   = 'hc02,
-   CSRcycleh    = 'hc80,
-   CSRtimeh     = 'hc81,
-   CSRinstreth  = 'hc82,
-   CSRuarch0    = 'hcc0,
-   CSRuarch1    = 'hcc1,
-   CSRuarch2    = 'hcc2,
-   CSRuarch3    = 'hcc3,
-   CSRuarch4    = 'hcc4,
-   CSRuarch5    = 'hcc5,
-   CSRuarch6    = 'hcc6,
-   CSRuarch7    = 'hcc7,
-   CSRuarch8    = 'hcc8,
-   CSRuarch9    = 'hcc9,
-   CSRuarch10   = 'hcca,
-   CSRuarch11   = 'hccb,
-   CSRuarch12   = 'hccc,
-   CSRuarch13   = 'hccd,
-   CSRuarch14   = 'hcce,
-   CSRuarch15   = 'hccf,
-   CSRstime     = 'hd01,
-   CSRscause    = 'hd42,
-   CSRsbadaddr  = 'hd43,
-   CSRstimeh    = 'hd81,
-   CSRmcpuid    = 'hf00,
-   CSRmimpid    = 'hf01,
-   CSRmhartid   = 'hf10
-   } CSR deriving(Bits, Eq, FShow);
+    // user standard CSRs
+    CSRfflags     = 12'h001,
+    CSRfrm        = 12'h002,
+    CSRfcsr       = 12'h003,
+    CSRcycle      = 12'hc00,
+    CSRtime       = 12'hc01,
+    CSRinstret    = 12'hc02,
+    // user non-standard CSRs (TODO)
+    //CSRterminate = 12'h800, // terminate (used in Linux boot)
+    //CSRstats     = 12'h0c0, // turn on/off perf counters
+    // supervisor standard CSRs
+    CSRsstatus    = 12'h100,
+    CSRsedeleg    = 12'h102,
+    CSRsideleg    = 12'h103,
+    CSRsie        = 12'h104,
+    CSRstvec      = 12'h105,
+    CSRscounteren = 12'h106,
+    CSRsscratch   = 12'h140,
+    CSRsepc       = 12'h141,
+    CSRscause     = 12'h142,
+    CSRsbadaddr   = 12'h143, // it's called stval in priv 1.10
+    CSRsip        = 12'h144,
+    CSRsptbr      = 12'h180, // it's called satp in priv 1.10
+    // machine standard CSRs
+    CSRmstatus    = 12'h300,
+    CSRmisa       = 12'h301,
+    CSRmedeleg    = 12'h302,
+    CSRmideleg    = 12'h303,
+    CSRmie        = 12'h304,
+    CSRmtvec      = 12'h305,
+    CSRmcounteren = 12'h306,
+    CSRmscratch   = 12'h340,
+    CSRmepc       = 12'h341,
+    CSRmcause     = 12'h342,
+    CSRmbadaddr   = 12'h343, // it's caled mtval in priv 1.10
+    CSRmip        = 12'h344,
+    CSRmcycle     = 12'hb00,
+    CSRminstret   = 12'hb02,
+    CSRmvendorid  = 12'hf11,
+    CSRmarchid    = 12'hf12,
+    CSRmimpid     = 12'hf13,
+    CSRmhartid    = 12'hf14
+} CSR deriving(Bits, Eq, FShow);
 
-typedef enum {Unsupported, Amo, Alu, Ld, St, Lr, Sc, J, Jr, Br, Csr, Auipc, Priv, Interrupt, Fence, SFence, Fpu, Sret, Mrts} IType deriving(Bits, Eq, FShow);
-typedef enum {Eq, Neq, Lt, Ltu, Ge, Geu, AT, NT} BrFunc deriving(Bits, Eq, FShow);
-typedef enum {Add, Addw, Sub, Subw, And, Or, Xor, Slt, Sltu, Sll, Sllw, Sra, Sraw, Srl, Srlw, Csrw, Csrs, Csrc} AluFunc deriving(Bits, Eq, FShow);
+typedef enum {
+    Unsupported,
+    Amo,
+    Alu,
+    Ld, St, Lr, Sc,
+    J, Jr, Br,
+    Csr,
+    Auipc,
+    Priv,
+    Interrupt, // we may turn an inst to an interrupt in implementation
+    Fence, SFence,
+    Fpu,
+    Mret, Sret // do not support URET
+} IType deriving(Bits, Eq, FShow);
+
+typedef enum {
+    Eq, Neq,
+    Lt, Ltu, Ge, Geu,
+    AT, NT
+} BrFunc deriving(Bits, Eq, FShow);
+
+typedef enum {
+    Add, Addw, Sub, Subw,
+    And, Or, Xor,
+    Slt, Sltu, Sll, Sllw, Sra, Sraw, Srl, Srlw,
+    Csrw, Csrs, Csrc
+} AluFunc deriving(Bits, Eq, FShow);
+
 typedef enum {Mul, Mulh, Div, Rem} MulDivFunc deriving(Bits, Eq, FShow);
-typedef enum {Signed, Unsigned, SignedUnsigned} MulDivSign deriving(Bits, Eq, FShow);
+
+typedef enum {
+    Signed, Unsigned, SignedUnsigned
+} MulDivSign deriving(Bits, Eq, FShow);
+
 typedef struct {
     MulDivFunc  func;
     Bool        w;
     MulDivSign  sign;
 } MulDivInst deriving(Bits, Eq, FShow);
+
 typedef enum {
-   FAdd, FSub, FMul, FDiv, FSqrt,
-   FSgnj, FSgnjn, FSgnjx,
-   FMin, FMax,
-   FCvt_FF,
-   FCvt_WF, FCvt_WUF, FCvt_LF, FCvt_LUF,
-   FCvt_FW, FCvt_FWU, FCvt_FL, FCvt_FLU,
-   FEq, FLt, FLe,
-   FClass, FMv_XF, FMv_FX,
-   FMAdd, FMSub, FNMSub, FNMAdd
-   } FpuFunc deriving(Bits, Eq, FShow);
+    FAdd, FSub, FMul, FDiv, FSqrt,
+    FSgnj, FSgnjn, FSgnjx,
+    FMin, FMax,
+    FCvt_FF,
+    FCvt_WF, FCvt_WUF, FCvt_LF, FCvt_LUF,
+    FCvt_FW, FCvt_FWU, FCvt_FL, FCvt_FLU,
+    FEq, FLt, FLe,
+    FClass, FMv_XF, FMv_FX,
+    FMAdd, FMSub, FNMSub, FNMAdd
+} FpuFunc deriving(Bits, Eq, FShow);
+
 typedef enum {
     Single,
     Double
 } FpuPrecision deriving(Bits, Eq, FShow);
+
 typedef struct {
     FpuFunc         func;
     RVRoundMode     rm;
@@ -314,83 +287,72 @@ typedef struct {
 
 // LdStInst and AmoInst are defined in Types.bsv
 typedef union tagged {
-   AluFunc     Alu;
-   BrFunc      Br;
-   MemInst     Mem;
-   MulDivInst  MulDiv;
-   FpuInst     Fpu;
-   void        Other;
-   } ExecFunc deriving(Bits, Eq, FShow);
+    AluFunc     Alu;
+    BrFunc      Br;
+    MemInst     Mem;
+    MulDivInst  MulDiv;
+    FpuInst     Fpu;
+    void        Other;
+} ExecFunc deriving(Bits, Eq, FShow);
 
 // Rounding Modes (encoding by risc-v, not general fpu)
 typedef enum {
-   RNE  = 3'b000,
-   RTZ  = 3'b001,
-   RDN  = 3'b010,
-   RUP  = 3'b011,
-   RMM  = 3'b100,
-   RDyn = 3'b111
-   } RVRoundMode deriving(Bits, Eq, FShow);
-
-// helper functions
-function Bool isAluFunc(ExecFunc f);
-   return f matches tagged Alu .alu_f ? True : False;
-endfunction
-function Bool isMulDivFunc(ExecFunc f);
-   return f matches tagged MulDiv .muldiv_f ? True : False;
-endfunction
-function Bool isBrFunc(ExecFunc f);
-   return f matches tagged Br .br_f ? True : False;
-endfunction
-function Bool isFpuFunc(ExecFunc f);
-  return f matches tagged Fpu .fpu_f ? True : False;
-endfunction
-function Bool isAmoFunc(ExecFunc f);
-   return f matches tagged Mem .mem_inst ? mem_inst.mem_func == Amo : False;
-endfunction
+    RNE  = 3'b000,
+    RTZ  = 3'b001,
+    RDN  = 3'b010,
+    RUP  = 3'b011,
+    RMM  = 3'b100,
+    RDyn = 3'b111
+} RVRoundMode deriving(Bits, Eq, FShow);
 
 typedef enum {
-  InstAddrMisaligned  = 4'd0,
-  InstAccessFault     = 4'd1,
-  IllegalInst         = 4'd2,
-  Breakpoint          = 4'd3,
-  LoadAddrMisaligned  = 4'd4,
-  LoadAccessFault     = 4'd5,
-  StoreAddrMisaligned = 4'd6,
-  StoreAccessFault    = 4'd7,
-  EnvCallU            = 4'd8,
-  EnvCallS            = 4'd9,
-  EnvCallH            = 4'd10,
-  EnvCallM            = 4'd11,
-  IllegalException    = 4'd15 // to get a 4-bit implementation
+    InstAddrMisaligned  = 4'd0,
+    InstAccessFault     = 4'd1,
+    IllegalInst         = 4'd2,
+    Breakpoint          = 4'd3,
+    LoadAddrMisaligned  = 4'd4,
+    LoadAccessFault     = 4'd5,
+    StoreAddrMisaligned = 4'd6,
+    StoreAccessFault    = 4'd7,
+    EnvCallU            = 4'd8,
+    EnvCallS            = 4'd9,
+    EnvCallM            = 4'd11,
+    InstPageFault       = 4'd12,
+    LoadPageFault       = 4'd13,
+    StorePageFault      = 4'd15
 } Exception deriving(Bits, Eq, FShow);
 
 typedef enum {
-  SoftwareInterrupt   = 4'd0,
-  TimerInterrupt      = 4'd1,
-  HostInterrupt       = 4'd2,
-  IllegalInterrupt    = 4'd15 // to get 4-bit implementation
+    UserSoftware       = 4'd0,
+    SupervisorSoftware = 4'd1,
+    MachineSoftware    = 4'd3,
+    UserTimer          = 4'd4,
+    SupervisorTimer    = 4'd5,
+    MachineTimer       = 4'd7,
+    UserExternal       = 4'd8,
+    SupervisorExternel = 4'd9,
+    MachineExternal    = 4'd11
 } Interrupt deriving(Bits, Eq, FShow);
 
 // Traps are either an exception or an interrupt
 typedef union tagged {
-  Exception Exception;
-  Interrupt Interrupt;
+    Exception Exception;
+    Interrupt Interrupt;
 } Trap deriving(Bits, Eq, FShow);
 
 typedef struct {
-  Bit#(2) prv;
-  Bit#(3) frm;
-  Bool f_enabled;
-  Bool x_enabled;
+    Bit#(2) prv;
+    Bit#(3) frm;
+    Bool f_enabled;
+    Bool x_enabled;
 } CsrState deriving (Bits, Eq, FShow);
 
 typedef struct {
-  Addr  pc;
-  Addr  nextPc;
-  IType iType;
-  Bool  taken;
-  Bool  mispredict;
+    Addr  pc;
+    Addr  nextPc;
+    IType iType;
+    Bool  taken;
+    Bool  mispredict;
 } Redirect deriving (Bits, Eq, FShow);
 
 typedef struct {
@@ -409,10 +371,10 @@ typedef struct {
 typedef Bit#(32) ImmData; // 32-bit decoded immediate data
 
 typedef struct {
-  IType           iType;
-  ExecFunc        execFunc;
-  Maybe#(CSR)     csr;
-  Maybe#(ImmData) imm;
+    IType           iType;
+    ExecFunc        execFunc;
+    Maybe#(CSR)     csr;
+    Maybe#(ImmData) imm;
 } DecodedInst deriving(Bits, Eq, FShow);
 
 function Maybe#(Data) getDInstImm(DecodedInst dInst);
@@ -427,12 +389,19 @@ typedef struct {
 } ExecResult deriving(Bits, Eq, FShow);
 
 typedef struct {
-  Bit#(2) prv;
-  Asid    asid;
-  Bit#(5) vm;
-  Addr    base;
-  Addr    bound;
+    Bit#(2) prv;
+    Asid    asid;
+    Bit#(4) vm;
 } VMInfo deriving(Bits, Eq, FShow);
+
+Bit#(2) prvU = 0;
+Bit#(2) prvS = 1;
+Bit#(2) prvM = 3;
+
+Bit#(4) vmMbare = 0;
+Bit#(4) vmSv32  = 8;
+Bit#(4) vmSv39  = 9;
+Bit#(4) vmSv48  = 10;
 
 // Op
 Bit#(3) fnADD   = 3'b000;
@@ -523,63 +492,21 @@ Bit#(3) fnCSRRWI = 3'b101;
 Bit#(3) fnCSRRSI = 3'b110;
 Bit#(3) fnCSRRCI = 3'b111;
 
-Bit#(12) privSCALL    = 12'h000;
-Bit#(12) privSBREAK   = 12'h001;
-Bit#(12) privSRET     = 12'h100;
-Bit#(12) privSFENCEVM = 12'h101;
-Bit#(12) privWFI      = 12'h102;
-Bit#(12) privHRTS     = 12'h205;
-Bit#(12) privMRTS     = 12'h305;
-Bit#(12) privMRTH     = 12'h306;
+Bit#(12) privECALL  = 12'h000;
+Bit#(12) privEBREAK = 12'h001;
+Bit#(12) privURET   = 12'h002;
+Bit#(12) privSRET   = 12'h102;
+Bit#(12) privMRET   = 12'h302;
+Bit#(12) privWFI    = 12'h105;
 
-Data _MSTATUS_IE        = 'h00000001;
-Data _MSTATUS_PRV       = 'h00000006;
-Data _MSTATUS_IE1       = 'h00000008;
-Data _MSTATUS_PRV1      = 'h00000030;
-Data _MSTATUS_IE2       = 'h00000040;
-Data _MSTATUS_PRV2      = 'h00000180;
-Data _MSTATUS_IE3       = 'h00000200;
-Data _MSTATUS_PRV3      = 'h00000C00;
-Data _MSTATUS_FS        = 'h00003000;
-Data _MSTATUS_XS        = 'h0000C000;
-Data _MSTATUS_MPRV      = 'h00010000;
-Data _MSTATUS_VM        = 'h003E0000;
-Data _MSTATUS_SD        = {1'b1, 'b0};
+Bit#(7) privSFENCEVMA  = 7'h9;
 
-Data _SSTATUS_IE        = 'h00000001;
-Data _SSTATUS_PIE       = 'h00000008;
-Data _SSTATUS_PS        = 'h00000010;
-Data _SSTATUS_FS        = 'h00003000;
-Data _SSTATUS_XS        = 'h0000C000;
-Data _SSTATUS_MPRV      = 'h00010000;
-Data _SSTATUS_TIE       = 'h01000000;
-Data _SSTATUS_SD        = {1'b1, 'b0};
-
-Data _MIP_SSIP          = 'h00000002;
-Data _MIP_HSIP          = 'h00000004;
-Data _MIP_MSIP          = 'h00000008;
-Data _MIP_STIP          = 'h00000020;
-Data _MIP_HTIP          = 'h00000040;
-Data _MIP_MTIP          = 'h00000080;
-
-Data _SIP_SSIP          = _MIP_SSIP;
-Data _SIP_STIP          = _MIP_STIP;
-
-Bit#(2) prvU = 0;
-Bit#(2) prvS = 1;
-Bit#(2) prvH = 2;
-Bit#(2) prvM = 3;
-
-Bit#(5) vmMbare = 0;
-Bit#(5) vmMbb   = 1;
-Bit#(5) vmMbbid = 2;
-Bit#(5) vmSv32  = 8;
-Bit#(5) vmSv39  = 9;
-Bit#(5) vmSv48  = 10;
-Bit#(5) vmSv57  = 11;
-Bit#(5) vmSv64  = 12;
-
-function Bool isSystem(IType iType) = (iType == Priv || iType == Csr || iType == Unsupported || iType == Interrupt || iType == SFence || iType == Fence || iType == Sret || iType == Mrts);
+function Bool isSystem(IType iType) = (
+    iType == Priv || iType == Csr ||
+    iType == Unsupported || iType == Interrupt ||
+    iType == SFence || iType == Fence ||
+    iType == Sret || iType == Mret
+);
 
 // instruction requires replaying (i.e. fetch next instruction after current
 // instruction commits)
@@ -587,7 +514,9 @@ function Bool doReplay(IType iType) = isSystem(iType);
 
 function Bool isFpuInst(IType iType) = (iType == Fpu);
 
-function Bool isMemInst(IType iType) = (iType == Ld || iType == St || iType == Lr || iType == Sc || iType == Amo);
+function Bool isMemInst(IType iType) = (
+    iType == Ld || iType == St || iType == Lr || iType == Sc || iType == Amo
+);
 
 function Fmt showInst(Instruction inst);
   Fmt ret = fshow("");
@@ -741,14 +670,17 @@ function Fmt showInst(Instruction inst);
         fnPRIV:
         begin
           ret = case (truncate(immI))
-            privSCALL: fshow("scall");
-            privSBREAK: fshow("sbreak");
+            privECALL: fshow("ecall");
+            privEBREAK: fshow("ebreak");
+            privURET: fshow("uret");
             privSRET: fshow("sret");
-            privSFENCEVM: (fshow("sfence.vm ") + fshow(rs1));
+            privMRET: fshow("mret");
             privWFI: fshow("wfi");
-            privHRTS: fshow("hrts");
-            privMRTS: fshow("mrts");
-            privMRTH: fshow("mrth");
+            default: (
+              funct7 == privSFENCEVMA ? 
+              (fshow("sfence.vma ") + fshow(rs1) + fshow(" ") + fshow(rs2)) :
+              fshow("SYSTEM not implemented")
+            );
           endcase;
         end
 
@@ -756,36 +688,10 @@ function Fmt showInst(Instruction inst);
           ret = fshow("SYSTEM not implemented");
       endcase
     end
-    /*
-    opLB:
-      ret = fshow("lb ") + fshow(rt) + fshow(" = ") + fshow(rs) + fshow(" ") + fshow(imm);
-
-    opLH:
-      ret = fshow("lh ") + fshow(rt) + fshow(" = ") + fshow(rs) + fshow(" ") + fshow(imm);
-
-    opLW:
-      ret = fshow("lw ") + fshow(rt) + fshow(" = ") + fshow(rs) + fshow(" ") + fshow(imm);
-
-    opLBU:
-      ret = fshow("lbu ") + fshow(rt) + fshow(" = ") + fshow(rs) + fshow(" ") + fshow(imm);
-
-    opLHU:
-      ret = fshow("lhu ") + fshow(rt) + fshow(" = ") + fshow(rs) + fshow(" ") + fshow(imm);
-
-    opSB:
-      ret = fshow("sb ") + fshow(rs) + fshow(" ") + fshow(rt) + fshow(" ") + fshow(imm);
-
-    opSH:
-      ret = fshow("sh ") + fshow(rs) + fshow(" ") + fshow(rt) + fshow(" ") + fshow(imm);
-
-    opSW:
-      ret = fshow("sw ") + fshow(rs) + fshow(" ") + fshow(rt) + fshow(" ") + fshow(imm);
-*/
     default:
       ret = fshow("nop");
   endcase
 
   return ret;
-
 endfunction
 

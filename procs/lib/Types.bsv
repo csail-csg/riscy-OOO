@@ -33,7 +33,7 @@ typedef Bit#(DataSz) Data;
 typedef 32 InstSz;
 typedef Bit#(InstSz) Instruction;
 
-typedef 8 AsidSz;
+typedef 0 AsidSz; // not really implement ASID
 typedef Bit#(AsidSz) Asid;
 
 typedef TDiv#(DataSz, 8) NumBytes;
