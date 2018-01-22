@@ -110,8 +110,8 @@ endfunction
 typedef Bit#(5) GprRIndx;
 typedef Bit#(5) FpuRIndx;
 typedef union tagged {
-   GprRIndx Gpr;
-   FpuRIndx Fpu;
+    GprRIndx Gpr;
+    FpuRIndx Fpu;
 } ArchRIndx deriving (Bits, Eq, FShow, Bounded);
 
 typedef TExp#(SizeOf#(ArchRIndx)) NumArchReg;
@@ -224,17 +224,18 @@ typedef enum {
 
 typedef enum {
     Unsupported,
+    Nop, // no-op
     Amo,
     Alu,
     Ld, St, Lr, Sc,
     J, Jr, Br,
-    Csr,
     Auipc,
-    Priv,
-    Interrupt, // we may turn an inst to an interrupt in implementation
-    Fence, SFence,
     Fpu,
-    Mret, Sret // do not support URET
+    Csr,
+    Fence, SFence,
+    Ecall, Ebreak,
+    Sret, Mret, // do not support URET
+    Interrupt // we may turn an inst to an interrupt in implementation
 } IType deriving(Bits, Eq, FShow);
 
 typedef enum {
@@ -258,7 +259,7 @@ typedef enum {
 
 typedef struct {
     MulDivFunc  func;
-    Bool        w;
+    Bool        w; // use word, i.e. 32-bit
     MulDivSign  sign;
 } MulDivInst deriving(Bits, Eq, FShow);
 
