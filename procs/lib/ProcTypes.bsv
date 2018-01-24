@@ -72,7 +72,6 @@ typedef `DRAMLLC_MAX_READS DramLLCMaxReads;
 typedef Bit#(`LOG_DEADLOCK_CYCLES) DeadlockTimer;
 
 typedef struct {
-    Bool rv64;
     // ISA modes
     Bool h;
     Bool s;
@@ -88,23 +87,22 @@ typedef struct {
 
 instance DefaultValue#(RiscVISASubset);
     function RiscVISASubset defaultValue = RiscVISASubset {
-        rv64: `rv64 ,
         h: False, s: True, u: True,
         m: `m , a: `a , f: `f , d: `d ,
         x: False
     };
 endinstance
 
-function Data getMISA(RiscVISASubset isa);
-    Data misa = 0;
-    if (isa.rv64) misa = misa | {2'b10, 0, 26'b00000000000000000000000000};
+function Bit#(2) getXLBits = 2'b10; // MXL/SXL/UXL fix to RV64
+
+function Bit#(26) getExtensionBits(RiscVISASubset isa);
     // include S and I by default
-    misa = misa | {2'b00, 0, 26'b00000001000000000100000000};
-    if (isa.m) misa = misa | {2'b00, 0, 26'b00000000000001000000000000};
-    if (isa.a) misa = misa | {2'b00, 0, 26'b00000000000000000000000001};
-    if (isa.f) misa = misa | {2'b00, 0, 26'b00000000000000000000100000};
-    if (isa.d) misa = misa | {2'b00, 0, 26'b00000000000000000000001000};
-    return misa;
+    Bit#(26)   ext =       26'b00000001000000000100000000;
+    if (isa.m) ext = ext | 26'b00000000000001000000000000;
+    if (isa.a) ext = ext | 26'b00000000000000000000000001;
+    if (isa.f) ext = ext | 26'b00000000000000000000100000;
+    if (isa.d) ext = ext | 26'b00000000000000000000001000;
+    return ext;
 endfunction
 
 typedef Bit#(5) GprRIndx;
@@ -186,21 +184,20 @@ typedef enum {
     CSRtime       = 12'hc01,
     CSRinstret    = 12'hc02,
     // user non-standard CSRs (TODO)
-    //CSRterminate = 12'h800, // terminate (used in Linux boot)
+    CSRterminate = 12'h800, // terminate (used in Linux boot)
     //CSRstats     = 12'h0c0, // turn on/off perf counters
     // supervisor standard CSRs
     CSRsstatus    = 12'h100,
-    CSRsedeleg    = 12'h102,
-    CSRsideleg    = 12'h103,
+    // no user trap handler, so no se/ideleg
     CSRsie        = 12'h104,
     CSRstvec      = 12'h105,
     CSRscounteren = 12'h106,
     CSRsscratch   = 12'h140,
     CSRsepc       = 12'h141,
     CSRscause     = 12'h142,
-    CSRsbadaddr   = 12'h143, // it's called stval in priv 1.10
+    CSRstval      = 12'h143, // it's still called sbadaddr in spike
     CSRsip        = 12'h144,
-    CSRsptbr      = 12'h180, // it's called satp in priv 1.10
+    CSRsatp       = 12'h180, // it's still called sptbr in spike
     // machine standard CSRs
     CSRmstatus    = 12'h300,
     CSRmisa       = 12'h301,
@@ -212,7 +209,7 @@ typedef enum {
     CSRmscratch   = 12'h340,
     CSRmepc       = 12'h341,
     CSRmcause     = 12'h342,
-    CSRmbadaddr   = 12'h343, // it's caled mtval in priv 1.10
+    CSRmtval      = 12'h343, // it's still called mbadaddr in spike
     CSRmip        = 12'h344,
     CSRmcycle     = 12'hb00,
     CSRminstret   = 12'hb02,
@@ -224,7 +221,6 @@ typedef enum {
 
 typedef enum {
     Unsupported,
-    Nop, // no-op
     Amo,
     Alu,
     Ld, St, Lr, Sc,
@@ -233,7 +229,7 @@ typedef enum {
     Fpu,
     Csr,
     Fence, SFence,
-    Ecall, Ebreak,
+    Ecall, Ebreak, Wfi,
     Sret, Mret, // do not support URET
     Interrupt // we may turn an inst to an interrupt in implementation
 } IType deriving(Bits, Eq, FShow);
@@ -335,6 +331,8 @@ typedef enum {
     MachineExternal    = 4'd11
 } Interrupt deriving(Bits, Eq, FShow);
 
+typedef 12 InterruptNum;
+
 // Traps are either an exception or an interrupt
 typedef union tagged {
     Exception Exception;
@@ -342,11 +340,24 @@ typedef union tagged {
 } Trap deriving(Bits, Eq, FShow);
 
 typedef struct {
-    Bit#(2) prv;
+    // for decoding floating-point instructions
     Bit#(3) frm;
-    Bool f_enabled;
-    Bool x_enabled;
-} CsrState deriving (Bits, Eq, FShow);
+    Bool fEnabled;
+    // for decoding privileged instructions
+    Bit#(2) prv;
+    Bool trapVM; // mstatus.tvm: trap on CSRXXX inst on satp or SFENCE.VMA
+                 // executed in S mode
+    Bool timeoutWait; // mstatus.tw: trap on WFI after waiting N cycles in S
+                      // mode. This is currently ignore since WFI is a NOP.
+    Bool trapSret; // mstatus.tsr: trap on SRET executed in S mode
+    // for decoding rdcycle/time/instret
+    Bool cycleReadableByS; // S mode can do rdcycle
+    Bool cycleReadableByU; // U mode can do rdcycle
+    Bool instretReadableByS; // S mode can do rdinstret
+    Bool instretReadableByU; // U mode can do rdinstret
+    Bool timeReadableByS; // S mode can do rdtime
+    Bool timeReadableByU; // U mode can do rdtime
+} CsrDecodeInfo deriving (Bits, Eq, FShow);
 
 typedef struct {
     Addr  pc;
@@ -390,19 +401,22 @@ typedef struct {
 } ExecResult deriving(Bits, Eq, FShow);
 
 typedef struct {
-    Bit#(2) prv;
-    Asid    asid;
-    Bit#(4) vm;
+    Bit#(2) prv; // has taken mstatus.mprv into account
+    Asid asid; // currently always 0
+    Bool sv39; // VM mode: has taken prv into account, False means Bare
+    Bool exeReadable; // mstatus.mxr: can load page with X=1 and R=0
+    Bool userAccessibleByS; // mstatus.sum: in S mode (after considering
+                            // mstatus.mprv), accessing page with U=1 will NOT
+                            // fault
+    Bit#(44) basePPN; // ppn of root page table
 } VMInfo deriving(Bits, Eq, FShow);
 
 Bit#(2) prvU = 0;
 Bit#(2) prvS = 1;
 Bit#(2) prvM = 3;
 
-Bit#(4) vmMbare = 0;
-Bit#(4) vmSv32  = 8;
+Bit#(4) vmBare = 0;
 Bit#(4) vmSv39  = 9;
-Bit#(4) vmSv48  = 10;
 
 // Op
 Bit#(3) fnADD   = 3'b000;

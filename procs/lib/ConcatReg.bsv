@@ -1,26 +1,3 @@
-
-// Copyright (c) 2017 Massachusetts Institute of Technology
-// 
-// Permission is hereby granted, free of charge, to any person
-// obtaining a copy of this software and associated documentation
-// files (the "Software"), to deal in the Software without
-// restriction, including without limitation the rights to use, copy,
-// modify, merge, publish, distribute, sublicense, and/or sell copies
-// of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
-// BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
-// ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
 // This file was created by gen_ConcatReg.py. If you want to modify this file,
 // please modify gen_ConcatReg.py instead. If you need a wider concatReg
 // function, change the value of n in gen_ConcatReg.py and run it again.
@@ -260,5 +237,270 @@ function Reg#(Bit#(n)) concatReg14(
       Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14,n)
     );
   return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14));
+endfunction
+
+function Reg#(Bit#(n)) concatReg15(
+      Reg#(Bit#(n1)) r1,
+      Reg#(Bit#(n2)) r2,
+      Reg#(Bit#(n3)) r3,
+      Reg#(Bit#(n4)) r4,
+      Reg#(Bit#(n5)) r5,
+      Reg#(Bit#(n6)) r6,
+      Reg#(Bit#(n7)) r7,
+      Reg#(Bit#(n8)) r8,
+      Reg#(Bit#(n9)) r9,
+      Reg#(Bit#(n10)) r10,
+      Reg#(Bit#(n11)) r11,
+      Reg#(Bit#(n12)) r12,
+      Reg#(Bit#(n13)) r13,
+      Reg#(Bit#(n14)) r14,
+      Reg#(Bit#(n15)) r15
+    ) provisos (
+      Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14),n15,n)
+    );
+  return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14),asReg(r15));
+endfunction
+
+function Reg#(Bit#(n)) concatReg16(
+      Reg#(Bit#(n1)) r1,
+      Reg#(Bit#(n2)) r2,
+      Reg#(Bit#(n3)) r3,
+      Reg#(Bit#(n4)) r4,
+      Reg#(Bit#(n5)) r5,
+      Reg#(Bit#(n6)) r6,
+      Reg#(Bit#(n7)) r7,
+      Reg#(Bit#(n8)) r8,
+      Reg#(Bit#(n9)) r9,
+      Reg#(Bit#(n10)) r10,
+      Reg#(Bit#(n11)) r11,
+      Reg#(Bit#(n12)) r12,
+      Reg#(Bit#(n13)) r13,
+      Reg#(Bit#(n14)) r14,
+      Reg#(Bit#(n15)) r15,
+      Reg#(Bit#(n16)) r16
+    ) provisos (
+      Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14),n15),n16,n)
+    );
+  return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14),asReg(r15),asReg(r16));
+endfunction
+
+function Reg#(Bit#(n)) concatReg17(
+      Reg#(Bit#(n1)) r1,
+      Reg#(Bit#(n2)) r2,
+      Reg#(Bit#(n3)) r3,
+      Reg#(Bit#(n4)) r4,
+      Reg#(Bit#(n5)) r5,
+      Reg#(Bit#(n6)) r6,
+      Reg#(Bit#(n7)) r7,
+      Reg#(Bit#(n8)) r8,
+      Reg#(Bit#(n9)) r9,
+      Reg#(Bit#(n10)) r10,
+      Reg#(Bit#(n11)) r11,
+      Reg#(Bit#(n12)) r12,
+      Reg#(Bit#(n13)) r13,
+      Reg#(Bit#(n14)) r14,
+      Reg#(Bit#(n15)) r15,
+      Reg#(Bit#(n16)) r16,
+      Reg#(Bit#(n17)) r17
+    ) provisos (
+      Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14),n15),n16),n17,n)
+    );
+  return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14),asReg(r15),asReg(r16),asReg(r17));
+endfunction
+
+function Reg#(Bit#(n)) concatReg18(
+      Reg#(Bit#(n1)) r1,
+      Reg#(Bit#(n2)) r2,
+      Reg#(Bit#(n3)) r3,
+      Reg#(Bit#(n4)) r4,
+      Reg#(Bit#(n5)) r5,
+      Reg#(Bit#(n6)) r6,
+      Reg#(Bit#(n7)) r7,
+      Reg#(Bit#(n8)) r8,
+      Reg#(Bit#(n9)) r9,
+      Reg#(Bit#(n10)) r10,
+      Reg#(Bit#(n11)) r11,
+      Reg#(Bit#(n12)) r12,
+      Reg#(Bit#(n13)) r13,
+      Reg#(Bit#(n14)) r14,
+      Reg#(Bit#(n15)) r15,
+      Reg#(Bit#(n16)) r16,
+      Reg#(Bit#(n17)) r17,
+      Reg#(Bit#(n18)) r18
+    ) provisos (
+      Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14),n15),n16),n17),n18,n)
+    );
+  return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14),asReg(r15),asReg(r16),asReg(r17),asReg(r18));
+endfunction
+
+function Reg#(Bit#(n)) concatReg19(
+      Reg#(Bit#(n1)) r1,
+      Reg#(Bit#(n2)) r2,
+      Reg#(Bit#(n3)) r3,
+      Reg#(Bit#(n4)) r4,
+      Reg#(Bit#(n5)) r5,
+      Reg#(Bit#(n6)) r6,
+      Reg#(Bit#(n7)) r7,
+      Reg#(Bit#(n8)) r8,
+      Reg#(Bit#(n9)) r9,
+      Reg#(Bit#(n10)) r10,
+      Reg#(Bit#(n11)) r11,
+      Reg#(Bit#(n12)) r12,
+      Reg#(Bit#(n13)) r13,
+      Reg#(Bit#(n14)) r14,
+      Reg#(Bit#(n15)) r15,
+      Reg#(Bit#(n16)) r16,
+      Reg#(Bit#(n17)) r17,
+      Reg#(Bit#(n18)) r18,
+      Reg#(Bit#(n19)) r19
+    ) provisos (
+      Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14),n15),n16),n17),n18),n19,n)
+    );
+  return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14),asReg(r15),asReg(r16),asReg(r17),asReg(r18),asReg(r19));
+endfunction
+
+function Reg#(Bit#(n)) concatReg20(
+      Reg#(Bit#(n1)) r1,
+      Reg#(Bit#(n2)) r2,
+      Reg#(Bit#(n3)) r3,
+      Reg#(Bit#(n4)) r4,
+      Reg#(Bit#(n5)) r5,
+      Reg#(Bit#(n6)) r6,
+      Reg#(Bit#(n7)) r7,
+      Reg#(Bit#(n8)) r8,
+      Reg#(Bit#(n9)) r9,
+      Reg#(Bit#(n10)) r10,
+      Reg#(Bit#(n11)) r11,
+      Reg#(Bit#(n12)) r12,
+      Reg#(Bit#(n13)) r13,
+      Reg#(Bit#(n14)) r14,
+      Reg#(Bit#(n15)) r15,
+      Reg#(Bit#(n16)) r16,
+      Reg#(Bit#(n17)) r17,
+      Reg#(Bit#(n18)) r18,
+      Reg#(Bit#(n19)) r19,
+      Reg#(Bit#(n20)) r20
+    ) provisos (
+      Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14),n15),n16),n17),n18),n19),n20,n)
+    );
+  return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14),asReg(r15),asReg(r16),asReg(r17),asReg(r18),asReg(r19),asReg(r20));
+endfunction
+
+function Reg#(Bit#(n)) concatReg21(
+      Reg#(Bit#(n1)) r1,
+      Reg#(Bit#(n2)) r2,
+      Reg#(Bit#(n3)) r3,
+      Reg#(Bit#(n4)) r4,
+      Reg#(Bit#(n5)) r5,
+      Reg#(Bit#(n6)) r6,
+      Reg#(Bit#(n7)) r7,
+      Reg#(Bit#(n8)) r8,
+      Reg#(Bit#(n9)) r9,
+      Reg#(Bit#(n10)) r10,
+      Reg#(Bit#(n11)) r11,
+      Reg#(Bit#(n12)) r12,
+      Reg#(Bit#(n13)) r13,
+      Reg#(Bit#(n14)) r14,
+      Reg#(Bit#(n15)) r15,
+      Reg#(Bit#(n16)) r16,
+      Reg#(Bit#(n17)) r17,
+      Reg#(Bit#(n18)) r18,
+      Reg#(Bit#(n19)) r19,
+      Reg#(Bit#(n20)) r20,
+      Reg#(Bit#(n21)) r21
+    ) provisos (
+      Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14),n15),n16),n17),n18),n19),n20),n21,n)
+    );
+  return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14),asReg(r15),asReg(r16),asReg(r17),asReg(r18),asReg(r19),asReg(r20),asReg(r21));
+endfunction
+
+function Reg#(Bit#(n)) concatReg22(
+      Reg#(Bit#(n1)) r1,
+      Reg#(Bit#(n2)) r2,
+      Reg#(Bit#(n3)) r3,
+      Reg#(Bit#(n4)) r4,
+      Reg#(Bit#(n5)) r5,
+      Reg#(Bit#(n6)) r6,
+      Reg#(Bit#(n7)) r7,
+      Reg#(Bit#(n8)) r8,
+      Reg#(Bit#(n9)) r9,
+      Reg#(Bit#(n10)) r10,
+      Reg#(Bit#(n11)) r11,
+      Reg#(Bit#(n12)) r12,
+      Reg#(Bit#(n13)) r13,
+      Reg#(Bit#(n14)) r14,
+      Reg#(Bit#(n15)) r15,
+      Reg#(Bit#(n16)) r16,
+      Reg#(Bit#(n17)) r17,
+      Reg#(Bit#(n18)) r18,
+      Reg#(Bit#(n19)) r19,
+      Reg#(Bit#(n20)) r20,
+      Reg#(Bit#(n21)) r21,
+      Reg#(Bit#(n22)) r22
+    ) provisos (
+      Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14),n15),n16),n17),n18),n19),n20),n21),n22,n)
+    );
+  return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14),asReg(r15),asReg(r16),asReg(r17),asReg(r18),asReg(r19),asReg(r20),asReg(r21),asReg(r22));
+endfunction
+
+function Reg#(Bit#(n)) concatReg23(
+      Reg#(Bit#(n1)) r1,
+      Reg#(Bit#(n2)) r2,
+      Reg#(Bit#(n3)) r3,
+      Reg#(Bit#(n4)) r4,
+      Reg#(Bit#(n5)) r5,
+      Reg#(Bit#(n6)) r6,
+      Reg#(Bit#(n7)) r7,
+      Reg#(Bit#(n8)) r8,
+      Reg#(Bit#(n9)) r9,
+      Reg#(Bit#(n10)) r10,
+      Reg#(Bit#(n11)) r11,
+      Reg#(Bit#(n12)) r12,
+      Reg#(Bit#(n13)) r13,
+      Reg#(Bit#(n14)) r14,
+      Reg#(Bit#(n15)) r15,
+      Reg#(Bit#(n16)) r16,
+      Reg#(Bit#(n17)) r17,
+      Reg#(Bit#(n18)) r18,
+      Reg#(Bit#(n19)) r19,
+      Reg#(Bit#(n20)) r20,
+      Reg#(Bit#(n21)) r21,
+      Reg#(Bit#(n22)) r22,
+      Reg#(Bit#(n23)) r23
+    ) provisos (
+      Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14),n15),n16),n17),n18),n19),n20),n21),n22),n23,n)
+    );
+  return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14),asReg(r15),asReg(r16),asReg(r17),asReg(r18),asReg(r19),asReg(r20),asReg(r21),asReg(r22),asReg(r23));
+endfunction
+
+function Reg#(Bit#(n)) concatReg24(
+      Reg#(Bit#(n1)) r1,
+      Reg#(Bit#(n2)) r2,
+      Reg#(Bit#(n3)) r3,
+      Reg#(Bit#(n4)) r4,
+      Reg#(Bit#(n5)) r5,
+      Reg#(Bit#(n6)) r6,
+      Reg#(Bit#(n7)) r7,
+      Reg#(Bit#(n8)) r8,
+      Reg#(Bit#(n9)) r9,
+      Reg#(Bit#(n10)) r10,
+      Reg#(Bit#(n11)) r11,
+      Reg#(Bit#(n12)) r12,
+      Reg#(Bit#(n13)) r13,
+      Reg#(Bit#(n14)) r14,
+      Reg#(Bit#(n15)) r15,
+      Reg#(Bit#(n16)) r16,
+      Reg#(Bit#(n17)) r17,
+      Reg#(Bit#(n18)) r18,
+      Reg#(Bit#(n19)) r19,
+      Reg#(Bit#(n20)) r20,
+      Reg#(Bit#(n21)) r21,
+      Reg#(Bit#(n22)) r22,
+      Reg#(Bit#(n23)) r23,
+      Reg#(Bit#(n24)) r24
+    ) provisos (
+      Add#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(TAdd#(n1,n2),n3),n4),n5),n6),n7),n8),n9),n10),n11),n12),n13),n14),n15),n16),n17),n18),n19),n20),n21),n22),n23),n24,n)
+    );
+  return concatReg(asReg(r1),asReg(r2),asReg(r3),asReg(r4),asReg(r5),asReg(r6),asReg(r7),asReg(r8),asReg(r9),asReg(r10),asReg(r11),asReg(r12),asReg(r13),asReg(r14),asReg(r15),asReg(r16),asReg(r17),asReg(r18),asReg(r19),asReg(r20),asReg(r21),asReg(r22),asReg(r23),asReg(r24));
 endfunction
 

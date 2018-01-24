@@ -649,7 +649,7 @@ function DecodeResult decode(Instruction inst);
                         privMRET: dInst.iType = Mret;
                         privECALL: dInst.iType = Ecall;
                         privEBREAK: dInst.iType = Ebreak;
-                        privWFI: dInst.iType = Nop; // treat WFI as NOP
+                        privWFI: dInst.iType = Wfi;
                         default: illegalInst = True;
                     endcase
                 end
