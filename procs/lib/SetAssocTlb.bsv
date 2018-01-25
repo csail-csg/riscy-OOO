@@ -39,12 +39,19 @@ typedef struct {
 
 typedef struct {
     Vpn vpn;
+    Asid asid;
 } SetAssocTlbReq deriving(Bits, Eq, FShow);
 
 typedef struct {
     Bool valid;
     TlbEntry entry;
 } SetAssocTlbEntry deriving(Bits, Eq, FShow);
+
+typedef enum {
+    None,
+    RepInfoOnly, // only update replacement info
+    NewEntry // set a new entry (also update replacement info)
+} SetAssocTlbUpdate deriving(Bits, Eq, FShow);
 
 interface SetAssocTlb#(
     numeric type wayNum,
@@ -57,7 +64,11 @@ interface SetAssocTlb#(
     method Action req(SetAssocTlbReq r);
     method SetAssocTlbResp#(Bit#(TLog#(wayNum))) resp;
     // deq resp from pipeline and may update a way
-    method Action deqUpdate(Bool update, Bit#(TLog#(wayNum)) way, SetAssocTlbEntry entry);
+    method Action deqUpdate(
+        SetAssocTlbUpdate update,
+        Bit#(TLog#(wayNum)) way, // must be valid when update != None
+        TlbEntry newEntry // must be valid when update == NewEntry
+    );
 endinterface
 
 typedef enum {Flush, Ready} SetAssocTlbState deriving(Bits, Eq, FShow);
@@ -88,7 +99,8 @@ module mkSetAssocTlb#(
 
     function indexT getIndex(Vpn vpn) = truncate(vpn);
 
-    // we don't accept req when there is an old req to the same index
+    // we don't accept req when there is an old req to the same index, because
+    // at resp end we may write RAM. This resolves read-after-write hazard.
     Wire#(Maybe#(indexT)) pendIndex <- mkBypassWire;
     (* fire_when_enabled, no_implicit_conditions *)
     rule setPendIndex;
@@ -96,7 +108,7 @@ module mkSetAssocTlb#(
     endrule
 
     rule doFlush(state == Flush);
-        // since TLB is write-through, we can discard everything
+        // since TLB is a read-only cache, we can discard everything
         for(Integer i = 0; i < valueof(wayNum); i = i+1) begin
             tlbRam[i].wrReq(flushIdx, SetAssocTlbEntry {valid: False, entry: ?});
         end
@@ -141,9 +153,12 @@ module mkSetAssocTlb#(
             entries[i] = tlbRam[i].rdResp;
         end
         repInfoT repInfo = repRam.rdResp;
-        // do VPN match (only 4KB page)
+        // do VPN match (only 4KB page) and ASID match
         function Bool vpnMatch(wayT i);
-            return entries[i].valid && entries[i].entry.vpn == rq.vpn;
+            SetAssocTlbEntry en = entries[i];
+            Bool vpnMatch = en.entry.vpn == rq.vpn;
+            Bool asidMatch = en.entry.asid == rq.asid || en.entry.pteType.global;
+            return en.valid && asidMatch && vpnMatch;
         endfunction
         Vector#(wayNum, wayT) wayVec = genWith(fromInteger);
         if(find(vpnMatch, wayVec) matches tagged Valid .w) begin
@@ -170,7 +185,7 @@ module mkSetAssocTlb#(
     endmethod
 
     // deq resp from pipeline and update a way and LRU
-    method Action deqUpdate(Bool update, wayT way, SetAssocTlbEntry entry) if(
+    method Action deqUpdate(SetAssocTlbUpdate update, wayT way, TlbEntry newEn) if(
         state == Ready &&& pendReq[0] matches tagged Valid .rq
     );
         // deq pipeline reg
@@ -181,12 +196,17 @@ module mkSetAssocTlb#(
         end
         repRam.deqRdResp;
         // update ram
-        let idx = getIndex(rq.vpn);
-        let repInfo = repRam.rdResp;
-        if(update) begin
-            doAssert(entry.valid, "new entry must be valid");
-            tlbRam[way].wrReq(idx, entry);
+        if(update != None) begin
+            let idx = getIndex(rq.vpn);
+            let repInfo = repRam.rdResp;
+            // update replacement info
             repRam.wrReq(idx, updateRepInfo(repInfo, way));
+            // set new entry
+            if(update == NewEntry) begin
+                tlbRam[way].wrReq(idx, SetAssocTlbEntry {
+                    valid: True, entry: newEn
+                });
+            end
         end
     endmethod
 endmodule

@@ -57,7 +57,6 @@ endinterface
 
 interface ITlb;
     // system consistency related
-    method Bool noPendingReq;
     method Bool flush_done;
     method Action flush;
     method Action updateVMInfo(VMInfo vm);
@@ -94,7 +93,7 @@ module mkITlb(ITlb::ITlb);
     Fifo#(2, TlbResp) hitQ <- mkCFFifo;
 
     // current processor VM information
-    Reg#(VMInfo) vm_info <- mkReg(VMInfo{prv:2'b11, asid:0, vm:0, base:0, bound:-1});
+    Reg#(VMInfo) vm_info <- mkReg(defaultValue);
 
     // blocking miss
     Reg#(Maybe#(Addr)) miss <- mkReg(Invalid);
@@ -125,51 +124,43 @@ module mkITlb(ITlb::ITlb);
         if(verbose) $display("ITLB %m: flush done");
     endrule
 
-    function Bool hasPermission(PTE_Type page_perm);
-        return hasSv39Permission(vm_info, True, False, page_perm);
-    endfunction
-
     rule doRsFromP(miss matches tagged Valid .vaddr);
         rsFromPQ.deq;
         let pRs = rsFromPQ.first;
 
         if(pRs.entry matches tagged Valid .en) begin
-            // TODO when we have multiple misses in future
-            // we first need to search TLB to check whether the PTE is already in TLB
-            // this may happen for mega/giga pages
-            // we don't want same PTE to occupy >1 TLB entires
+            // TODO when we have multiple misses in future.  We first need to
+            // search TLB to check whether the PTE is already in TLB; this may
+            // happen for mega/giga pages.  We don't want same PTE to occupy >1
+            // TLB entires.
             
             // check permission
-            if(hasPermission(en.page_perm)) begin
-                // access bit already set in parent TLB, just fill TLB and resp to proc
+            if(hasPermission(vm_info, en.ppn, en.level, InstFetch)) begin
+                // fill TLB and resp to proc
                 tlb.add_translation(en);
-                let trans_addr = translate(vaddr, en.ppn, en.page_size);
+                let trans_addr = translate(vaddr, en.ppn, en.level);
                 hitQ.enq(tuple2(trans_addr, Invalid));
-                if(verbose) $display("ITLB %m refill: ", fshow(vaddr), " ; ", fshow(trans_addr));
+                if(verbose) begin
+                    $display("ITLB %m refill: ", fshow(vaddr),
+                             " ; ", fshow(trans_addr));
+                end
             end
             else begin
-                // Don't have needed permission for this page
-                hitQ.enq(tuple2(?, Valid (InstAccessFault)));
-                if(verbose) $display("ITLB %m refill no permission: ", fshow(vaddr));
+                // page fault
+                hitQ.enq(tuple2(?, Valid (InstPageFault)));
+                if(verbose) begin
+                    $display("ITLB %m refill no permission: ", fshow(vaddr));
+                end
             end
         end
         else begin
             // page fault
-            hitQ.enq(tuple2(?, Valid (InstAccessFault)));
+            hitQ.enq(tuple2(?, Valid (InstPageFault)));
             if(verbose) $display("ITLB %m refill page fault: ", fshow(vaddr));
         end
         // miss resolved
         miss <= Invalid;
     endrule
-
-    // wire for no pending req, solve schedule conflict when ITLB is put inside fetchStage
-    Wire#(Bool) no_pending_wire <- mkBypassWire;
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule setNoPendingWire;
-        no_pending_wire <= !isValid(miss);
-    endrule
-
-    method Bool noPendingReq = no_pending_wire;
 
     method Action flush if(!needFlush);
         needFlush <= True;
@@ -181,60 +172,63 @@ module mkITlb(ITlb::ITlb);
 
     method Bool flush_done = !needFlush;
 
-    method Action updateVMInfo(VMInfo vm);
+    method Action updateVMInfo(VMInfo vm) if(!isValid(miss));
         vm_info <= vm;
     endmethod
 
     interface Server to_proc;
         interface Put request;
-            // we do not accept new req when flushing flag is set
-            // we also make the guard more restrictive to reduce the time of computing guard
-            // i.e. guard does not depend on whether TLB hit or miss
-            method Action put(Addr vaddr) if(!needFlush && !isValid(miss) && hitQ.notFull && rqToPQ.notFull);
-                if (vm_info.vm == vmSv39) begin
+            // We do not accept new req when flushing flag is set.  We also
+            // make the guard more restrictive to reduce the time of computing
+            // guard i.e. guard does not depend on whether TLB hit or miss
+            method Action put(Addr vaddr) if(
+                !needFlush && !isValid(miss) && hitQ.notFull && rqToPQ.notFull
+            );
+                if (vm_info.sv39) begin
                     let vpn = getVpn(vaddr);
                     let trans_result = tlb.translate(vpn, vm_info.asid);
                     if (trans_result.hit) begin
                         // TLB hit
                         let entry = trans_result.entry;
                         // check permission
-                        if (hasPermission(entry.page_perm)) begin
-                            // update LRU in TLB, I TLB never writes
-                            tlb.update(trans_result.index, False);
+                        if(hasVMPermission(vm_info,
+                                           entry.ppn,
+                                           entry.level,
+                                           InstFetch)) begin
+                            // update replacement info
+                            tlb.updateRep(trans_result.index);
                             // translate addr
-                            Addr trans_addr = translate(vaddr, entry.ppn, entry.page_size);
+                            Addr trans_addr = translate(
+                                vaddr, entry.ppn, entry.level
+                            );
                             hitQ.enq(tuple2(trans_addr, Invalid));
-                            if(verbose) $display("ITLB %m req (hit): ", fshow(vaddr), " ; ", fshow(trans_result));
+                            if(verbose) begin
+                                $display("ITLB %m req (hit): ", fshow(vaddr),
+                                         " ; ", fshow(trans_result));
+                            end
                         end
                         else begin
-                            // Don't have needed permission for this page
-                            hitQ.enq(tuple2(?, Valid (InstAccessFault)));
-                            if(verbose) $display("ITLB %m req no permission: ", fshow(vaddr));
+                            // page fault
+                            hitQ.enq(tuple2(?, Valid (InstPageFault)));
+                            if(verbose) begin
+                                $display("ITLB %m req no permission: ",
+                                         fshow(vaddr));
+                            end
                         end
                     end
                     else begin
                         // TLB miss, req to parent TLB
                         miss <= Valid (vaddr);
-                        rqToPQ.enq(ITlbRqToP {
-                            vpn: vpn
-                        });
-                        if(verbose) $display("ITLB %m req (miss): ", fshow(vaddr));
-                    end
-                end
-                else if (vm_info.vm == vmMbare || vm_info.vm == vmMbb || vm_info.vm == vmMbbid) begin
-                    if (verbose) $display("ITLB %m req (untrans): ", fshow(vaddr));
-                    if (vaddr > vm_info.bound - vm_info.base) begin
-                        hitQ.enq(tuple2(?, Valid (InstAccessFault)));
-                    end
-                    else begin
-                        let paddr = vaddr + vm_info.base;
-                        hitQ.enq(tuple2(paddr, Invalid));
+                        rqToPQ.enq(ITlbRqToP {vpn: vpn});
+                        if(verbose) begin
+                            $display("ITLB %m req (miss): ", fshow(vaddr));
+                        end
                     end
                 end
                 else begin
-                    // Illegal paging mode
-                    doAssert(False, "Unsupported paging mode");
-                    hitQ.enq(tuple2(?, Valid (InstAccessFault)));
+                    // bare mode, no translation
+                    hitQ.enq(tuple2(vaddr, Invalid));
+                    if (verbose) $display("ITLB %m req (bare): ", fshow(vaddr));
                 end
             endmethod
         endinterface

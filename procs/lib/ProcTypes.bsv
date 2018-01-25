@@ -339,6 +339,15 @@ typedef union tagged {
     Interrupt Interrupt;
 } Trap deriving(Bits, Eq, FShow);
 
+// privilege modes
+Bit#(2) prvU = 0;
+Bit#(2) prvS = 1;
+Bit#(2) prvM = 3;
+
+// VM modes
+Bit#(4) vmBare = 0;
+Bit#(4) vmSv39  = 9;
+
 typedef struct {
     // for decoding floating-point instructions
     Bit#(3) frm;
@@ -358,6 +367,27 @@ typedef struct {
     Bool timeReadableByS; // S mode can do rdtime
     Bool timeReadableByU; // U mode can do rdtime
 } CsrDecodeInfo deriving (Bits, Eq, FShow);
+
+typedef struct {
+    Bit#(2) prv; // has taken mstatus.mprv into account
+    Asid asid; // currently always 0
+    Bool sv39; // VM mode: has taken prv into account, False means Bare
+    Bool exeReadable; // mstatus.mxr: can load page with X=1 and R=0
+    Bool userAccessibleByS; // mstatus.sum: in S mode (after considering
+                            // mstatus.mprv), accessing page with U=1 will NOT
+                            // fault
+    Bit#(44) basePPN; // ppn of root page table
+} VMInfo deriving(Bits, Eq, FShow);
+
+instance DefaultValue#(VMInfo);
+    function VMInfo defualtValue = VMInfo {
+        prv:  prvM,
+        asid: 0,
+        sv39: False,
+        exeReadable: False,
+        userAccessibleByS: False
+    };
+endinstance
 
 typedef struct {
     Addr  pc;
@@ -399,24 +429,6 @@ typedef struct {
     Addr        addr;
     ControlFlow controlFlow;
 } ExecResult deriving(Bits, Eq, FShow);
-
-typedef struct {
-    Bit#(2) prv; // has taken mstatus.mprv into account
-    Asid asid; // currently always 0
-    Bool sv39; // VM mode: has taken prv into account, False means Bare
-    Bool exeReadable; // mstatus.mxr: can load page with X=1 and R=0
-    Bool userAccessibleByS; // mstatus.sum: in S mode (after considering
-                            // mstatus.mprv), accessing page with U=1 will NOT
-                            // fault
-    Bit#(44) basePPN; // ppn of root page table
-} VMInfo deriving(Bits, Eq, FShow);
-
-Bit#(2) prvU = 0;
-Bit#(2) prvS = 1;
-Bit#(2) prvM = 3;
-
-Bit#(4) vmBare = 0;
-Bit#(4) vmSv39  = 9;
 
 // Op
 Bit#(3) fnADD   = 3'b000;

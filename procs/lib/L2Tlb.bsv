@@ -47,9 +47,8 @@ import L2SetAssocTlb::*;
 typedef enum {Null} TlbMemReqId deriving(Bits, Eq, FShow);
 
 typedef struct {
-    Bool write;
+    // this is always a load req
     Addr addr;
-    Data data;
     TlbMemReqId id;
 } TlbMemReq deriving(Bits, Eq, FShow);
 
@@ -61,7 +60,6 @@ typedef struct {
 interface TlbMemClient;
     interface FifoDeq#(TlbMemReq) memReq;
     interface FifoEnq#(TlbLdResp) respLd;
-    interface FifoEnq#(TlbMemReqId) respSt;
 endinterface
 
 // interface with children (I/D TLB)
@@ -69,19 +67,16 @@ typedef enum {I, D} TlbChild deriving(Bits, Eq, FShow);
 typedef struct {
     TlbChild child;
     Vpn vpn;
-    TlbRqToPType reqType; // DTLB req type; ITLB should set to LdTranslation
-    Bool write; // DTLB write or not; ITLB should set to False
 } L2TlbRqFromC deriving(Bits, Eq, FShow);
 
 typedef struct {
     TlbChild child;
-    Maybe#(TlbEntry) entry;
+    TlbEntry entry;
 } L2TlbRsToC deriving(Bits, Eq, FShow);
 
 interface L2TlbToChildren;
     interface Put#(L2TlbRqFromC) rqFromC;
     interface FifoDeq#(L2TlbRsToC) rsToC;
-    interface FifoDeq#(void) setDirtyRs;
     // flush with I/D TLB
     interface Put#(void) iTlbReqFlush;
     interface Put#(void) dTlbReqFlush;
@@ -89,8 +84,7 @@ interface L2TlbToChildren;
 endinterface
 
 interface L2Tlb;
-    // system consistency related (flush is requested by both I & D TLB)
-    method Bool noPendingReqOrWrite;
+    // keep update with changes to CSRs
     method Action updateVMInfo(VMInfo vmI, VMInfo vmD);
 
     // ifc with ITLb & DTLB
@@ -108,6 +102,9 @@ module mkL2FullAssocTlb(L2FullAssocTlb);
     let m <- mkFullAssocTlb;
     return m;
 endmodule
+
+// TODO we should raise load access fault if the PTE address is not a DRAM
+// address. (trap value is still the virtual address being translated).
 
 (* synthesize *)
 module mkL2Tlb(L2Tlb);
@@ -128,7 +125,6 @@ module mkL2Tlb(L2Tlb);
     // req/resp with I/D TLBs
     Fifo#(1, L2TlbRqFromC) rqFromCQ <- mkBypassFifo;
     Fifo#(1, L2TlbRsToC) rsToCQ <- mkBypassFifo;
-    Fifo#(1, void) setDirtyRsQ <- mkBypassFifo;
 
     // pending req in set assoc TLB pipeline
     Ehr#(2, Maybe#(L2TlbRqFromC)) pendReq_ehr <- mkEhr(Invalid);
@@ -137,31 +133,30 @@ module mkL2Tlb(L2Tlb);
 
     // page walk currently being prcessed
     Reg#(Bool) miss <- mkReg(False);
-    Reg#(Bit#(2)) walkLevel <- mkRegU; // "i" in riscv spec's page walk algorithm
-    Reg#(Addr) ptBaseAddr <- mkRegU; // page table base addr ("a" in spec's algorithm)
+    // "i" in riscv spec's page walk algorithm
+    Reg#(PageWalkLevel) walkLevel <- mkRegU;
+    // page table base addr ("a" in spec's algorithm)
+    Reg#(Addr) ptBaseAddr <- mkRegU;
     
     // current processor VM information
-    Reg#(VMInfo) vm_info_I <- mkReg(VMInfo{prv:2'b11, asid:0, vm:0, base:0, bound:-1});
-    Reg#(VMInfo) vm_info_D <- mkReg(VMInfo{prv:2'b11, asid:0, vm:0, base:0, bound:-1});
+    Reg#(VMInfo) vm_info_I <- mkReg(defualtValue);
+    Reg#(VMInfo) vm_info_D <- mkReg(defaultValue);
 
     // Memory Queues for page table walks
     Fifo#(2, TlbMemReq) memReqQ <- mkCFFifo;
     Fifo#(2, TlbLdResp) respLdQ <- mkCFFifo;
-    Fifo#(2, TlbMemReqId) respStQ <- mkCFFifo;
-
-    // counter for pending stores to memory (LLC)
-    SafeCounter#(Bit#(4)) pendStCnt <- mkSafeCounter(0);
 
     // FIFO for perf req
     Fifo#(1, TlbPerfType) perfReqQ <- mkCFFifo;
 
-    // when flushing is true, all I/D TLB req have been responded
-    // so there cannot be any req in rqFromCQ or any new req
-    // The only possible pendReq is SetDirtyOnly
-    rule doStartFlush(flushing && !waitFlushDone && !isValid(pendReq) && pendStCnt == 0);
+    // when flushing is true, since both I and D TLBs have finished flush and
+    // is waiting for L2 to flush, all I/D TLB req must have been responded.
+    // Thus, there cannot be any req in pendReq or rqFromCQ. We add the guards
+    // to make rules truly exclusive so no req can be processed during flush.
+    rule doStartFlush(flushing && !waitFlushDone && !isValid(pendReq));
         waitFlushDone <= True;
         tlb4KB.flush;
-        tlbMG.flush_translation(unpack(0), unpack(0), True);
+        tlbMG.flush;
     endrule
 
     rule doWaitFlush(flushing && waitFlushDone && tlb4KB.flush_done);
@@ -171,194 +166,107 @@ module mkL2Tlb(L2Tlb);
         dFlushReq <= False;
     endrule
 
-    // decr pend st cnt by recv st resp
-    rule doStResp;
-        respStQ.deq;
-        pendStCnt.decr(1);
-    endrule
-
-    function Addr getPTEAddr(Addr baseAddr, Vpn vpn, Bit#(2) i);
-        Vector#(3, VpnI) vpnVec = unpack(vpn); // index 0 is LSB
-        return baseAddr + (zeroExtend(vpnVec[i]) << 3); // PTE is 2^3 bytes
-    endfunction
-
-    rule doTlbReq(!isValid(pendReq_enq));
+    rule doTlbReq(!isValid(pendReq_enq) && !flushing);
+        // get new req
         rqFromCQ.deq;
         let r = rqFromCQ.first;
         // req tlb array
-        tlb4KB.req(SetAssocTlbReq {vpn: r.vpn});
+        VMInfo vm_info = r.child == I ? vm_info_I : vm_info_D;
+        tlb4KB.req(SetAssocTlbReq {vpn: r.vpn, asid: vm_info.asid});
         // record req
         pendReq_enq <= Valid (r);
-        // directly resp SetDirtyOnly
-        if(r.reqType == SetDirtyOnly) begin
-            setDirtyRsQ.enq(?);
-        end
         if(verbose) $display("L2TLB new req: ", fshow(r));
     endrule
 
     // process resp from 4KB TLB and mega-giga TLB
     rule doTlbResp(pendReq matches tagged Valid .cRq &&& !miss);
-        // handle page fault
-        function Action pageFault(String reason);
-        action
-            // page fault, just resp child with invalid entry
-            // set dirty req should not incr page fault
-            // because it is a hit in DTLB
-            if(cRq.reqType == SetDirtyOnly) begin
-                doAssert(False, reason + " should not happen for set dirty in doTlbResp");
-                // resp has already been sent before
-            end
-            else begin
-                rsToCQ.enq(L2TlbRsToC {
-                    child: cRq.child,
-                    entry: Invalid
-                });
-            end
-            // req is done (we are not in miss)
-            pendReq <= Invalid;
-            // 4KB TLB array is not deq yet
-            tlb4KB.deqUpdate(False, ?, ?);
-        endaction
-        endfunction
+        assert(!flushing, "cannot have pending req when flushing");
 
         // get correct VM info
         VMInfo vm_info = cRq.child == I ? vm_info_I : vm_info_D;
+        assert(vm_info.sv39, "must be in sv39 mode");
 
-        if(vm_info.vm == vmSv39) begin
-            // get resp from 4KB TLB and mega-giga TLB
-            let resp4KB = tlb4KB.resp;
-            let respMG = tlbMG.translate(cRq.vpn, vm_info.asid);
+        // get resp from 4KB TLB and mega-giga TLB
+        let resp4KB = tlb4KB.resp;
+        let respMG = tlbMG.translate(cRq.vpn, vm_info.asid);
 
-            if(verbose) begin
-                $display("L2TLB resp: ", fshow(vm_info), " ; ", fshow(cRq), " ; ", 
-                         fshow(resp4KB), " ; ", fshow(respMG));
-            end
+        if(verbose) begin
+            $display("L2TLB resp: ", fshow(vm_info), " ; ", fshow(cRq), " ; ", 
+                     fshow(resp4KB), " ; ", fshow(respMG));
+        end
 
-            Bool startPageWalk = False; // flag for starting page walk
+        // when page hit, resp to child (4KB array is not dequeued)
+        function Action pageHit(TlbEntry entry);
+        action
+            // resp to child
+            rsToCQ.enq(L2TlbRsToC {
+                child: cRq.child,
+                entry: Valid (entry)
+            });
+            // req is done
+            pendReq <= Invalid;
+        endaction
+        endfunction
 
-            // when page hit, resp to child; return whether to start page walk for set dirty
-            function ActionValue#(Bool) pageHit(TlbEntry entry, Bool first_set_dirty, String debugStr);
-            actionvalue
-                if(cRq.reqType == SetDirtyOnly) begin
-                    // must have first set dirty, do page walk
-                    doAssert(first_set_dirty, "dirty bit cannot be already set in " + debugStr);
-                    return True;
-                end
-                else begin
-                    // resp to child
-                    rsToCQ.enq(L2TlbRsToC {
-                        child: cRq.child,
-                        entry: Valid (entry)
-                    });
-                    if(first_set_dirty) begin
-                        // modify req type to set dirty only, no further resp will be sent
-                        pendReq <= Valid (L2TlbRqFromC {
-                            child: cRq.child,
-                            vpn: cRq.vpn,
-                            reqType: SetDirtyOnly,
-                            write: True
-                        });
-                        return True; // start page walk for set dirty only
-                    end
-                    else begin
-                        // req is done
-                        pendReq <= Invalid;
-                        return False; // no more page walk
-                    end
-                end
-            endactionvalue
-            endfunction
-
-            if(respMG.hit) begin
-                // hit on a mega or giga page
-                let entry = respMG.entry;
-                doAssert(entry.page_size > 0 && entry.page_size <= 2, "mega or giga page");
-                // check permission
-                if(hasSv39Permission(vm_info, cRq.child == I, cRq.write, entry.page_perm)) begin
-                    // check dirty bit & update it
-                    Bool first_set_dirty = !entry.dirty && cRq.write;
-                    entry.dirty = entry.dirty || cRq.write;
-                    tlbMG.update(respMG.index, cRq.write);
-                    // deq 4KB TLB
-                    doAssert(!resp4KB.hit, "4KB page cannot hit");
-                    tlb4KB.deqUpdate(False, ?, ?);
-                    // check whether we need to resp child & do page walk for set dirty
-                    startPageWalk <- pageHit(entry, first_set_dirty, "hit mega/giga");
-                end
-                else begin
-                    pageFault("hit on mega/giga page, no permission");
-                end
-            end
-            else if(resp4KB.hit) begin
-                // hit on 4KB page
-                let entry = resp4KB.entry;
-                doAssert(entry.page_size == 0, "must be 4KB page");
-                // check permission
-                if(hasSv39Permission(vm_info, cRq.child == I, cRq.write, entry.page_perm)) begin
-                    // check dirty bit & update it
-                    Bool first_set_dirty = !entry.dirty && cRq.write;
-                    entry.dirty = entry.dirty || cRq.write;
-                    // deq 4KB TLB & update it
-                    tlb4KB.deqUpdate(True, resp4KB.way, SetAssocTlbEntry {valid: True, entry: entry});
-                    // check whether we need to resp child & do page walk for set dirty
-                    startPageWalk <- pageHit(entry, first_set_dirty, "hit 4KB");
-                end
-                else begin
-                    pageFault("hit on 4KB page, no permission");
-                end
-            end
-            else begin
-                // miss, do page walk
-                startPageWalk = True;
-                // if set dirty only, deq 4KB TLB (no refill)
-                if(cRq.reqType == SetDirtyOnly) begin
-                    tlb4KB.deqUpdate(False, ?, ?);
-                end
-            end
-
-            // start page walk
-            if(startPageWalk) begin
-                // miss, setup page walk
-                Bit#(2) level = 2;
-                Addr baseAddr = vm_info.base;
-                miss <= True;
-                walkLevel <= level;
-                ptBaseAddr <= baseAddr;
-                // req memory (LLC)
-                Addr pteAddr = getPTEAddr(baseAddr, cRq.vpn, level);
-                memReqQ.enq(TlbMemReq {
-                    write: False,
-                    addr: pteAddr,
-                    data: ?,
-                    id: Null
-                });
-            end
+        if(!vm_info.sv39) begin
+            // not in sv39 -> page fault
+            // resp with invalid entry
+            rsToCQ.enq(L2TlbRsToC {
+                child: cRq.child,
+                entry: Invalid
+            });
+            // 4KB TLB array is not deq yet
+            tlb4KB.deqUpdate(False, ?, ?);
+            // req is done
+            pendReq <= Invalid;
+        end
+        else if(respMG.hit) begin
+            // hit on a mega or giga page
+            let entry = respMG.entry;
+            doAssert(entry.level > 0 && entry.level <= maxpageWalkLevel, "mega or giga page");
+            pageHit(entry);
+            tlb4KB.deqUpdate(None, ?, ?); // just deq 4KB array
+            tlbMG.update(respMG.index); // update replacement in MG array
+        end
+        else if(resp4KB.hit) begin
+            // hit on 4KB page
+            let entry = resp4KB.entry;
+            doAssert(entry.level == 0, "must be 4KB page");
+            pageHit(entry);
+            // update 4KB array replacement, no need to touch MG array
+            tlb4KB.deqUpdate(RepInfoOnly, resp4KB.way, ?);
         end
         else begin
-            pageFault("not Sv39");
+            // miss, start page walk
+            PageWalkLevel level = maxPageWalkLevel;
+            Addr baseAddr = getPTBaseAddr(vm_info.basePPN);
+            miss <= True;
+            walkLevel <= level;
+            ptBaseAddr <= baseAddr;
+            // req memory (LLC)
+            Addr pteAddr = getPTEAddr(baseAddr, cRq.vpn, level);
+            memReqQ.enq(TlbMemReq {
+                addr: pteAddr,
+                id: Null
+            });
+            // XXX we keep the 4KB array resp (not deq), because page walk
+            // is done in a blocking way
         end
     endrule
 
     rule doPageWalk(pendReq matches tagged Valid .cRq &&& miss);
+        assert(!flushing, "cannot have pending req when flushing");
+
         // handle page fault
         function Action pageFault(String reason);
         action
-            // page fault, just resp child with invalid entry
-            // set dirty req should not incr page fault
-            // because it is a hit in DTLB
-            if(cRq.reqType == SetDirtyOnly) begin
-                doAssert(False, reason + " should not happen for set dirty in doPageWalk");
-                // resp has already been sent before
-                // 4KB TLB array already deq before
-            end
-            else begin
-                rsToCQ.enq(L2TlbRsToC {
-                    child: cRq.child,
-                    entry: Invalid
-                });
-                // 4KB TLB array is not deq yet
-                tlb4KB.deqUpdate(False, ?, ?);
-            end
+            // resp with invalid entry
+            rsToCQ.enq(L2TlbRsToC {
+                child: cRq.child,
+                entry: Invalid
+            });
+            // 4KB TLB array is not deq yet
+            tlb4KB.deqUpdate(False, ?, ?);
             // req is done
             pendReq <= Invalid;
             miss <= False;
@@ -370,20 +278,24 @@ module mkL2Tlb(L2Tlb);
 
         // get the resp data from memory (LLC)
         respLdQ.deq;
-        PTE_Sv39 pte = unpack_PTE_Sv39(respLdQ.first.data);
+        PTESv39 pte = unpack(respLdQ.first.data);
 
         if(verbose) begin
             $display("L2TLB page walk: ", fshow(vm_info), " ; ", fshow(cRq), " ; ",
                      fshow(walkLevel), " ; ", fshow(ptBaseAddr), " ; ", fshow(pte));
         end
 
-        if(!pte.valid) begin
-            // page fault
+        if(!vm_info.sv39) begin
+            // no longer in sv39 mode -> page fault
+            pageFault("Not in sv39");
+        end
+        else if(!pte.valid) begin
+            // invalid pte -> fault
             pageFault("invalid page");
         end
         else begin
             // page is valid, check leaf or not
-            if(!is_leaf_pte_type(pte.pte_type)) begin
+            if(!isLeafPTE(pte.pteType)) begin
                 // non-leaf page
                 if(walkLevel == 0) begin
                     // page walk end with non-leaf page -> fault
@@ -391,88 +303,53 @@ module mkL2Tlb(L2Tlb);
                 end
                 else begin
                     // continue page walk, update page walk state
-                    Addr newPTBase = zeroExtend({pte.ppn2, pte.ppn1, pte.ppn0}) << valueof(PageOffsetSz);
+                    Addr newPTBase = getPTBaseAddr(pte.ppn);
                     Bit#(2) newWalkLevel = walkLevel - 1;
                     walkLevel <= newWalkLevel;
                     ptBaseAddr <= newPTBase;
                     // req memory for PTE
                     Addr newPTEAddr = getPTEAddr(newPTBase, cRq.vpn, newWalkLevel);
                     memReqQ.enq(TlbMemReq {
-                        write: False,
                         addr: newPTEAddr,
-                        data: ?,
                         id: Null
                     });
                 end
             end
             else begin
-                // leaf page, check permission
-                if(hasSv39Permission(vm_info, cRq.child == I, cRq.write, pte.pte_type)) begin
-                    // update PTE ref/dirty bits
-                    Bool old_pte_d = pte.d;
-                    Bool old_pte_r = pte.r;
-                    pte.d = pte.d || cRq.write;
-                    pte.r = True;
-                    if(old_pte_r != True || old_pte_d != pte.d) begin
-                        Addr curPTEAddr = getPTEAddr(ptBaseAddr, cRq.vpn, walkLevel);
-                        memReqQ.enq(TlbMemReq {
-                            write: True,
-                            addr: curPTEAddr,
-                            data: pack_PTE_Sv39(pte),
-                            id: Null
-                        });
-                        pendStCnt.incr(1); // incr pending store count
-                    end
-                    // resp to child
-                    if(cRq.reqType == SetDirtyOnly) begin
-                        // resp has been sent before, 4KB TLB has been deq before
-                    end
-                    else begin
-                        // get new entry (walkLevel is page size)
-                        Vpn masked_vpn = getMaskedVpn(cRq.vpn, walkLevel);
-                        Ppn masked_ppn = getMaskedPpn({pte.ppn2, pte.ppn1, pte.ppn0}, walkLevel);
-                        let entry = TlbEntry {
-                            vpn:       masked_vpn,
-                            ppn:       masked_ppn,
-                            page_perm: pte.pte_type,
-                            page_size: walkLevel,
-                            asid:      vm_info.asid,
-                            dirty:     pte.d
-                        };
-                        // resp child
-                        rsToCQ.enq(L2TlbRsToC {
-                            child: cRq.child,
-                            entry: Valid (entry)
-                        });
-                        // update TLB array
-                        if(entry.page_size > 0) begin
-                            // add to mega/giga page tlb
-                            tlbMG.add_translation(entry);
-                            // deq 4KB TLB
-                            tlb4KB.deqUpdate(False, ?, ?);
-                        end
-                        else begin
-                            // 4KB page, add to 4KB TLB & deq
-                            tlb4KB.deqUpdate(True, tlb4KB.resp.way, SetAssocTlbEntry {valid: True, entry: entry});
-                        end
-                    end
-                    // req is done, miss is resolved
-                    pendReq <= Invalid;
-                    miss <= False;
+                // leaf page, get new entry
+                Vpn masked_vpn = getMaskedVpn(cRq.vpn, walkLevel);
+                Ppn masked_ppn = getMaskedPpn(pte.ppn, walkLevel);
+                let entry = TlbEntry {
+                    vpn:     masked_vpn,
+                    ppn:     masked_ppn,
+                    pteType: pte.pte_type,
+                    level:   walkLevel,
+                    asid:    vm_info.asid,
+                };
+                // resp child
+                rsToCQ.enq(L2TlbRsToC {
+                    child: cRq.child,
+                    entry: Valid (entry)
+                });
+                // update TLB array
+                if(entry.level > 0) begin
+                    // add to mega/giga page tlb
+                    tlbMG.addEntry(entry);
+                    // deq 4KB TLB
+                    tlb4KB.deqUpdate(None, ?, ?);
                 end
                 else begin
-                    // don't have permission -> fault
-                    pageFault("no permission");
+                    // 4KB page, add to 4KB TLB & deq
+                    tlb4KB.deqUpdate(NewEntry, tlb4KB.resp.way, entry);
                 end
+                // req is done, miss is resolved
+                pendReq <= Invalid;
+                miss <= False;
             end
         end
     endrule
 
-    method Bool noPendingReqOrWrite;
-        return !isValid(pendReq) && pendStCnt == 0;
-    endmethod
-
-    method Action updateVMInfo(VMInfo vmI, VMInfo vmD);
+    method Action updateVMInfo(VMInfo vmI, VMInfo vmD) if(!isValid(pendReq));
         vm_info_I <= vmI;
         vm_info_D <= vmD;
     endmethod
@@ -480,7 +357,6 @@ module mkL2Tlb(L2Tlb);
     interface L2TlbToChildren toChildren;
         interface Put rqFromC = toPut(rqFromCQ);
         interface rsToC = toFifoDeq(rsToCQ);
-        interface setDirtyRs = toFifoDeq(setDirtyRsQ);
 
         interface Put iTlbReqFlush;
             method Action put(void x) if(!iFlushReq);
@@ -498,7 +374,6 @@ module mkL2Tlb(L2Tlb);
     interface TlbMemClient toMem;
         interface FifoDeq memReq = toFifoDeq(memReqQ);
         interface FifoEnq respLd = toFifoEnq(respLdQ);
-        interface FifoEnq respSt = toFifoEnq(respStQ);
     endinterface
   
     interface Perf perf;

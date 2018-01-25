@@ -31,141 +31,43 @@ typedef struct{
 } TlbReq deriving(Eq, Bits, FShow);
 typedef Tuple2#(Addr, Maybe#(Exception)) TlbResp;
 
-// I/D TLB req type to L2 TLB
-typedef enum {
-    LdTranslation, // get missing translation from parent TLB
-    SetDirtyOnly // just update dirty bit in PTE
-} TlbRqToPType deriving(Bits, Eq, FShow);
-
 // Only for Sv39
 typedef 27 VpnSz;
-typedef Bit#(27) Vpn;
-typedef 38 PpnSz;
-typedef Bit#(38) Ppn;
-typedef 12 PageOffsetSz;
+typedef Bit#(VpnSz) Vpn;
+typedef 44 PpnSz;
+typedef Bit#(PpnSz) Ppn;
+typedef 12 PageOffsetSz; // 4KB basic page
 typedef Bit#(PageOffsetSz) PageOffset;
-typedef 9 VpnISz;
-typedef Bit#(VpnISz) VpnI;
-typedef Bit#(2) PageSize;
+typedef 9 VpnIdxSz; // Vpn is broken down to 3 indexes to 3 levels of page table 
+typedef Bit#(VpnIdxSz) VpnIdx;
+typedef Bit#(2) PageWalkLevel; // 2: 1GB page, 1: 2MB page, 0: 4KB page
+PageWalkLevel maxPageWalkLevel = 2;
 
 typedef struct {
-    Bit#(16) reserved;
-    Bit#(20) ppn2;
-    Bit#(9) ppn1;
-    Bit#(9) ppn0;
-    Bit#(3) reserved_sw;
-    Bool d;
-    Bool r;
-    PTE_Type pte_type;
-    Bool valid;
-} PTE_Sv39 deriving(Bits, Eq, FShow);
-
-typedef struct {
+    Bool dirty;
+    Bool accessed;
     Bool global;
-    Bool s_r;
-    Bool s_w;
-    Bool s_x;
-    Bool u_r;
-    Bool u_w;
-    Bool u_x;
-} PTE_Type deriving (Bits, Eq, FShow);
+    Bool user;
+    Bool executable;
+    Bool writable;
+    Bool readable;
+} PTEType deriving (Bits, Eq, FShow);
 
-function Bool is_leaf_pte_type(PTE_Type pte_type);
-    return pte_type.s_r; // all leaf PTE are readable by supervisor
-endfunction
-
-// I don't choose to overload pack/unpack is to avoid PTE_Type being stored in pack mode
-// Then TLB search will need to decode each PTE_Type from reg
-function Bit#(4) pack_PTE_Type(PTE_Type x);
-    Bit#(7) bitvec = {pack(x.global), pack(x.s_r), pack(x.s_w), pack(x.s_x), pack(x.u_r), pack(x.u_w), pack(x.u_x)};
-    return (case (bitvec)
-        7'b0000000: 0;
-        7'b1000000: 1;
-        7'b0100101: 2;
-        7'b0110111: 3;
-        7'b0100100: 4;
-        7'b0110110: 5;
-        7'b0101101: 6;
-        7'b0111111: 7;
-        7'b0100000: 8;
-        7'b0110000: 9;
-        7'b0101000: 10;
-        7'b0111000: 11;
-        7'b1100000: 12;
-        7'b1110000: 13;
-        7'b1101000: 14;
-        7'b1111000: 15;
-        default:    ?;
-    endcase);
-endfunction
-
-function PTE_Type unpack_PTE_Type(Bit#(4) x);
-    Bit#(7) bitvec = (case (x)
-        0:  7'b0000000;
-        1:  7'b1000000;
-        2:  7'b0100101;
-        3:  7'b0110111;
-        4:  7'b0100100;
-        5:  7'b0110110;
-        6:  7'b0101101;
-        7:  7'b0111111;
-        8:  7'b0100000;
-        9:  7'b0110000;
-        10: 7'b0101000;
-        11: 7'b0111000;
-        12: 7'b1100000;
-        13: 7'b1110000;
-        14: 7'b1101000;
-        15: 7'b1111000;
-    endcase);
-    return (PTE_Type {
-        global: unpack(bitvec[6]),
-        s_r:    unpack(bitvec[5]),
-        s_w:    unpack(bitvec[4]),
-        s_x:    unpack(bitvec[3]),
-        u_r:    unpack(bitvec[2]),
-        u_w:    unpack(bitvec[1]),
-        u_x:    unpack(bitvec[0])
-    });
-endfunction
-
-function Bit#(64) pack_PTE_Sv39(PTE_Sv39 x);
-    return {x.reserved, x.ppn2, x.ppn1, x.ppn0, x.reserved_sw, pack(x.d), pack(x.r), pack_PTE_Type(x.pte_type), pack(x.valid)};
-endfunction
-
-function PTE_Sv39 unpack_PTE_Sv39(Bit#(64) x);
-    return (PTE_Sv39 {
-        reserved:     x[63:48],
-        ppn2:         x[47:28],
-        ppn1:         x[27:19],
-        ppn0:         x[18:10],
-        reserved_sw:  x[9:7],
-        d:            unpack(x[6]),
-        r:            unpack(x[5]),
-        pte_type:     unpack_PTE_Type(x[4:1]),
-        valid:        unpack(x[0])
-    });
-endfunction
-
-function Bit#(64) setPteRef(Bit#(64) pte);
-    pte[5] = 1;
-    return pte;
-endfunction
-
-function Bit#(64) setPteRefDirty(Bit#(64) pte);
-    pte[5] = 1;
-    pte[6] = 1;
-    return pte;
-endfunction
-
-// add new TLB entry to TLB array
 typedef struct {
-    Vpn      vpn;
-    Ppn      ppn;
-    PTE_Type page_perm;
-    PageSize page_size;
-    Asid     asid;
-    Bool     dirty;
+    Bit#(10) reserved;
+    Ppn ppn;
+    Bit#(2) reserved_sw; // reserved for supervisor software
+    PTEType pteType;
+    Bool valid;
+} PTESv39 deriving(Bits, Eq, FShow);
+
+// TLB entry
+typedef struct {
+    Vpn           vpn;
+    Ppn           ppn;
+    PTEType       pteType;
+    PageWalkLevel level;
+    Asid          asid;
 } TlbEntry deriving (Bits, Eq, FShow);
 
 // SV39 translate
@@ -173,49 +75,129 @@ function Vpn getVpn(Addr addr) = addr[38:12];
 
 function PageOffset getPageOffset(Addr addr) = truncate(addr);
 
-function Addr translate(Addr addr, Ppn ppn, PageSize page_size);
-    return zeroExtend(case (page_size)
-        0:  {ppn, getPageOffset(addr)};       // normal page
-        1:  {ppn[37:9], addr[20:0]};      // megapage
-        2:  {ppn[37:18], addr[29:0]};     // gigapage
-        default: {ppn, getPageOffset(addr)};  // this shouldn't happen
+function Addr getPTBaseAddr(Ppn basePpn);
+    PageOffset offset = 0;
+    return zeroExtend({basePpn, offset});
+endfunction
+
+function Addr getPTEAddr(Addr baseAddr, Vpn vpn, PageWalkLevel level);
+    Vector#(3, VpnIdx) vpnVec = unpack(vpn); // index 0 is LSB
+    return baseAddr + (zeroExtend(vpnVec[level]) << 3); // PTE is 2^3 bytes
+endfunction
+
+function Bool isLeafPTE(PTEType t);
+    return t.executable || t.readable || t.writable;
+endfunction
+
+function Addr translate(Addr addr, Ppn ppn, PageWalkLevel level);
+    return zeroExtend(case (level)
+        0: {ppn, getPageOffset(addr)} // 4KB page
+        1: {ppn[43:9], addr[20:0]};   // 2MB page
+        2: {ppn[43:18], addr[29:0]};  // 1GB page
+        default: 0 // should not happen
     endcase);
 endfunction
 
-function Vpn getMaskedVpn(Vpn vpn, PageSize sz);
-    return (case (sz)
-        0:  (vpn);
-        1:  (vpn & 27'h7FFFE00); // megapage mask
-        2:  (vpn & 27'h7FC0000); // gigapage mask
-        3:  0;
+function Vpn getMaskedVpn(Vpn vpn, PageWalkLevel level);
+    return (case (level)
+        0: (vpn);
+        1: ((vpn >> 9) << 9);   // 2MB mask
+        2: ((vpn >> 18) << 18); // 1GB mask
+        default: 0; // should not happen
     endcase);
 endfunction
 
-function Ppn getMaskedPpn(Ppn ppn, PageSize sz);
-    return (case (sz)
-        0:  (ppn);
-        1:  (ppn & 38'h3FFFFFFE00); // megapage mask
-        2:  (ppn & 38'h3FFFFC0000); // gigapage mask
-        3:  0;
+function Ppn getMaskedPpn(Ppn ppn, PageWalkLevel level);
+    return (case (level)
+        0: (ppn);
+        1: ((ppn >> 9) << 9);   // 2MB mask
+        2: ((ppn >> 18) << 18); // 1GB mask
+        default: 0; // should not happen
     endcase);
 endfunction
 
-function Bool hasSv39Permission(VMInfo vm_info, Bool inst_tlb, Bool write, PTE_Type pte_type);
-    Bit#(2) prv_level = vm_info.prv;
-    Bool has_permission = False;
-    // in spike vm_info won't change during page walk
-    // but it may change in our systgem
-    // if it is no longer SV39, just return page fault
-    if(vm_info.vm == vmSv39) begin
-        if (prv_level == 0) begin
-            // user
-            has_permission = inst_tlb ? pte_type.u_x : (write ? pte_type.u_w : pte_type.u_r);
-        end
-        else if (prv_level == 1) begin
-            // supervisor
-            has_permission = inst_tlb ? pte_type.s_x : (write ? pte_type.s_w : pte_type.s_r);
-        end
-        // we ignore hypervisor for now
+function Bool isPpnAligned(Ppn ppn, PageWalkLevel level);
+    return (case(level)
+        0: True;
+        1: (ppn[8:0] == 0);
+        2: (ppn[17:0] == 0);
+        default: False;
+    endcase);
+endfunction
+
+typedef enum {
+    InstFetch,
+    DataLoad,
+    DataStore // also contain DataLoad
+} TlbAccessType deriving(Bits, Eq, FShow);
+
+function Bool hasVMPermission(
+    VMInfo vm_info,
+    PTEType pte_type, Ppn ppn, PageWalkLevel level,
+    TlbAccessType access
+);
+    // try to find any page fault
+    Bool fault = False;
+
+    // check if we are still in sv39
+    if(!vm_info.sv39) begin
+        fault = True;
     end
-    return has_permission;
+
+    // check PTE itself is well-formed or not
+    if(pte_type.writable && !pte_type.readable) begin
+        fault = True; // page writeable but not readable
+    end
+    if(!isPpnAligned(ppn, level)) begin
+        fault = True; // unaligned super page
+    end
+
+    // check permission related to user page
+    if(pte_type.user) begin
+        // S mode may not access user page. We need to consider mstatus.sum
+        // bit. XXX Spike will raise page fault in case S-mode inst-fetch even
+        // when mstatus.sum is set. We follow spike here.
+        if (vm_info.prv == prvS &&
+            (access == InstFetch || !vm_info.userAccessibleByS)) begin
+            fault = True;
+        end
+    end
+    else begin
+        // U mode cannot access non-user page
+        if(vm_info.prv == prvU) begin
+            fault = True;
+        end
+    end
+
+    // check execute/read/write permission
+    case(access)
+        InstFetch: begin
+            if(!pte_type.executable) begin
+                fault = True;
+            end
+        end
+        DataLoad: begin
+            // need to consider mstatus.mxr bit
+            if (!pte_type.readable &&
+                !(pte_type.executable && vm_info.exeReadable)) begin
+                fault = True;
+            end
+        end
+        DataStore: begin
+            // store requires page to be both readable and writable
+            if(!(pte_type.readable && pte_type.writeable)) begin
+                fault = True;
+            end
+        end
+    endcase
+
+    // check if accessed or dirty bit needs to be set
+    if(!pte_type.accessed) begin
+        fault = True;
+    end
+    if(access == DataStore && !pte_type.dirty) begin
+        fault = True;
+    end
+
+    return !fault;
 endfunction

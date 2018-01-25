@@ -25,16 +25,21 @@ import VerificationPacket::*;
 import Performance::*;
 
 interface ProcRequest;
-  method Action reset();
-  method Action start(Bit#(64) startpc, Bool ipi_wait_msip_zero, Bit#(64) verification_packets_to_ignore, Bool send_synchronization_packets);
-  method Action from_host(Bit#(8) core, Bit#(64) v);
-  method Action perfReq(Bit#(8) core, PerfLocation loc, PerfType t); // performance
+    method Action reset();
+    method Action start(
+        Bit#(64) startpc,
+        Bit#(64) toHostAddr, Bit#(64) fromHostAddr,
+        Bit#(64) verification_packets_to_ignore,
+        Bool send_synchronization_packets
+    );
+    method Action from_host(Bit#(64) v);
+    method Action perfReq(Bit#(8) core, PerfLocation loc, PerfType t); // performance
 endinterface
 
 interface ProcIndication;
-  method Action to_host(Bit#(8) core, Bit#(64) v);
-  method Action debug_verify(Bit#(8) core, VerificationPacket packet);
-  method Action resetDone();
-  method Action perfResp(Bit#(8) core, ProcPerfResp r); // performance
-  method Action terminate(Bit#(8) core); // exit signal
+    method Action to_host(Bit#(64) v);
+    method Action debug_verify(Bit#(8) core, VerificationPacket packet);
+    method Action resetDone();
+    method Action perfResp(Bit#(8) core, ProcPerfResp r); // performance
+    method Action terminate(Bit#(8) core); // exit signal
 endinterface

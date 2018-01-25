@@ -28,30 +28,23 @@ import TlbTypes::*;
 
 typedef struct {
     Bool hit;
-    // following fields are valid only when hit = True
-    indexT index; // index of hitting entry
+    indexT index; // hit index, for later update LRU info
     TlbEntry entry; // hit entry
-    // since page is in TLB, its access bit must have already been set
 } FullAssocTlbResp#(type indexT) deriving(Bits, Eq, FShow);
 
 interface FullAssocTlb#(numeric type n);
-    method Action flush_translation(Vpn vpn, Asid asid, Bool all);
+    method Action flush;
     method FullAssocTlbResp#(Bit#(TLog#(n))) translate(Vpn vpn, Asid asid);
-    method Action update(Bit#(TLog#(n)) idx, Bool setDirty);
-    method Action add_translation(TlbEntry x);
+    method Action updateRep(Bit#(TLog#(n)) index); // update replacement info
+    method Action addEntry(TlbEntry x);
 endinterface
 
 module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
     Add#(1, a__, tlbSz),
     Alias#(tlbIdxT, Bit#(TLog#(tlbSz)))
 );
-    Vector#(tlbSz, Reg#(Bool))     validVec    <- replicateM(mkReg(False));
-    Vector#(tlbSz, Reg#(Vpn))      vpnVec      <- replicateM(mkRegU);
-    Vector#(tlbSz, Reg#(Ppn))      ppnVec      <- replicateM(mkRegU);
-    Vector#(tlbSz, Reg#(PTE_Type)) pagePermVec <- replicateM(mkRegU);
-    Vector#(tlbSz, Reg#(PageSize)) pageSizeVec <- replicateM(mkRegU);
-    Vector#(tlbSz, Reg#(Asid))     asidVec     <- replicateM(mkRegU);
-    Vector#(tlbSz, Reg#(Bool))     dirtyVec    <- replicateM(mkRegU);
+    Vector#(tlbSz, Reg#(Bool))    validVec <- replicateM(mkReg(False));
+    Vector#(tlbSz, Reg#(TlbEntry) entryVec <- replicateM(mkRegU);
 
     // bit-LRU replacement
     Reg#(Bit#(tlbSz)) lruBit <- mkReg(0);
@@ -69,62 +62,38 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
     endfunction
 
     // function to match TLB entry
-    function Bool isMatch(Vpn vpn, Asid asid, Integer i);
-        Vpn masked_vpn = getMaskedVpn(vpn, pageSizeVec[i]);
-        return validVec[i] && vpnVec[i] == masked_vpn && (asidVec[i] == asid || pagePermVec[i].global);
-    endfunction
-
-    method Action flush_translation(Vpn vpn, Asid asid, Bool all);
-        // This could be used to select a line to flush:
-        // But for now, flush the whole thing because the above solution would require
-        // additional associative searches and linux doesn't use precise flushes yet
-        doAssert(all, "only support flushing all");
+    method Action flush;
         writeVReg(validVec, replicate(False));
         lruBit <= 0; // also reset LRU bits
     endmethod
 
     method FullAssocTlbResp#(tlbIdxT) translate(Vpn vpn, Asid asid);
         // find the matching entry
-        Vector#(tlbSz, Bool) matchVec = map(isMatch(vpn, asid), genVector);
-        if(findIndex(id, matchVec) matches tagged Valid .idx) begin
+        function Bool isMatch(Integer i);
+            TlbEntry entry = entryVec[i];
+            Bool asidMatch = entry.asid == asid || entry.pteType.global;
+            Bool vpnMatch = getMaskedVpn(vpn, entry.level) == entry.vpn;
+            return validVec[i] && asidMatch && vpnMatch;
+        endfunction
+        Vector#(tlbSz, Integer) idxVec = genVector;
+        if(find(isMatch, idxVec) matches tagged Valid .idx) begin
             // hit a TLB entry, get its content
-            // sanity check: only 1 hit
-            //doAssert(pack(matchVec) == (1 << idx), "at most 1 TLB hit");
-            // return
             return FullAssocTlbResp {
                 hit: True,
-                index: pack(idx),
-                entry: TlbEntry {
-                    vpn: vpnVec[idx],
-                    ppn: ppnVec[idx],
-                    page_perm: pagePermVec[idx],
-                    page_size: pageSizeVec[idx],
-                    asid: asidVec[idx],
-                    dirty: dirtyVec[idx]
-                }
+                entry: entryVec[idx]
             };
         end
-        else begin
+        else begin // miss
             return FullAssocTlbResp {
                 hit: False,
-                index: ?,
                 entry: ?
             };
         end
     endmethod
 
-    method Action update(tlbIdxT idx, Bool setDirty);
-        // entry is accessed, update LRU
-        updateLRU(idx);
-        // update dirty
-        if(setDirty) begin
-            dirtyVec[idx] <= True;
-        end
-    endmethod
-
-    method Action add_translation(TlbEntry x);
+    method Action addEntry(TlbEntry x);
         // find a slot for this translation
-        // Since TLB is write-through, we can silently evict
+        // Since TLB is read-only cache, we can silently evict
         tlbIdxT addIdx;
         if(findIndex( \== (False) , readVReg(validVec) ) matches tagged Valid .idx) begin
             // get empty slot
@@ -143,13 +112,15 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
         end
         // update slot
         validVec[addIdx] <= True;
-        vpnVec[addIdx] <= x.vpn;
-        ppnVec[addIdx] <= x.ppn;
-        pagePermVec[addIdx] <= x.page_perm;
-        pageSizeVec[addIdx] <= x.page_size;
-        asidVec[addIdx] <= x.asid;
-        dirtyVec[addIdx] <= x.dirty;
+        entryVec[addIdx] <= x;
+        // check ppn and vpn lower bits are 0 for super pages
+        assert(x.ppn == getMaskedPpn(x.ppn, x.level), "ppn lower bits not 0");
+        assert(x.vpn == getMaskedVpn(x.vpn, x.level), "vpn lower bits not 0");
         // update LRU bits
         updateLRU(addIdx);
+    endmethod
+
+    method Action updateRep(indexT index);
+        updateLRU(index);
     endmethod
 endmodule
