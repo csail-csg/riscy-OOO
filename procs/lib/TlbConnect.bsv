@@ -39,9 +39,7 @@ module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
         DTlbRqToP r <- toGet(d.rqToP).get;
         l2.rqFromC.put(L2TlbRqFromC {
             child: D,
-            vpn: r.vpn,
-            reqType: r.t,
-            write: r.write
+            vpn: r.vpn
         });
     endrule
 
@@ -49,9 +47,7 @@ module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
         ITlbRqToP r <- toGet(i.rqToP).get;
         l2.rqFromC.put(L2TlbRqFromC {
             child: I,
-            vpn: r.vpn,
-            reqType: LdTranslation,
-            write: False
+            vpn: r.vpn
         });
     endrule
 
@@ -64,8 +60,6 @@ module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
         L2TlbRsToC r <- toGet(l2.rsToC).get;
         i.rsFromP.enq(ITlbRsFromP {entry: r.entry});
     endrule
-
-    mkConnection(l2.setDirtyRs, d.setDirtyRsFromP);
 
     mkConnection(d.flush.request, l2.dTlbReqFlush);
     mkConnection(i.flush.request, l2.iTlbReqFlush);

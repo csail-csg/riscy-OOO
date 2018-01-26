@@ -135,7 +135,11 @@ module mkITlb(ITlb::ITlb);
             // TLB entires.
             
             // check permission
-            if(hasPermission(vm_info, en.ppn, en.level, InstFetch)) begin
+            if(hasVMPermission(vm_info,
+                               en.pteType,
+                               en.ppn,
+                               en.level,
+                               InstFetch)) begin
                 // fill TLB and resp to proc
                 tlb.add_translation(en);
                 let trans_addr = translate(vaddr, en.ppn, en.level);
@@ -166,7 +170,7 @@ module mkITlb(ITlb::ITlb);
         needFlush <= True;
         waitFlushP <= False;
         // this won't interrupt current processing, since
-        // (1) miss process will continue even if inited=True
+        // (1) miss process will continue even if needFlush=True
         // (2) flush truly starts when there is no pending req
     endmethod
 
@@ -192,6 +196,7 @@ module mkITlb(ITlb::ITlb);
                         let entry = trans_result.entry;
                         // check permission
                         if(hasVMPermission(vm_info,
+                                           entry.pteType,
                                            entry.ppn,
                                            entry.level,
                                            InstFetch)) begin

@@ -430,6 +430,41 @@ typedef struct {
     ControlFlow controlFlow;
 } ExecResult deriving(Bits, Eq, FShow);
 
+// MMIO
+// req fom core to platform
+typedef struct {
+    Addr addr; // physical address
+    ByteEn wrBE; // store BE (0 means load), shifted for 64-bit aligned
+    Data data; // store data (shifted for 64-bit aligned)
+} MMIOCRq deriving(Bits, Eq, FShow);
+
+// resp from platform to core
+typedef struct {
+    Bool valid; // if fase, then access fault
+    // resp data only for load req, and resp data is read by adapting the req
+    // address to be aligned to Data (i.e., ignore lower bits in req address).
+    // This is similar to normal cache loads, i.e., the receiver needs to
+    // transform the resp data.
+    Data data;
+} MMIOPRs deriving(Bits, Eq, FShow);
+
+// req from platform to core, only access MSIP or MTIP bit
+typedef enum {MSIP, MTIP} MMIOPRqTarget deriving(Bits, Eq, FShow);
+typedef struct {
+    MMIOPRqTarget target;
+    Bool write; // True -> store
+    Bit#(1) data; // write data (ignored if write = False)
+} MMIOPRq deriving(Bits, Eq, FShow); // req from core to platform,
+
+// resp from core to platform
+typedef struct {
+    Bit#(1) data; // MSIP load value, garbage if resp to store
+} MMIOCRs deriving(Bits, Eq, FShow);
+
+// Boot rom: each block is 64-bit data
+typedef TSub#(`LOG_BOOT_ROM_BYTES, TLog#(NumBytes)) BootRomIndexSz;
+typedef Bit#(BootRoomIndexSz) BootRomIndex;
+
 // Op
 Bit#(3) fnADD   = 3'b000;
 Bit#(3) fnSLL   = 3'b001;

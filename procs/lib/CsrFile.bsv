@@ -57,6 +57,9 @@ interface CsrFile;
     // increment will see the effect of normal CSR write.
     method Action incInstret(SupCnt x);
 
+    // Update our local copy of mtime
+    method Action incTime;
+
     // MSIP/MTIP bits for external world (e.g., for MMIO and timer interrupt).
     // XXX These methods should only be called when the processor backend
     // pipeline does not contain any CSRXXX inst or corresponding interrupt
@@ -180,10 +183,7 @@ module mkConfigEhr#(t init)(Ehr#(n, t)) provisos(Bits#(t, w));
     return ifc;
 endmodule
 
-module mkCsrFile#(
-    Data hartid,
-    ReadOnly#(Data) mtime
-)(CsrFile);
+module mkCsrFile#(Data hartid)(CsrFile);
     RiscVISASubset isa = defaultValue;
 
     // To save from bypassing logic, CSR reads will get stale value
@@ -433,8 +433,9 @@ module mkCsrFile#(
     );
     // cycle
     Reg#(Data) cycle_csr = readOnlyReg(mcycle_csr);
-    // time
-    Reg#(Data) time_csr = regFromReadOnly(mtime);
+    // time: this is a local copy of platform reg mtime
+    Reg#(Data) time_reg <- mkCsrReg(0);
+    Reg#(Data) time_csr = readOnlyReg(time_reg);
     // instret
     Reg#(Data) instret_csr = readOnlyReg(minstret_csr);
     // terminate (non-standard)
@@ -670,6 +671,10 @@ module mkCsrFile#(
 
     method Action incInstret(SupCnt x);
         instret_ehr[1] <= instret_ehr[1] + zeroExtend(x);
+    endmethod
+
+    method Action incTime;
+        time_reg <= time_reg + 1;
     endmethod
 
     method getMSIP = software_int_pend_vec[prvM]._read;

@@ -33,13 +33,16 @@ interface ProcRequest;
         Bool send_synchronization_packets
     );
     method Action from_host(Bit#(64) v);
+    // Boot rom is 8B aligned, index is in terms of 8B block
+    method Action bootRomInitReq(Bit#(16) index, Bit#(64) v);
     method Action perfReq(Bit#(8) core, PerfLocation loc, PerfType t); // performance
 endinterface
 
 interface ProcIndication;
-    method Action to_host(Bit#(64) v);
-    method Action debug_verify(Bit#(8) core, VerificationPacket packet);
     method Action resetDone();
+    method Action to_host(Bit#(64) v);
+    method Action bootRomInitResp();
+    method Action debug_verify(Bit#(8) core, VerificationPacket packet);
     method Action perfResp(Bit#(8) core, ProcPerfResp r); // performance
     method Action terminate(Bit#(8) core); // exit signal
 endinterface
