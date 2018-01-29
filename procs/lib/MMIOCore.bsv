@@ -14,8 +14,8 @@ interface MMIOCoreToPlatform;
     interface FifoEnq#(MMIOPRq) pRq;
     interface FifoDeq#(MMIOCRs) cRs;
     // core keeps a copy of the mtime reg. This method allows the platform to
-    // inform the core to increment time CSR.
-    method Action incTime;
+    // inform the core to change time CSR.
+    method Action setTime(Data t);
 endinterface
 
 interface MMIOCore;
@@ -27,10 +27,6 @@ interface MMIOCore;
     interface FifoDeq#(MMIOPRs) mmioResp;
     // set tohost & fromhost addr
     method Action setHtifAddrs(Addr toHost, Addr fromHost);
-    // stop inst/interrupt from being issueed to processor backend when we have
-    // pending req from platform; otherwise we may wait forever before
-    // processing the platform req
-    method Bool hasPlatformReq;
 
     // methods to platform
     interface MMIOCoreToPlatform toP;
@@ -44,8 +40,8 @@ interface MMIOCoreInput;
     // guards for accessing MSIP or MTIP
     method Bool noInflightCSRInst;
     method Bool noInflightInterrupt;
-    // MMIOCore needs to pass the increment on mtime to CSRF
-    method incTime;
+    // MMIOCore needs to pass mtime to CSRF
+    method Action setTime(Data t);
 endinterface
 
 module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
@@ -111,7 +107,7 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
         interface pRs = toFifoEnq(pRsQ);
         interface pRq = toFifoEnq(pRqQ);
         interface cRs = toFifoDeq(cRsQ);
-        method incTime = inIfc.incTime;
+        method setTime = inIfc.setTime;
     endinterface
 endmodule
 

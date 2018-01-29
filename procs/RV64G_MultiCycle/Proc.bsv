@@ -66,6 +66,13 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
         core[i] <- mkCore(fromInteger(i));
     end
 
+    // MMIO platform
+    Vector#(CoreNum, MMIOCoreToPlatform) mmioToP;
+    for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
+        mmioToP[i] = core[i].mmioToPlatform;
+    end
+    MMIOPlatform mmioPlatform <- mkMMIOPlatform(mmioToP);
+
     // proc ind, inv cross clock domain
     Vector#(CoreNum, CoreReq) coreReq = ?;
     Vector#(CoreNum, CoreIndInv) coreIndInv = ?;
@@ -73,8 +80,12 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
         coreReq[i] = core[i].coreReq;
         coreIndInv[i] = core[i].coreIndInv;
     end
-    ProcReq procReqIfc <- mkProcReqSync(coreReq, portalClk, portalRst);
-    ProcIndInv procIndInvIfc <- mkProcIndInvSync(coreIndInv, portalClk, portalRst);
+    ProcReq procReqIfc <- mkProcReqSync(
+        coreReq, mmioPlatform portalClk, portalRst
+    );
+    ProcIndInv procIndInvIfc <- mkProcIndInvSync(
+        coreIndInv, mmioPlatform, portalClk, portalRst
+    );
 
     // DMA from host cross clock domain & reformat req/resp
     HostDmaLLC host <- mkHostDmaLLC(portalClk, portalRst);
@@ -96,13 +107,6 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
         tlbToMem[i] = core[i].tlbToMem;
     end
     mkLLCDmaConnect(llc.dma, host.to_mem, tlbToMem);
-
-    // connect IPI
-    Vector#(CoreNum, CoreIPI) ipi = ?;
-    for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
-        ipi[i] = core[i].ipi;
-    end
-    mkIPIConnect(ipi);
 
     // deadlock methods cross clock domain
     Vector#(CoreNum, CoreDeadlock) dl = ?;

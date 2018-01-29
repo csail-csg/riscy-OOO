@@ -221,6 +221,7 @@ typedef enum {
 
 typedef enum {
     Unsupported,
+    Nop,
     Amo,
     Alu,
     Ld, St, Lr, Sc,
@@ -229,7 +230,7 @@ typedef enum {
     Fpu,
     Csr,
     Fence, SFence,
-    Ecall, Ebreak, Wfi,
+    Ecall, Ebreak,
     Sret, Mret, // do not support URET
     Interrupt // we may turn an inst to an interrupt in implementation
 } IType deriving(Bits, Eq, FShow);
@@ -573,8 +574,8 @@ Bit#(12) privWFI    = 12'h105;
 Bit#(7) privSFENCEVMA  = 7'h9;
 
 function Bool isSystem(IType iType) = (
-    iType == Priv || iType == Csr ||
     iType == Unsupported || iType == Interrupt ||
+    iType == Ecall || iType == Ebreak || iType == Csr ||
     iType == SFence || iType == Fence ||
     iType == Sret || iType == Mret
 );

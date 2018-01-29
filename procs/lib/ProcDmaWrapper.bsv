@@ -147,6 +147,7 @@ module mkProcDmaWrapper#(
     interface ProcRequest procReq;
         method start = proc.procReq.start;
         method from_host = proc.procReq.from_host;
+        method bootRomInitReq = proc.procReq.bootRomInitReq;
         method perfReq = proc.procReq.perfReq;
         method Action reset;
             // XXX [sizhuo] I am not doing any reset...

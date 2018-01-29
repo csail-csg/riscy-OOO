@@ -133,54 +133,68 @@ function ExecResult basicExec(DecodedInst dInst, Data rVal1, Data rVal2, Addr pc
 endfunction
 
 (* noinline *)
-function Maybe#(Exception) checkForException(DecodedInst dInst, ArchRegs regs, CsrState csrState); // regs needed to check if x0 is a src
-    Maybe#(Exception) exception = tagged Invalid;
+function Maybe#(Exception) checkForException(
+    DecodedInst dInst,
+    ArchRegs regs,
+    CsrDecodeInfo csrState
+); // regs needed to check if x0 is a src
+    Maybe#(Exception) exception = Invalid;
     let prv = csrState.prv;
 
-    if (dInst.iType == Priv) begin
-        case (truncate(validValue(getDInstImm(dInst))))
-            privSCALL  : exception = tagged Valid (case (prv)
-                                prvU: EnvCallU;
-                                prvS: EnvCallS;
-                                prvH: EnvCallH;
-                                prvM: EnvCallM;
-                            endcase);
-            privSBREAK : exception = tagged Valid Breakpoint;
-            privMRTH   : exception = tagged Valid IllegalInst;
-            privWFI    : exception = exception; // this is just a NOP for now
-            default    : exception = tagged Valid IllegalInst;
-        endcase
-    end else if (dInst.iType == Sret) begin
-        if (prv != prvM && prv != prvS) begin
-            exception = tagged Valid IllegalInst;
+    if(dInst.iType == Ecall) begin
+        exception = Valid (case(prv)
+            prvU: EnvCallU;
+            prvS: EnvCallS;
+            prvM: EnvCallM;
+            default: IllegalInst;
+        endcase);
+    end
+    else if(dInst.iType == Ebreak) begin
+        exception = Valid (Breakpoint);
+    end
+    else if(dInst.iType == Mret) begin
+        if(prv < prvM) begin
+            exception = Valid (IllegalInst);
         end
-    end else if (dInst.iType == Mrts) begin
-        if (prv != prvM) begin
-            exception = tagged Valid IllegalInst;
+    end
+    else if(dInst.iType == Sret) begin
+        if(prv < prvS) begin
+            exception = Valid (IllegalInst);
         end
-    end else if (dInst.iType == Csr) begin
-        // Check priv for CSR functions
-        // TODO: Check if CSR exists
+        else if(prv == prvS && csrState.trapSret) begin
+            exception = Valid (IllegalInst);
+        end
+    end
+    else if(dInst.iType == SFence) begin
+        if(prv == prvS && csrState.trapVM) begin
+            exception = Valid (IllegalInst);
+        end
+    end
+    else if(dInst.iType == Csr) begin
         let csr = pack(fromMaybe(?, dInst.csr));
-        Bool zero_imm = getDInstImm(dInst) == tagged Valid 0;
-        Bool reg_x0 = regs.src1 == tagged Valid (tagged Gpr 0);
-        Bool read_only_csr = csr[11:10] == 2'b11;
         Bool csr_has_priv = (prv >= csr[9:8]);
-        if ((read_only_csr && !(zero_imm || reg_x0)) || !csr_has_priv) begin
-            exception = tagged Valid IllegalInst;
+        if(!csr_has_priv) begin
+            exception = Valid (IllegalInst);
         end
-    end else if (dInst.iType == Fpu) begin
-        if (dInst.execFunc matches tagged Fpu .fpu_f) begin
+        else if(prv == prvS && csrState.trapVM &&
+                validValue(dInst.csr) == CSRsatp) begin
+            exception = Valid (IllegalInst);
+        end
+        // TODO check permission for accessing cycle/inst/time, and check
+        // read-only CSRs being written
+    end
+    else if(dInst.iType == Fpu) begin
+        if(dInst.execFunc matches tagged Fpu .fpu_f) begin
             // Get rounding mode
             let rm = (fpu_f.rm == RDyn) ? unpack(csrState.frm) : fpu_f.rm;
-            case (rm)
-                RNE, RTZ, RDN, RUP, RMM : exception = exception; // legal rounding modes
-                RDyn                    : exception = tagged Valid IllegalInst;
-                default                 : exception = tagged Valid IllegalInst;
+            case(rm)
+                RNE, RTZ, RDN, RUP, RMM: noAction; // legal rounding modes
+                default                : exception = Valid (IllegalInst);
             endcase
-        end else begin
+        end
+        else begin
             // Fpu instruction without FPU execFunc
-            exception = tagged Valid IllegalInst;
+            exception = Valid (IllegalInst);
         end
     end
 

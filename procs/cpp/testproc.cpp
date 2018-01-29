@@ -52,7 +52,6 @@
 
 // system config
 static uint32_t core_num = 1; // default to 1 core
-static bool ipi_wait_msip_zero = false; // default IPI doesn't wait MSIP == 0
 
 // File for output
 static FILE *debug_file = 0;
@@ -65,9 +64,9 @@ static ProcIndication   *procIndication = 0;
 static PerfStats perf_stats;
 
 // tandem verify params
-static uint64_t verification_packets_skipped = 0;
-static uint64_t verification_packets_printed = 0;
-static bool synchronization_packets_sent = true;
+//static uint64_t verification_packets_skipped = 0;
+//static uint64_t verification_packets_printed = 0;
+//static bool synchronization_packets_sent = true;
 
 // host dma request & indications
 static HostDmaRequestProxy *hostDmaRequestProxy = 0;
@@ -96,7 +95,8 @@ static void handle_signal(int sig) {
     exit(1);
 }
 static void call_from_host(uint32_t coreid, uint64_t v) {
-    fprintf(debug_file, "[from_host] core %d, val 0x%016llx\n", (int)coreid, (long long) v);
+    fprintf(debug_file, "[from_host] core %d, val 0x%016llx\n",
+            (int)coreid, (long long) v);
     procRequestProxy->from_host(coreid, v);
 }
 static void call_dma_read(addr_t addr, size_t len, void *dst) {
@@ -104,6 +104,12 @@ static void call_dma_read(addr_t addr, size_t len, void *dst) {
 }
 static void call_dma_write(addr_t addr, size_t len, const void *src) {
     hostDmaIndication->dma_write(addr, len, src);
+}
+static void call_boot_rom_write(uint16_t index, uint64_t data) {
+    procRequestProxy->bootRomInitReq(index, data);
+}
+static void call_boot_rom_wait() {
+    procIndication->waitBootRomInit();
 }
 static void req_perf_counter(uint8_t core, PerfLocation loc, PerfType type) {
     procRequestProxy->perfReq(core, loc, type);
@@ -126,14 +132,24 @@ int runHtifTest() {
     sleep(1);
 
     // set deadlock start inst num
-    fprintf(stderr, "set deadlock check starting after inst num %llu\n", deadlock_check_start_inst_num);
-    deadlockReqeustProxy->setCheckStartInstNum((uint64_t)deadlock_check_start_inst_num);
+    fprintf(stderr, "set deadlock check starting after inst num %llu\n",
+            deadlock_check_start_inst_num);
+    deadlockReqeustProxy->setCheckStartInstNum(
+            (uint64_t)deadlock_check_start_inst_num);
     sleep(1);
 
     // start processor
-    uint64_t startpc = 0x200;
-    fprintf(stderr, "startpc %lx, total %d cores, ipi wait msip zero %d\n", (long)startpc, (int)core_num, (int)ipi_wait_msip_zero);
-    procRequestProxy->start(startpc, ipi_wait_msip_zero, verification_packets_skipped, synchronization_packets_sent);
+    uint64_t startpc = 0x1000;
+    addr_t tohost_addr = riscy_htif->get_tohost_addr();
+    addr_t fromhost_addr = riscy_htif->get_fromhost_addr();
+    fprintf(stderr, "startpc %llx, total %d cores, "
+            "toHost addr %llx, fromHost addr %llx\n",
+            (long)startpc, (int)core_num,
+            (long long)tohost_addr, (long long)fromhost_addr);
+    procRequestProxy->start(startpc,
+                            tohost_addr, fromhost_addr,
+                            verification_packets_skipped,
+                            synchronization_packets_sent);
 
     // wait for result
     int result = procIndication->waitResult();
@@ -154,7 +170,7 @@ int runHtifTest() {
 }
 
 void printHelp(const char *prog) {
-    fprintf(stderr, "Usage: %s [--assembly-tests] ", prog); //[--multiple-tests] ", prog);
+    fprintf(stderr, "Usage: %s [--assembly-tests] ", prog);
     fprintf(stderr, "[--just-run] [--mem-size MEM_MB_SIZE] ");
     fprintf(stderr, "[--deadlock-check-after INST_NUM] ");
     fprintf(stderr, "[--core-num CORE_NUM] ");
@@ -219,16 +235,11 @@ int main(int argc, char * const *argv) {
             core_num = std::stoul(argv[2]);
             // shift argc and argv accordingly
             argc-=2; argv+=2;
-        } else if(argc > 1 && strcmp(argv[1],"--ipi-wait-msip-zero") == 0) {
-            // first argument was "--ipi-wait-msip-zero"
-            ipi_wait_msip_zero = true;
-            // shift argc and argv accordingly
-            argc-=1; argv+=1;
         } else if(argc > 3 && strcmp(argv[1],"--shell-cmd") == 0) {
             // first argument was "--shell-cmd"
             // the next two args should be CMD and DELAY
-            // we will send CMD to processor at DELAY seconds after
-            // the processor requests for stdin (wait for linux to boot completely)
+            // we will send CMD to processor at DELAY seconds after the
+            // processor requests for stdin (wait for linux to boot completely)
             shell_cmd = argv[2];
             cmd_delay_sec = atoi(argv[3]);
             // shift argc and argv accordingly
@@ -266,27 +277,18 @@ int main(int argc, char * const *argv) {
 
     if (assembly_test_mode) {
         procIndication = new ProcIndicationAssembly(IfcNames_ProcIndicationH2S,
-                                                    core_num, debug_file, print_buff,
-                                                    &perf_stats, &handle_signal,
-                                                    verification_packets_skipped,
-                                                    verification_packets_printed,
-                                                    synchronization_packets_sent,
-                                                    mem_sz, shell_cmd, cmd_delay_sec);
-    } else if (print_mode) {
-        procIndication = new ProcIndication_NoTandem(IfcNames_ProcIndicationH2S,
-                                                     core_num, debug_file, print_buff,
-                                                     &perf_stats, &handle_signal,
-                                                     verification_packets_skipped,
-                                                     verification_packets_printed,
-                                                     synchronization_packets_sent,
-                                                     mem_sz, shell_cmd, cmd_delay_sec);
+                                                    core_num,
+                                                    debug_file,
+                                                    print_buff,
+                                                    &perf_stats,
+                                                    &handle_signal,
+                                                    mem_sz,
+                                                    shell_cmd,
+                                                    cmd_delay_sec);
     } else {
         procIndication = new ProcIndication(IfcNames_ProcIndicationH2S,
                                             core_num, debug_file, print_buff,
                                             &perf_stats, &handle_signal,
-                                            verification_packets_skipped,
-                                            verification_packets_printed,
-                                            synchronization_packets_sent,
                                             mem_sz, shell_cmd, cmd_delay_sec);
     }
     procRequestProxy = new ProcRequestProxy(IfcNames_ProcRequestS2H);
@@ -327,6 +329,8 @@ int main(int argc, char * const *argv) {
     riscy_htif->set_dma_read(call_dma_read);
     riscy_htif->set_dma_write(call_dma_write);
     riscy_htif->set_write_from_host(call_from_host);
+    riscy_htif->set_write_boot_rom(call_boot_rom_write);
+    riscy_htif->set_wait_boot_rom(call_boot_rom_wait);
 
     // set all other call backs & pointers...
     procIndication->set_riscy_htif(riscy_htif);

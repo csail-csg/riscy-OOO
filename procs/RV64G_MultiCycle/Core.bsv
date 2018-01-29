@@ -57,6 +57,7 @@ import CCTypes::*;
 import L1CoCache::*;
 import L1Bank::*;
 import IBank::*;
+import MMIOCore::*;
 
 // for legacy debug types
 import FetchStage::*;
@@ -64,21 +65,19 @@ import RenameStage::*;
 import CommitStage::*;
 
 interface CoreReq;
-    method Action start(Bit#(64) pc, Bool ipi_wait_msip_zero, Bit#(64) pack_ignore, Bool sync_pack);
-    method Action from_host(Bit#(64) v);
+    method Action start(
+        Addr startpc,
+        Addr toHostAddr, Addr fromHostAddr,
+        Bit#(64) verification_packets_to_ignore,
+        Bool send_synchronization_packets
+    );
     method Action perfReq(PerfLocation loc, PerfType t);
 endinterface
 
 interface CoreIndInv;
-    method ActionValue#(Bit#(64)) to_host;
     method ActionValue#(VerificationPacket) debug_verify;
     method ActionValue#(ProcPerfResp) perfResp;
     method ActionValue#(void) terminate;
-endinterface
-
-interface CoreIPI;
-    method Action recvIPI;
-    method ActionValue#(CoreId) sendIPI;
 endinterface
 
 interface CoreDeadlock;
@@ -102,13 +101,13 @@ interface Core;
     // core request & indication
     interface CoreReq coreReq;
     interface CoreIndInv coreIndInv;
-    // inter-proc interrupt
-    interface CoreIPI ipi;
     // coherent caches to LLC
     interface ChildCacheToParent#(L1Way, void) dCacheToParent;
     interface ChildCacheToParent#(L1Way, void) iCacheToParent;
     // DMA to LLC
     interface TlbMemClient tlbToMem;
+    // MMIO
+    interface MMIOCoreToPlatform mmioToPlatform;
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
     interface CoreDeadlock deadlock;
     // debug rename
@@ -118,7 +117,7 @@ endinterface
 // stages for an inst
 typedef enum {
     Off,
-    FetchITlb_RecvHtif,
+    FetchITlb,
     FetchICache,
     Decode,
     RegRead,
@@ -127,8 +126,9 @@ typedef enum {
     ExeMulDiv,
     ExeTlbResp,
     ExeMemResp,
+    ExeMMIOResp,
     Commit,
-    CheckInterrupt_SendHtif
+    CheckInterrupt
 } Stage deriving(Bits, Eq, FShow);
 
 (* synthesize *)
@@ -148,11 +148,12 @@ module mkCore#(CoreId coreId)(Core);
     Reg#(Addr) predPc <- mkReg(0); // we defer update of PC until commit stage
     Reg#(Addr) memVAddr <- mkReg(0); // virtual address of ld/st page fault
     Reg#(Data) csrData <- mkReg(0); // csr dst data for CSRXXX inst (update csr at commit)
+    Reg#(Tuple2#(ByteEn, Data)) shiftedBeData <- mkReg(unpack(0)); // BE & data shifted to align to 64-bit
     Reg#(Tuple2#(LineByteEn, Line)) stBeData <- mkReg(unpack(0)); // normal store BE & data
-    Reg#(Tuple2#(ByteEn, Data)) scBeData <- mkReg(unpack(0)); // store cond BE & data
     Reg#(Data) amoData <- mkReg(0); // AMO data (BE is not used)
     Reg#(Bool) willDirtyFpu <- mkReg(False); // used for CSR update in commit
     Reg#(Bit#(5)) fflags <- mkReg(0); // flags for FP execution, used to update FPU CSR at commit
+    Reg#(Bool) csrInstInflight <- mkReg(False); // CSRXXX inst has been sent to regread
 
     function Action resetLocalState;
     action
@@ -171,6 +172,7 @@ module mkCore#(CoreId coreId)(Core);
         amoData <= 0;
         willDirtyFpu <= False;
         fflags <= 0;
+        csrInstInflight <= False;
     endaction
     endfunction
 
@@ -207,15 +209,21 @@ module mkCore#(CoreId coreId)(Core);
     endinterface);
     DCoCache dMem <- mkDCoCache(procRespIfc);
 
+    // MMIO
+    MMIOCoreInput mmioInIfc = (interface MMIOInput;
+        method getMSIP = csrf.getMSIP;
+        method setMSIP = csrf.setMSIP;
+        method setMTIP = csrf.setMTIP;
+        method noInflightCSRInst = !csrInstInflight;
+        method noInflightInterrupt = stage != CheckInterrupt;
+        method setTime = csrf.setTime;
+    endinterface);
+    MMIOCore mmio <- mkMMIOCore(mmioInIfc);
+
     // flags to flush
     Reg#(Bool)  flush_tlbs <- mkReg(False);
     Reg#(Bool)  update_vm_info <- mkReg(False);
     Reg#(Bool)  flush_reservation <- mkReg(False);
-
-    // HTIF
-    Reg#(Bool) htifStall <- mkReg(False);
-    FIFO#(Data) toHostQ <- mkFIFO1;
-    Fifo#(2, Data) fromHostQ <- mkCFFifo;
 
     // performance (dummy)
     FIFO#(ProcPerfReq) perfReqQ <- mkFIFO1;
@@ -256,8 +264,8 @@ module mkCore#(CoreId coreId)(Core);
             specBits: unpack(0),
             specTag: unpack(0),
             stbEmpty: True,
-            prv: csrf.csrState.prv,
-            htifStall: htifStall
+            prv: csrf.decodeInfo.prv,
+            htifStall: False
         };
     endfunction
 
@@ -283,9 +291,7 @@ module mkCore#(CoreId coreId)(Core);
     endrule
 `endif
 
-    rule doFetchITlb(stage == FetchITlb_RecvHtif && 
-                     // wait htif done
-                     !htifStall &&
+    rule doFetchITlb(stage == FetchITlb && 
                      // wait flush to be done
                      !flush_reservation && !flush_tlbs && !update_vm_info &&
                      iTlb.flush_done && dTlb.flush_done);
@@ -310,6 +316,10 @@ module mkCore#(CoreId coreId)(Core);
         end
     endrule
 
+    // since MMIO checks if CSRXXX inst is inflight, we just stop issue if
+    // MMIO can handle pRq. Technically we don't need to, because rule ordering
+    // will take car of these things.
+    (* preempts = "mmio.handlePRq, doDecode *)
     rule doDecode(stage == Decode);
         // we only do 1 inst
         Vector#(SupSize, Maybe#(Instruction)) insts <- iMem.to_proc.response.get;
@@ -324,7 +334,10 @@ module mkCore#(CoreId coreId)(Core);
                 // decode succeeds, record decode results, go to reg read
                 decInst <= decRes.dInst;
                 srcDstRegs <= decRes.regs;
+                csrInstInflight <= isValid(decRes.dInst.csr);
                 stage <= RegRead;
+                assert(decRes.dInst.iType != Unsupported,
+                       "unsupprted inst should raise exception");
             end
             if(verbose) $display("[doDecode] inst %x, decRes ", inst, fshow(decRes));
         end
@@ -335,7 +348,7 @@ module mkCore#(CoreId coreId)(Core);
 
     rule doRegRead(stage == RegRead);
         // first check for new exceptions after decode
-        let newExcep = checkForException(decInst, srcDstRegs, csrf.csrState);
+        let newExcep = checkForException(decInst, srcDstRegs, csrf.decodeInfo);
         if(isValid(newExcep)) begin
             exception <= newExcep;
             stage <= Commit;
@@ -398,23 +411,20 @@ module mkCore#(CoreId coreId)(Core);
                             endcase)
                 });
                 memVAddr <= vaddr; // save VA in case of page fault
+                // compute shifted BE & data
+                Bit#(TLog#(NumBytes)) byteOffset = truncate(vaddr);
+                ByteEn shiftedBE = unpack(pack(mem.byteEn) << byteOffset);
+                Data shiftedData = rVal2 << {byteOffset, 3'b0};
+                shiftedBEData <= tuple2(shiftedBE, shiftedData);
                 // compute st/sc/amo data & BE
                 case(mem.mem_func)
-                    St, Sc: begin
-                        Bit#(TLog#(NumBytes)) byteOffset = truncate(vaddr);
-                        ByteEn shiftedBE = unpack(pack(mem.byteEn) << byteOffset);
-                        Data shiftedData = rVal2 << {byteOffset, 3'b0};
-                        if(mem.mem_func == Sc) begin
-                            scBeData <= tuple2(shiftedBE, shiftedData);
-                        end
-                        else begin
-                            LineDataOffset dataOffset = getLineDataOffset(vaddr);
-                            Vector#(LineSzData, ByteEn) stBE = unpack(0);
-                            Vector#(LineSzData, Data) stData = unpack(0);
-                            stBE[dataOffset] = shiftedBE;
-                            stData[dataOffset] = shiftedData;
-                            stBeData <= tuple2(unpack(pack(stBE)), stData);
-                        end
+                    St: begin
+                        LineDataOffset dataOffset = getLineDataOffset(vaddr);
+                        Vector#(LineSzData, ByteEn) stBE = unpack(0);
+                        Vector#(LineSzData, Data) stData = unpack(0);
+                        stBE[dataOffset] = shiftedBE;
+                        stData[dataOffset] = shiftedData;
+                        stBeData <= tuple2(unpack(pack(stBE)), stData);
                     end
                     Amo: begin
                         amoData <= rVal2;
@@ -511,14 +521,47 @@ module mkCore#(CoreId coreId)(Core);
         else begin
             doAssert(False, "Must be mem inst");
         end
-        // check for page fault
+
         if(isValid(cause)) begin
+            // page fault
             exception <= cause;
             stage <= Commit;
             if(verbose) $display("[doExeTlbResp] exception ", fshow(cause));
         end
+        else if(mmio.isMMIOAddr(paddr)) begin
+            // MMIO access
+            if(mem.mem_func == Lr) begin
+                assert(False, "no LR for MMIO");
+                exception = Valid (LoadAccessFault);
+                stage <= Commit;
+            end
+            else if(mem.mem_func == Sc) begin
+                assert(False, "no SC for MMIO");
+                exception = Valid (StoreAccessFault);
+                stage <= Commit;
+            end
+            else if(mem.mem_func == Amo) begin
+                assert(False, "no AMO for MMIO");
+                exception = Valid (StoreAccessFault);
+                stage <= Commit;
+            end
+            else begin
+                MMIOCRq r = MMIOCRq {
+                    addr: paddr,
+                    write: mem.mem_func == St,
+                    byteEn: tpl_1(shiftedBeData),
+                    data: tpl_2(shiftedBeData)
+                };
+                mmio.cRq.enq(r);
+                stage <= ExeMMIOResp;
+                if(verbose) begin
+                    $display("[doExeTlbResp] paddr %x, mmio req ",
+                             paddr, fshow(r));
+                end
+            end
+        end
         else begin
-            // successfull translation, now issue to D$
+            // successfull translation, main mem access, now issue to D$
             ProcRq#(DProcReqId) r = ProcRq {
                 id: 0,
                 addr: paddr,
@@ -535,10 +578,10 @@ module mkCore#(CoreId coreId)(Core);
                     default: return ?;
                 endcase),
                 // BE only matters for Sc, it use shifted BE
-                byteEn: mem.mem_func == Sc ? tpl_1(scBeData) : unpack(0),
+                byteEn: mem.mem_func == Sc ? tpl_1(shiftedBeData) : unpack(0),
                 // Sc use shifted data, Amo use original data
                 data: (case(mem.mem_func)
-                    Sc: return tpl_2(scBeData);
+                    Sc: return tpl_2(shiftedBeData);
                     Amo: return amoData;
                     default: return 0;
                 endcase),
@@ -585,10 +628,47 @@ module mkCore#(CoreId coreId)(Core);
         end
     endrule
 
-    Bool tlbNoPending = iTlb.noPendingReq &&
-                        dTlb.noPendingReqOrWrite &&
-                        l2Tlb.noPendingReqOrWrite;
+    rule doExeMMIOResp(stage == ExeMMIOResp);
+        // get mem inst
+        MemInst mem = unpack(0);
+        if(decInst.execFunc matches tagged Mem .mi) begin
+            mem = mi;
+        end
+        else begin
+            doAssert(False, "Must be mem inst");
+        end
+        // get mmio resp
+        mmio.pRs.deq;
+        MMIOPRs resp = mmio.pRs.first;
+        if(resp.valid) begin
+            if(srcDstRegs.dst matches tagged Valid .idx) begin
+                rf.wr(idx, resp.data);
+            end
+        end
+        else begin
+            if(mem.mem_func == Ld) begin
+                exception <= Valid (LoadAccessFault);
+            end
+            else begin
+                exception <= Valid (StoreAccessFault);
+            end
+        end
+        stage <= Commit;
+        if(verbose) begin
+            $display(
+                "[doExeMMIOResp] resp ", resp, ", dstVal ",
+                fshow(isValid(srcDstRegs.dst) && resp.valid ? Valid (resp.data)
+                                                            : Invalid)
+            );
+        end
+    endrule
 
+    Bool tlbNoPending = iTlb.noPendingReq &&
+                        dTlb.noPendingReq &&
+                        l2Tlb.noPendingReq;
+
+    // MMIO handle PRq should conflict with doCommit, prioritize MMIO handling
+    (* preempts = "mmio.handlePRq, doCommits" *)
     rule doCommit(stage == Commit);
         Addr next_pc;
         if(exception matches tagged Valid .cause) begin
@@ -617,22 +697,30 @@ module mkCore#(CoreId coreId)(Core);
             if(decInst.iType == Sret) begin
                 next_pc <- csrf.sret;
             end
-            else if(decInst.iType == Mrts) begin
-                next_pc <- csrf.mrts;
+            else if(decInst.iType == Mret) begin
+                next_pc <- csrf.mret;
             end
             else begin
                 // normal inst: see if CSR needs update
-                csrf.wr(decInst.csr, csrData, fflags, willDirtyFpu, False);
+                if(decInst.csr matches tagged Valid .csr) begin
+                    csrf.csrInstWr(csr, csrData);
+                end
+                else if(csrf.fpuInstNeedWr(fflags, willDirtyFpu)) begin
+                    csrf.fpuInstWr(fflags, willDirtyFpu);
+                end
                 next_pc = predPc;
             end
         end
         // reset all bookkeepings, redirect pc, go to check interrupt
         resetLocalState;
-        csrf.instret_inc(1); // increment inst count
+        csrf.incInstret(1); // increment inst count
         pcReg <= next_pc;
-        stage <= CheckInterrupt_SendHtif;
+        stage <= CheckInterrupt;
         
-        if(verbose) $display("[doCommit] exception ", fshow(exception), ", next pc %x", next_pc);
+        if(verbose) begin
+            $display("[doCommit] exception ", fshow(exception),
+                     ", next pc %x", next_pc);
+        end
 
 `ifdef CHECK_DEADLOCK
         commitInst.send; // ROB head is removed
@@ -655,33 +743,6 @@ module mkCore#(CoreId coreId)(Core);
         stage <= FetchITlb_RecvHtif;
     endrule
     
-    // send to host msg: make sure that we stall the processor before fetching
-    // next inst
-    rule csrfToHost(stage == CheckInterrupt_SendHtif);
-        let ret <- csrf.csrfToHost;
-        if(verbose) $display("[csrfToHost] core %d, val %x", coreId, ret);
-        // Don't stall for reading from the terminal
-        // Thomas says this is awful
-        // [sizhuo] do not compare lower bits, they may be garbage
-        if (truncateLSB(ret) != 16'h0100) begin
-            htifStall <= True;
-        end
-        toHostQ.enq(ret);
-    endrule
-
-    // try to process fromhost msg, only do this when mfromhost CSR is 0
-    // and we are not processing other msg (e.g. other IPI/fromhost)
-    // XXX since software may do read-modify-write on CSR, any change to CSR by
-    // external world should only happen when there is no inst in flight. We
-    // choose the fetch stage, which is also the stage when processor is
-    // stalled by HTIF
-    rule doFromHost(stage == FetchITlb_RecvHtif && csrf.fromHostZero);
-        fromHostQ.deq;
-        csrf.hostToCsrf(fromHostQ.first);
-        htifStall <= False;
-        if(verbose) $display("[doFromHost] core %d, val %x", coreId, fromHostQ.first);
-    endrule
-
     // preempt has 2 functions here
     // 1. break scheduling cycles
     // 2. XXX since csrf is configReg now, we should not let this rule fire
@@ -711,17 +772,14 @@ module mkCore#(CoreId coreId)(Core);
 
     interface CoreReq coreReq;
         method Action start(
-            Bit#(64) startpc, Bool ipi_wait_msip_zero,
+            Addr startpc,
+            Addr toHostAddr, Addr fromHostAddr,
             Bit#(64) verification_packets_to_ignore,
             Bool send_synchronization_packets
         ) if(stage == Off);
             pcReg <= startpc;
-            stage <= FetchITlb_RecvHtif;
-            csrf.hostToCsrf(0);
-        endmethod
-
-        method Action from_host(Bit#(64) v);
-            fromHostQ.enq(v);
+            stage <= FetchITlb;
+            mmio.setHtifAddrs(toHostAddr, fromHostAddr);
         endmethod
 
         method Action perfReq(PerfLocation loc, PerfType t);
@@ -733,8 +791,6 @@ module mkCore#(CoreId coreId)(Core);
     endinterface
 
     interface CoreIndInv coreIndInv;
-        method ActionValue#(Bit#(64)) to_host = toGet(toHostQ).get;
-
         method ActionValue#(VerificationPacket) debug_verify if(False);
             return ?;
         endmethod
@@ -752,19 +808,12 @@ module mkCore#(CoreId coreId)(Core);
         method terminate = csrf.terminate;
     endinterface
 
-    interface CoreIPI ipi;
-        method Action recvIPI;
-            doAssert(False, "IPI not implemented");
-        endmethod
-        method ActionValue#(CoreId) sendIPI if(False);
-            return 0;
-        endmethod
-    endinterface
-
     interface dCacheToParent = dMem.to_parent;
     interface iCacheToParent = iMem.to_parent;
 
     interface tlbToMem = l2Tlb.toMem;
+
+    interface mmioToPlatform = mmio.toP;
 
     // deadlock check
     interface CoreDeadlock deadlock;

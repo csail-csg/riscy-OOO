@@ -57,6 +57,9 @@ interface CsrFile;
     // increment will see the effect of normal CSR write.
     method Action incInstret(SupCnt x);
 
+    // update copy of mtime
+    method Action setTime(Data t);
+
     // MSIP/MTIP bits for external world (e.g., for MMIO and timer interrupt).
     // XXX These methods should only be called when the processor backend
     // pipeline does not contain any CSRXXX inst or corresponding interrupt
@@ -435,7 +438,8 @@ module mkCsrFile#(Data hartid)(CsrFile);
     // cycle
     Reg#(Data) cycle_csr = readOnlyReg(mcycle_csr);
     // time
-    Reg#(Data) time_csr = readOnlyReg(mtime);
+    Reg#(Data) time_reg <- mkCsrReg(0);
+    Reg#(Data) time_csr = readOnlyReg(time_reg);
     // instret
     Reg#(Data) instret_csr = readOnlyReg(minstret_csr);
     // terminate (non-standard)
@@ -671,6 +675,10 @@ module mkCsrFile#(Data hartid)(CsrFile);
 
     method Action incInstret(SupCnt x);
         instret_ehr[1] <= instret_ehr[1] + zeroExtend(x);
+    endmethod
+
+    method Action setTime(Data t);
+        time_reg <= t;
     endmethod
 
     method getMSIP = software_int_pend_vec[prvM]._read;

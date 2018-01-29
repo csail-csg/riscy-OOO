@@ -11,9 +11,9 @@ import CacheUtils::*;
 interface MMIOPlatform;
     method Action bootRomInitReq(BootRomIndex index, Data data);
     method ActionValue#(void) bootRomInitResp;
-    method Action start(Addr toHostAddr, Addr fromHostAddr);
-    interface FifoDeq#(Data) toHost;
-    interface FifoEnq#(Data) fromHost;
+    method Action start(Addr toHost, Addr fromHost);
+    method ActionValue#(Data) to_host;
+    method Action from_host(Data x);
 endinterface
 
 typedef enum {
@@ -42,7 +42,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     Bits#(Data, 64) // this module assumes Data is 64-bit wide
 );
     // boot rom
-    BRAM_PORT_BE#(BootRomIndex, Data) bootRom <- mkBRAMCore1BE(
+    BRAM_PORT_BE#(BootRomIndex, Data, NumBytes) bootRom <- mkBRAMCore1BE(
         valueOf(TExp#(LgBootRomSzData)), False
     );
     // mtimecmp
@@ -77,6 +77,16 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     // here. Since each core cannot write MTIP by CSRXXX inst, the only way to
     // change MTIP is through here.
     Vector#(CoreNum, Reg#(Bool)) mtip <- replicateM(mkReg(False));
+
+    // respQ for boot rom init
+    Fifo#(1, void) bootRomInitRespQ <- mkCFFifo;
+
+    // pass mtime to each core
+    rule propagateTime(state != Init);
+        for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
+            cores[i].setTime(mtime);
+        end
+    endrule
 
     rule incCycle(
         state != Init &&
@@ -440,4 +450,26 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         state <= SelectReq;
         cores[reqCore].pRs.enq(resp);
     endrule
+
+    method Action bootRomInitReq(BootRomIndex idx, Data data) if(state == Init);
+        bootRom.put(maxBound, idx, data)
+    endmethod
+
+    method ActionValue#(void) bootRomInitResp;
+        bootRomInitRespQ.deq;
+        return ?;
+    endmethod
+
+    method Action start(Addr toHost, Addr fromHost) if(state == Init);
+        toHostAddr <= getDataAlignedAddr(toHost);
+        fromHostAddr <= getDataAlignedAddr(fromHost);
+    endmethod
+
+    method ActionValue#(Data) to_host;
+        toHostQ.deq;
+        return toHostQ.first;
+    endmethod
+    method Action from_host(Data x);
+        fromHostQ.enq(x);
+    endmethod
 endmodule

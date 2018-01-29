@@ -29,11 +29,6 @@
 // Set this define to use the FMA for Add and Mul
 `define REUSE_FMA
 
-// Defines to match spike's behavior
-// `define CYCLE_COUNT_EQ_INST_COUNT
-`define DISABLE_STIP
-`define LOOK_LIKE_A_ROCKET
-
 //`define NUM_CORES -- defined in makefile
 
 `define sizeSup 1
