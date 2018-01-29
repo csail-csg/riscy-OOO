@@ -4,13 +4,17 @@ import MMIOAddrs::*;
 import CacheUtils::*;
 
 // local MMIO logic in each core (MMIOCore)
+// Every MMIO req from the core is directly passed to the platform, while this
+// logic handles req from the platform when platform is processing core req or
+// posting timer interrupt.
+
 interface MMIOCoreToPlatform;
     interface FifoDeq#(MMIOCRq) cRq;
     interface FifoEnq#(MMIOPRs) pRs;
     interface FifoEnq#(MMIOPRq) pRq;
     interface FifoDeq#(MMIOCRs) cRs;
-    // core keeps a copy of the mtime reg as the time CSR. This method allows
-    // the platform to inform the core to increment time CSR.
+    // core keeps a copy of the mtime reg. This method allows the platform to
+    // inform the core to increment time CSR.
     method Action incTime;
 endinterface
 
@@ -23,6 +27,10 @@ interface MMIOCore;
     interface FifoDeq#(MMIOPRs) mmioResp;
     // set tohost & fromhost addr
     method Action setHtifAddrs(Addr toHost, Addr fromHost);
+    // stop inst/interrupt from being issueed to processor backend when we have
+    // pending req from platform; otherwise we may wait forever before
+    // processing the platform req
+    method Bool hasPlatformReq;
 
     // methods to platform
     interface MMIOCoreToPlatform toP;
@@ -42,8 +50,8 @@ endinterface
 
 module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
     // HTIF mem mapped addrs
-    Reg#(Data) toHostAddr <- mkReg(0);
-    Reg#(Data) fromHostAddr <- mkReg(0);
+    Reg#(DataAlignedAddr) toHostAddr <- mkReg(0);
+    Reg#(DataAlignedAddr) fromHostAddr <- mkReg(0);
     // FIFOs connected to platform
     Fifo#(1, MMIOCRq) cRqQ <- mkCFFifo;
     Fifo#(1, MMIOPRs) pRsQ <- mkCFFifo;
@@ -83,7 +91,8 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
         cRsQ.enq(resp);
     endrule
 
-    method Bool isMMIOAddr(Addr a);
+    method Bool isMMIOAddr(Addr addr);
+        let a = getDataAlignedAddr(addr);
         return a < mainMemBaseAddr || a == toHostAddr || a == fromHostAddr;
     endmethod
 
@@ -91,9 +100,11 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
     interface mmioResp = toFifoDeq(pRsQ);
 
     method Action setHtifAddrs(Addr toHost, Addr fromHost);
-        toHostAddr <= toHost;
-        fromHostAddr <= fromHost;
+        toHostAddr <= getDataAlignedAddr(toHost);
+        fromHostAddr <= getDataAlignedAddr(fromHost);
     endmethod
+
+    method Bool hasPlatformReq = pRqQ.notEmpty;
 
     interface MMIOCoreToPlatform toP;
         interface cRq = toFifoDeq(cRqQ);
@@ -104,35 +115,3 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
     endinterface
 endmodule
 
-interface MMIOPlatform;
-    method Action bootRomInitReq(BootRomIndex index, Data data);
-    method ActionValue#(void) bootRomInitResp;
-    method Action start(Addr toHostAddr, Addr fromHostAddr);
-endinterface
-
-typedef enum {
-    Init,
-    SelectReq,
-    ProcessReq,
-    WaitCRs
-} MMIOPlatformState deriving(Bits, Eq, FShow);
-
-module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(MMIOPlatform);
-    // boot rom
-    BRAM_PORT#(BootRomIndex, Data) bootRom <- mkBRAMCore1(
-        valueOf(TExp#(BootRomIndexSz)), False
-    );
-    // mtimecmp
-    Vector#(CoreNum, Reg#(Data)) mtimecmp <- mk
-    // mtime
-    Reg#(Data) mtimeCopy <- mkConfigReg(0);
-    // HTIF mem mapped addrs
-    Reg#(Data) toHostAddr <- mkReg(0);
-    Reg#(Data) fromHostAddr <- mkReg(0);
-
-    // state machine
-    Reg#(MMIOPlatformState) state <- mkReg(Init);
-    // 
-
-
-endmodule

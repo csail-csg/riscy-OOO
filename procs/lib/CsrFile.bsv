@@ -57,9 +57,6 @@ interface CsrFile;
     // increment will see the effect of normal CSR write.
     method Action incInstret(SupCnt x);
 
-    // Update our local copy of mtime
-    method Action incTime;
-
     // MSIP/MTIP bits for external world (e.g., for MMIO and timer interrupt).
     // XXX These methods should only be called when the processor backend
     // pipeline does not contain any CSRXXX inst or corresponding interrupt
@@ -160,7 +157,10 @@ endmodule
 
 // same as EHR except that read port 0 is not ordered with other methods. Read
 // port 1 will still get bypassing from write port 0.
-module mkConfigEhr#(t init)(Ehr#(n, t)) provisos(Bits#(t, w));
+module mkConfigEhr#(
+    t init,
+    ReadOnly#(Data) mtime
+)(Ehr#(n, t)) provisos(Bits#(t, w));
     Ehr#(n, t) data <- mkEhr(init);
     Wire#(t) read <- mkBypassWire;
 
@@ -327,7 +327,8 @@ module mkCsrFile#(Data hartid)(CsrFile);
         readOnlyReg(52'b0),
         external_int_pend_vec[prvM], readOnlyReg(1'b0),
         external_int_pend_vec[prvS], external_int_pend_vec[prvU],
-        timer_int_pend_vec[prvM],    readOnlyReg(1'b0),
+        readOnlyReg(timer_int_pend_vec[prvM]), // MTIP is read-only to software
+        readOnlyReg(1'b0),
         timer_int_pend_vec[prvS],    timer_int_pend_vec[prvU],
         software_int_pend_vec[prvM], readOnlyReg(1'b0),
         software_int_pend_vec[prvS], software_int_pend_vec[prvU],
@@ -433,9 +434,8 @@ module mkCsrFile#(Data hartid)(CsrFile);
     );
     // cycle
     Reg#(Data) cycle_csr = readOnlyReg(mcycle_csr);
-    // time: this is a local copy of platform reg mtime
-    Reg#(Data) time_reg <- mkCsrReg(0);
-    Reg#(Data) time_csr = readOnlyReg(time_reg);
+    // time
+    Reg#(Data) time_csr = readOnlyReg(mtime);
     // instret
     Reg#(Data) instret_csr = readOnlyReg(minstret_csr);
     // terminate (non-standard)
@@ -671,10 +671,6 @@ module mkCsrFile#(Data hartid)(CsrFile);
 
     method Action incInstret(SupCnt x);
         instret_ehr[1] <= instret_ehr[1] + zeroExtend(x);
-    endmethod
-
-    method Action incTime;
-        time_reg <= time_reg + 1;
     endmethod
 
     method getMSIP = software_int_pend_vec[prvM]._read;

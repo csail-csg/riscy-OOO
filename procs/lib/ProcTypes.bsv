@@ -434,7 +434,10 @@ typedef struct {
 // req fom core to platform
 typedef struct {
     Addr addr; // physical address
-    ByteEn wrBE; // store BE (0 means load), shifted for 64-bit aligned
+    Bool write;
+    // BE, shifted for 64-bit aligned. Both LOAD and store need to specify
+    // this. We need this for load to remove redundant MMIO accessed (for MSIP)
+    ByteEn byteEn;
     Data data; // store data (shifted for 64-bit aligned)
 } MMIOCRq deriving(Bits, Eq, FShow);
 
@@ -462,8 +465,14 @@ typedef struct {
 } MMIOCRs deriving(Bits, Eq, FShow);
 
 // Boot rom: each block is 64-bit data
-typedef TSub#(`LOG_BOOT_ROM_BYTES, TLog#(NumBytes)) BootRomIndexSz;
-typedef Bit#(BootRoomIndexSz) BootRomIndex;
+typedef `LOG_BOOT_ROM_BYTES LgBootRomBytes;
+typedef TSub#(LgBootRomBytes, TLog#(NumBytes)) LgBootRomSzData;
+typedef Bit#(LgBootRoomSzData) BootRomIndex;
+
+// mtime: we increment mtime by 50 every 5000 cycles, this simulates a
+// 10MHz clock for a 1GHz CPU (same as spike)
+typedef /*50*/ 1 TicksPerTimeInc;
+typedef /*5000*/ 100 CyclesPerTimeInc;
 
 // Op
 Bit#(3) fnADD   = 3'b000;
