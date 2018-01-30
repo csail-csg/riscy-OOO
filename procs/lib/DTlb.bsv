@@ -23,6 +23,7 @@
 
 `include "ProcConfig.bsv"
 import ClientServer::*;
+import DefaultValue::*;
 import GetPut::*;
 import Types::*;
 import ProcTypes::*;
@@ -111,7 +112,7 @@ module mkDTlb(DTlb::DTlb);
 
     // do flush: start when all misses resolve & no pending write
     rule doStartFlush(needFlush && !waitFlushP && !isValid(miss));
-        tlb.flush_translation(unpack(0), unpack(0), True);
+        tlb.flush;
         // request parent TLB to flush
         flushRqToPQ.enq(?);
         waitFlushP <= True;
@@ -232,7 +233,7 @@ module mkDTlb(DTlb::DTlb);
         end
         else begin
             // bare mode
-            hitQ.enq(tuple2(vaddr, Invalid));
+            hitQ.enq(tuple2(r.addr, Invalid));
             if(verbose) $display("DTLB %m req (bare): ", fshow(r));
         end
     endmethod

@@ -23,6 +23,7 @@
 
 `include "ProcConfig.bsv"
 import ClientServer::*;
+import DefaultValue::*;
 import GetPut::*;
 import Types::*;
 import ProcTypes::*;
@@ -110,7 +111,7 @@ module mkITlb(ITlb::ITlb);
 
     // do flush: only start when all misses resolve
     rule doStartFlush(needFlush && !waitFlushP && !isValid(miss));
-        tlb.flush_translation(unpack(0), unpack(0), True);
+        tlb.flush;
         // request parent TLB to flush
         flushRqToPQ.enq(?);
         waitFlushP <= True;
@@ -141,7 +142,7 @@ module mkITlb(ITlb::ITlb);
                                en.level,
                                InstFetch)) begin
                 // fill TLB and resp to proc
-                tlb.add_translation(en);
+                tlb.addEntry(en);
                 let trans_addr = translate(vaddr, en.ppn, en.level);
                 hitQ.enq(tuple2(trans_addr, Invalid));
                 if(verbose) begin

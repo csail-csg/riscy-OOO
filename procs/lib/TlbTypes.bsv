@@ -21,6 +21,7 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+import Vector::*;
 import Types::*;
 import ProcTypes::*;
 
@@ -91,10 +92,10 @@ endfunction
 
 function Addr translate(Addr addr, Ppn ppn, PageWalkLevel level);
     return zeroExtend(case (level)
-        0: {ppn, getPageOffset(addr)} // 4KB page
+        0: {ppn, getPageOffset(addr)}; // 4KB page
         1: {ppn[43:9], addr[20:0]};   // 2MB page
         2: {ppn[43:18], addr[29:0]};  // 1GB page
-        default: 0 // should not happen
+        default: 0; // should not happen
     endcase);
 endfunction
 
@@ -146,7 +147,7 @@ function Bool hasVMPermission(
 
     // check PTE itself is well-formed or not
     if(pte_type.writable && !pte_type.readable) begin
-        fault = True; // page writeable but not readable
+        fault = True; // page writable but not readable
     end
     if(!isPpnAligned(ppn, level)) begin
         fault = True; // unaligned super page
@@ -185,7 +186,7 @@ function Bool hasVMPermission(
         end
         DataStore: begin
             // store requires page to be both readable and writable
-            if(!(pte_type.readable && pte_type.writeable)) begin
+            if(!(pte_type.readable && pte_type.writable)) begin
                 fault = True;
             end
         end

@@ -18,10 +18,11 @@ DataAlignedAddr mainMemBaseAddr  = getDataAlignedAddr(64'h80000000);
 // XXX Each msip reg is 32-bit, while mtime and each mtimecmp are 64-bit. We
 // assume Data is 64-bit. We hard code this relation in all MMIO logic.
 
-// upper bound addr for each MMIO reg/device (aligned to Data)
+// upper bound addr (bound itself is invalid addr) for each MMIO reg/device
+// (aligned to Data)
 DataAlignedAddr bootRomBoundAddr  = bootRomBaseAddr +
-                                    fromInteger(valueof(TExp#(LgBootRomSzData));
-DataAlignedAddr msipBoundAddr     = msipBoudAddr +
+                                    fromInteger(valueof(TExp#(LgBootRomSzData)));
+DataAlignedAddr msipBoundAddr     = msipBaseAddr +
                                     fromInteger(valueof(TDiv#(CoreNum, 2)));
 DataAlignedAddr mtimecmpBoundAddr = mtimecmpBaseAddr +
                                     fromInteger(valueof(CoreNum));

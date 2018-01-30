@@ -139,6 +139,7 @@ module mkCore#(CoreId coreId)(Core);
 
     // processor local states
     Reg#(Maybe#(Exception)) exception <- mkReg(Invalid);
+    Reg#(Bool) instFromMMIO <- mkReg(False); // sometimes inst is fetched from boot rom
     Reg#(DecodedInst) decInst <- mkReg(unpack(0));
     Reg#(ArchRegs) srcDstRegs <- mkReg(unpack(0));
     Reg#(Maybe#(Data)) src1Val <- mkReg(Invalid);
@@ -158,6 +159,7 @@ module mkCore#(CoreId coreId)(Core);
     function Action resetLocalState;
     action
         exception <= Invalid;
+        instFromMMIO <= False;
         decInst <= unpack(0);
         srcDstRegs <= unpack(0);
         src1Val <= Invalid;
@@ -167,8 +169,8 @@ module mkCore#(CoreId coreId)(Core);
         predPc <= 0;
         memVAddr <= 0;
         csrData <= 0;
+        shiftedBeData <= unpack(0);
         stBeData <= unpack(0);
-        scBeData <= unpack(0);
         amoData <= 0;
         willDirtyFpu <= False;
         fflags <= 0;
@@ -179,7 +181,7 @@ module mkCore#(CoreId coreId)(Core);
     // arch regs
     Reg#(Addr) pcReg <- mkReg(0);
     ArchRegFile rf <- mkArchRegFile;
-    CsrFile csrf <- mkCsrFileWithId(zeroExtend(coreId)); // hartid in CSRF should be core id
+    CsrFile csrf <- mkCsrFile(zeroExtend(coreId)); // hartid in CSRF should be core id
 
     // TLBs
     ITlb iTlb <- mkITlb;
@@ -210,7 +212,7 @@ module mkCore#(CoreId coreId)(Core);
     DCoCache dMem <- mkDCoCache(procRespIfc);
 
     // MMIO
-    MMIOCoreInput mmioInIfc = (interface MMIOInput;
+    MMIOCoreInput mmioInIfc = (interface MMIOCoreInput;
         method getMSIP = csrf.getMSIP;
         method setMSIP = csrf.setMSIP;
         method setMTIP = csrf.setMTIP;
@@ -291,10 +293,10 @@ module mkCore#(CoreId coreId)(Core);
     endrule
 `endif
 
-    rule doFetchITlb(stage == FetchITlb && 
-                     // wait flush to be done
-                     !flush_reservation && !flush_tlbs && !update_vm_info &&
-                     iTlb.flush_done && dTlb.flush_done);
+    Bool all_flush_done = (!flush_reservation && !flush_tlbs && !update_vm_info
+                           && iTlb.flush_done && dTlb.flush_done);
+
+    rule doFetchITlb(stage == FetchITlb && all_flush_done);
         iTlb.to_proc.request.put(pcReg);
         predPc <= pcReg + 4; // use PC+4 here, for branches we overwrite this later
         stage <= FetchICache;
@@ -305,8 +307,20 @@ module mkCore#(CoreId coreId)(Core);
         let {phy_pc, cause} <- iTlb.to_proc.response.get;
         if(verbose) $display("[doFetchICache] phy PC %x, exception ", phy_pc, fshow(cause));
         if(!isValid(cause)) begin
-            // PC translation succeeds, req I$
-            iMem.to_proc.request.put(phy_pc);
+            // PC translation succeeds, req I$ or boot rom
+            if(mmio.isMMIOAddr(phy_pc)) begin
+                mmio.mmioReq.enq(MMIOCRq {
+                    addr: phy_pc,
+                    write: False,
+                    byteEn: replicate(True),
+                    data: ?
+                });
+                instFromMMIO <= True;
+            end
+            else begin
+                iMem.to_proc.request.put(phy_pc);
+                instFromMMIO <= False;
+            end
             stage <= Decode;
         end
         else begin
@@ -319,11 +333,27 @@ module mkCore#(CoreId coreId)(Core);
     // since MMIO checks if CSRXXX inst is inflight, we just stop issue if
     // MMIO can handle pRq. Technically we don't need to, because rule ordering
     // will take car of these things.
-    (* preempts = "mmio.handlePRq, doDecode *)
+    (* preempts = "mmio.handlePRq, doDecode" *)
     rule doDecode(stage == Decode);
-        // we only do 1 inst
-        Vector#(SupSize, Maybe#(Instruction)) insts <- iMem.to_proc.response.get;
-        if(insts[0] matches tagged Valid .inst) begin
+        // retrieve fetched inst
+        Maybe#(Instruction) fetchedInst = Invalid;
+        if(instFromMMIO) begin
+            mmio.mmioResp.deq;
+            MMIOPRs resp = mmio.mmioResp.first;
+            if(resp.valid) begin
+                // data from Boot Rom is 64-bit aligned, we choose the lower or
+                // upper 32-bit, dependeing on pcReg[2]
+                Vector#(2, Instruction) insts = unpack(resp.data);
+                fetchedInst = Valid (insts[pcReg[2]]);
+            end
+        end
+        else begin
+            // I$ may return multiple insts, we only do 1 inst
+            Vector#(SupSize, Maybe#(Instruction)) insts <- iMem.to_proc.response.get;
+            fetchedInst = insts[0];
+        end
+        // decode
+        if(fetchedInst matches tagged Valid .inst) begin
             let decRes = decode(inst);
             if(decRes.illegalInst) begin
                 // illegal inst, go to commit to take exception
@@ -336,13 +366,15 @@ module mkCore#(CoreId coreId)(Core);
                 srcDstRegs <= decRes.regs;
                 csrInstInflight <= isValid(decRes.dInst.csr);
                 stage <= RegRead;
-                assert(decRes.dInst.iType != Unsupported,
+                doAssert(decRes.dInst.iType != Unsupported,
                        "unsupprted inst should raise exception");
             end
             if(verbose) $display("[doDecode] inst %x, decRes ", inst, fshow(decRes));
         end
         else begin
-            doAssert(False, "Must at least get 1 inst");
+            doAssert(False, "must get valid inst");
+            exception <= Valid (InstAccessFault);
+            stage <= Commit;
         end
     endrule
 
@@ -415,7 +447,7 @@ module mkCore#(CoreId coreId)(Core);
                 Bit#(TLog#(NumBytes)) byteOffset = truncate(vaddr);
                 ByteEn shiftedBE = unpack(pack(mem.byteEn) << byteOffset);
                 Data shiftedData = rVal2 << {byteOffset, 3'b0};
-                shiftedBEData <= tuple2(shiftedBE, shiftedData);
+                shiftedBeData <= tuple2(shiftedBE, shiftedData);
                 // compute st/sc/amo data & BE
                 case(mem.mem_func)
                     St: begin
@@ -444,7 +476,8 @@ module mkCore#(CoreId coreId)(Core);
                 Data rVal1 = fromMaybe(0, src1Val);
                 Data rVal2 = fromMaybe(0, src2Val);
                 Data rVal3 = 0; // FIXME FMA is not implemented
-                fpuExec.exec(fpu, rVal1, rVal2, rVal3);
+                fpuExec.exec(updateRoundingMode(fpu, csrf.decodeInfo),
+                             rVal1, rVal2, rVal3);
                 stage <= ExeFpu;
             end
             default: begin
@@ -531,18 +564,18 @@ module mkCore#(CoreId coreId)(Core);
         else if(mmio.isMMIOAddr(paddr)) begin
             // MMIO access
             if(mem.mem_func == Lr) begin
-                assert(False, "no LR for MMIO");
-                exception = Valid (LoadAccessFault);
+                doAssert(False, "no LR for MMIO");
+                exception <= Valid (LoadAccessFault);
                 stage <= Commit;
             end
             else if(mem.mem_func == Sc) begin
-                assert(False, "no SC for MMIO");
-                exception = Valid (StoreAccessFault);
+                doAssert(False, "no SC for MMIO");
+                exception <= Valid (StoreAccessFault);
                 stage <= Commit;
             end
             else if(mem.mem_func == Amo) begin
-                assert(False, "no AMO for MMIO");
-                exception = Valid (StoreAccessFault);
+                doAssert(False, "no AMO for MMIO");
+                exception <= Valid (StoreAccessFault);
                 stage <= Commit;
             end
             else begin
@@ -552,7 +585,7 @@ module mkCore#(CoreId coreId)(Core);
                     byteEn: tpl_1(shiftedBeData),
                     data: tpl_2(shiftedBeData)
                 };
-                mmio.cRq.enq(r);
+                mmio.mmioReq.enq(r);
                 stage <= ExeMMIOResp;
                 if(verbose) begin
                     $display("[doExeTlbResp] paddr %x, mmio req ",
@@ -638,11 +671,16 @@ module mkCore#(CoreId coreId)(Core);
             doAssert(False, "Must be mem inst");
         end
         // get mmio resp
-        mmio.pRs.deq;
-        MMIOPRs resp = mmio.pRs.first;
+        mmio.mmioResp.deq;
+        MMIOPRs resp = mmio.mmioResp.first;
         if(resp.valid) begin
             if(srcDstRegs.dst matches tagged Valid .idx) begin
-                rf.wr(idx, resp.data);
+                doAssert(mem.mem_func == Ld, "must be ld");
+                rf.wr(idx,
+                      gatherLoad(memVAddr, mem.byteEn, mem.unsignedLd, resp.data));
+            end
+            else begin
+                doAssert(mem.mem_func == St, "must be st");
             end
         end
         else begin
@@ -651,6 +689,7 @@ module mkCore#(CoreId coreId)(Core);
             end
             else begin
                 exception <= Valid (StoreAccessFault);
+                doAssert(mem.mem_func == St, "must be st");
             end
         end
         stage <= Commit;
@@ -663,13 +702,11 @@ module mkCore#(CoreId coreId)(Core);
         end
     endrule
 
-    Bool tlbNoPending = iTlb.noPendingReq &&
-                        dTlb.noPendingReq &&
-                        l2Tlb.noPendingReq;
 
-    // MMIO handle PRq should conflict with doCommit, prioritize MMIO handling
-    (* preempts = "mmio.handlePRq, doCommits" *)
+    // MMIO handle PRq should conflict with doCommit, prioritize commit
+    (* preempts = "doCommit, mmio.handlePRq" *)
     rule doCommit(stage == Commit);
+        Bool tlbNoPending = True; // no tlb req at this time
         Addr next_pc;
         if(exception matches tagged Valid .cause) begin
             // exception: flush & stalls
@@ -706,7 +743,7 @@ module mkCore#(CoreId coreId)(Core);
                     csrf.csrInstWr(csr, csrData);
                 end
                 else if(csrf.fpuInstNeedWr(fflags, willDirtyFpu)) begin
-                    csrf.fpuInstWr(fflags, willDirtyFpu);
+                    csrf.fpuInstWr(fflags);
                 end
                 next_pc = predPc;
             end
@@ -724,13 +761,14 @@ module mkCore#(CoreId coreId)(Core);
 
 `ifdef CHECK_DEADLOCK
         commitInst.send; // ROB head is removed
-        if(csrf.csrState.prv == 0) begin
+        if(csrf.decodeInfo.prv == 0) begin
             commitUserInst.send;
         end
 `endif
     endrule
 
-    rule doInterrupt(stage == CheckInterrupt_SendHtif);
+    rule doInterrupt(stage == CheckInterrupt && all_flush_done);
+        Bool tlbNoPending = True; // no tlb req at this time
         if(csrf.pending_interrupt matches tagged Valid .cause) begin
             // interrupt: flush & stalls
             when(tlbNoPending, noAction);
@@ -740,7 +778,7 @@ module mkCore#(CoreId coreId)(Core);
             let next_pc <- csrf.trap(Interrupt (cause), pcReg, 0);
             pcReg <= next_pc;
         end
-        stage <= FetchITlb_RecvHtif;
+        stage <= FetchITlb;
     endrule
     
     // preempt has 2 functions here

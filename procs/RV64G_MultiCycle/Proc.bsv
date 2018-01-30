@@ -29,13 +29,16 @@ import Core::*;
 import L1CoCache::*;
 import L2Tlb::*;
 import CCTypes::*;
+import CacheUtils::*;
 import LLBank::*;
 import LLCache::*;
 import HostDmaIF::*;
 import HostDmaLLC::*;
 import L1LLConnect::*;
 import LLCDmaConnect::*;
-import IPIConnect::*;
+import MMIOAddrs::*;
+import MMIOCore::*;
+import MMIOPlatform::*;
 import DeadlockIF::*;
 import DeadlockSync::*;
 import RenameDebugIF::*;
@@ -81,7 +84,7 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
         coreIndInv[i] = core[i].coreIndInv;
     end
     ProcReq procReqIfc <- mkProcReqSync(
-        coreReq, mmioPlatform portalClk, portalRst
+        coreReq, mmioPlatform, portalClk, portalRst
     );
     ProcIndInv procIndInvIfc <- mkProcIndInvSync(
         coreIndInv, mmioPlatform, portalClk, portalRst
@@ -127,7 +130,37 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
     interface hostDmaReq = host.reqFromHost;
     method rdDataToHost = host.rdDataToHost;
     method wrDoneToHost = host.wrDoneToHost;
-    interface toDram = llc.to_mem;
+
+    // when requesting DRAM, we need to subtract the main mem base from the
+    // requesting addr
+    interface MemFifoClient toDram;
+        interface FifoDeq toM;
+            method notEmpty = llc.to_mem.toM.notEmpty;
+            method deq = llc.to_mem.toM.deq;
+            method ToMemMsg#(LdMemRqId#(LLCRqMshrIdx), void) first;
+                Addr dramBase = {mainMemBaseAddr, 3'b0};
+                case(llc.to_mem.toM.first) matches
+                    tagged Ld .r: begin
+                        return Ld (LdMemRq {
+                            addr: r.addr - dramBase,
+                            child: r.child,
+                            id: r.id
+                        });
+                    end
+                    tagged Wb .r: begin
+                        return Wb (WbMemRs {
+                            addr: r.addr - dramBase,
+                            byteEn: r.byteEn,
+                            data: r.data
+                        });
+                    end
+                    default: return ?;
+                endcase
+            endmethod
+        endinterface
+        interface rsFromM = llc.to_mem.rsFromM;
+    endinterface
+
     interface deadlockReq = deadlock.req;
     interface deadlockIndInv = deadlock.indInv;
     interface renameDebugIndInv = renameDebug.indInv;

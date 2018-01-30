@@ -69,12 +69,6 @@ module mkLLCDmaConnect#(
     // TLB req is for a whole data
     function dmaRqT getTlbDmaReq(CoreId c, TlbMemReq r);
         LineDataOffset dataSel = getLineDataOffset(r.addr);
-        Line line = replicate(?);
-        line[dataSel] = r.data;
-        Vector#(LineSzData, Bit#(DataSzBytes)) be = replicate(0);
-        if(r.write) begin
-            be[dataSel] = maxBound;
-        end
         let id = TlbDmaReqId {
             core: c,
             id: r.id,
@@ -82,8 +76,8 @@ module mkLLCDmaConnect#(
         };
         return DmaRq {
             addr: r.addr,
-            byteEn: unpack(pack(be)),
-            data: line,
+            byteEn: replicate(False), // tlb req is always load
+            data: ?,
             id: Tlb (id)
         };
     endfunction
@@ -152,9 +146,9 @@ module mkLLCDmaConnect#(
 
     rule sendStRespToTlb(llc.respSt.first matches tagged Tlb .id);
         llc.respSt.deq;
-        tlb[id.core].respSt.enq(id.id);
         if(verbose) begin
             $display("  [LLCDmaConnect sendStRespToTlb] ", fshow(llc.respSt.first));
         end
+        doAssert(False, "No TLB st");
     endrule
 endmodule

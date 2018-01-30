@@ -23,6 +23,7 @@
 
 `include "ProcConfig.bsv"
 import Vector::*;
+import DefaultValue::*;
 import ClientServer::*;
 import GetPut::*;
 import Types::*;
@@ -71,7 +72,7 @@ typedef struct {
 
 typedef struct {
     TlbChild child;
-    TlbEntry entry;
+    Maybe#(TlbEntry) entry;
 } L2TlbRsToC deriving(Bits, Eq, FShow);
 
 interface L2TlbToChildren;
@@ -139,7 +140,7 @@ module mkL2Tlb(L2Tlb);
     Reg#(Addr) ptBaseAddr <- mkRegU;
     
     // current processor VM information
-    Reg#(VMInfo) vm_info_I <- mkReg(defualtValue);
+    Reg#(VMInfo) vm_info_I <- mkReg(defaultValue);
     Reg#(VMInfo) vm_info_D <- mkReg(defaultValue);
 
     // Memory Queues for page table walks
@@ -180,11 +181,11 @@ module mkL2Tlb(L2Tlb);
 
     // process resp from 4KB TLB and mega-giga TLB
     rule doTlbResp(pendReq matches tagged Valid .cRq &&& !miss);
-        assert(!flushing, "cannot have pending req when flushing");
+        doAssert(!flushing, "cannot have pending req when flushing");
 
         // get correct VM info
         VMInfo vm_info = cRq.child == I ? vm_info_I : vm_info_D;
-        assert(vm_info.sv39, "must be in sv39 mode");
+        doAssert(vm_info.sv39, "must be in sv39 mode");
 
         // get resp from 4KB TLB and mega-giga TLB
         let resp4KB = tlb4KB.resp;
@@ -216,17 +217,18 @@ module mkL2Tlb(L2Tlb);
                 entry: Invalid
             });
             // 4KB TLB array is not deq yet
-            tlb4KB.deqUpdate(False, ?, ?);
+            tlb4KB.deqUpdate(None, ?, ?);
             // req is done
             pendReq <= Invalid;
         end
         else if(respMG.hit) begin
             // hit on a mega or giga page
             let entry = respMG.entry;
-            doAssert(entry.level > 0 && entry.level <= maxpageWalkLevel, "mega or giga page");
+            doAssert(entry.level > 0 && entry.level <= maxPageWalkLevel,
+                     "mega or giga page");
             pageHit(entry);
             tlb4KB.deqUpdate(None, ?, ?); // just deq 4KB array
-            tlbMG.update(respMG.index); // update replacement in MG array
+            tlbMG.updateRep(respMG.index); // update replacement in MG array
         end
         else if(resp4KB.hit) begin
             // hit on 4KB page
@@ -255,7 +257,7 @@ module mkL2Tlb(L2Tlb);
     endrule
 
     rule doPageWalk(pendReq matches tagged Valid .cRq &&& miss);
-        assert(!flushing, "cannot have pending req when flushing");
+        doAssert(!flushing, "cannot have pending req when flushing");
 
         // handle page fault
         function Action pageFault(String reason);
@@ -266,7 +268,7 @@ module mkL2Tlb(L2Tlb);
                 entry: Invalid
             });
             // 4KB TLB array is not deq yet
-            tlb4KB.deqUpdate(False, ?, ?);
+            tlb4KB.deqUpdate(None, ?, ?);
             // req is done
             pendReq <= Invalid;
             miss <= False;
@@ -322,9 +324,9 @@ module mkL2Tlb(L2Tlb);
                 let entry = TlbEntry {
                     vpn:     masked_vpn,
                     ppn:     masked_ppn,
-                    pteType: pte.pte_type,
+                    pteType: pte.pteType,
                     level:   walkLevel,
-                    asid:    vm_info.asid,
+                    asid:    vm_info.asid
                 };
                 // resp child
                 rsToCQ.enq(L2TlbRsToC {

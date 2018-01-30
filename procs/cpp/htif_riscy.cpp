@@ -40,6 +40,7 @@ htif_riscy_t::htif_riscy_t(const std::vector<std::string>& args,
     htif_t(args),
     core_num(_core_num),
     mem_size(0),
+    mem_base(0x80000000ULL),
     dma_read(nullptr),
     dma_write(nullptr),
     write_from_host(nullptr),
@@ -66,7 +67,7 @@ void htif_riscy_t::get_to_host(reg_t x) {
 
 void htif_riscy_t::read_chunk(addr_t taddr, size_t len, void* dst) {
     assert(taddr >= 0);
-    assert(taddr + len <= mem_size);
+    assert(taddr + len <= mem_base + mem_size);
 
     if (verbose) fprintf(stderr,
                          "htif_riscy_t::read_chunk"
@@ -77,7 +78,7 @@ void htif_riscy_t::read_chunk(addr_t taddr, size_t len, void* dst) {
 
 void htif_riscy_t::write_chunk(addr_t taddr, size_t len, const void* src) {
     assert(taddr >= 0);
-    assert(taddr + len <= mem_size);
+    assert(taddr + len <= mem_base + mem_size);
 
     if (verbose) fprintf(stderr,
                          "htif_riscy_t::write_chunk"
@@ -220,7 +221,6 @@ void htif_riscy_t::make_dtb(std::vector<char> &rom)
     std::string isa_str = "rv64imafd";
     std::string vm_mode = "sv39";
     // addresses copied from spike
-    reg_t mem_base = 0x80000000;
     reg_t clint_base = 0x02000000;
     reg_t clint_size = 0x000c0000;
 

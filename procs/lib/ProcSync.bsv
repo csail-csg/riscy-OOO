@@ -33,6 +33,7 @@ import VerificationPacket::*;
 import Performance::*;
 import Core::*;
 import SyncFifo::*;
+import MMIOPlatform::*;
 
 // indication methods that are truly in use by processor
 interface ProcIndInv;
@@ -165,8 +166,8 @@ module mkProcReqSync#(
         end
         mmio.start(toHost, fromHost);
         // check addr alignment
-        assert(toHost[2:0] == 0, "tohost addr must be 8B aligned");
-        assert(fromHost[2:0] == 0, "fromhost addr must be 8B aligned");
+        doAssert(toHost[2:0] == 0, "tohost addr must be 8B aligned");
+        doAssert(fromHost[2:0] == 0, "fromhost addr must be 8B aligned");
     endrule
 
     rule doHost;

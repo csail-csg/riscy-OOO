@@ -188,7 +188,7 @@ function Maybe#(Exception) checkForException(
             // Get rounding mode
             let rm = (fpu_f.rm == RDyn) ? unpack(csrState.frm) : fpu_f.rm;
             case(rm)
-                RNE, RTZ, RDN, RUP, RMM: noAction; // legal rounding modes
+                RNE, RTZ, RDN, RUP, RMM: exception = exception; // legal modes
                 default                : exception = Valid (IllegalInst);
             endcase
         end

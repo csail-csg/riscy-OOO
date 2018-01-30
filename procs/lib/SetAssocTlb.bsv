@@ -154,14 +154,14 @@ module mkSetAssocTlb#(
         end
         repInfoT repInfo = repRam.rdResp;
         // do VPN match (only 4KB page) and ASID match
-        function Bool vpnMatch(wayT i);
+        function Bool entryHit(wayT i);
             SetAssocTlbEntry en = entries[i];
             Bool vpnMatch = en.entry.vpn == rq.vpn;
             Bool asidMatch = en.entry.asid == rq.asid || en.entry.pteType.global;
             return en.valid && asidMatch && vpnMatch;
         endfunction
         Vector#(wayNum, wayT) wayVec = genWith(fromInteger);
-        if(find(vpnMatch, wayVec) matches tagged Valid .w) begin
+        if(find(entryHit, wayVec) matches tagged Valid .w) begin
             // hit
             return SetAssocTlbResp {
                 hit: True,

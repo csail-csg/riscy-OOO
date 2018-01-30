@@ -83,6 +83,7 @@ private:
     uint32_t core_num;
     // RISCV proc memory
     size_t mem_size; // number of bytes in mem
+    const uint64_t mem_base;
     DmaReadFunc dma_read;
     DmaWriteFunc dma_write;
     // write fromhost

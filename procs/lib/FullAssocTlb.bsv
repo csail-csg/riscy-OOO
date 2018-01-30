@@ -43,8 +43,8 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
     Add#(1, a__, tlbSz),
     Alias#(tlbIdxT, Bit#(TLog#(tlbSz)))
 );
-    Vector#(tlbSz, Reg#(Bool))    validVec <- replicateM(mkReg(False));
-    Vector#(tlbSz, Reg#(TlbEntry) entryVec <- replicateM(mkRegU);
+    Vector#(tlbSz, Reg#(Bool))     validVec <- replicateM(mkReg(False));
+    Vector#(tlbSz, Reg#(TlbEntry)) entryVec <- replicateM(mkRegU);
 
     // bit-LRU replacement
     Reg#(Bit#(tlbSz)) lruBit <- mkReg(0);
@@ -69,23 +69,25 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
 
     method FullAssocTlbResp#(tlbIdxT) translate(Vpn vpn, Asid asid);
         // find the matching entry
-        function Bool isMatch(Integer i);
+        function Bool isMatch(tlbIdxT i);
             TlbEntry entry = entryVec[i];
             Bool asidMatch = entry.asid == asid || entry.pteType.global;
             Bool vpnMatch = getMaskedVpn(vpn, entry.level) == entry.vpn;
             return validVec[i] && asidMatch && vpnMatch;
         endfunction
-        Vector#(tlbSz, Integer) idxVec = genVector;
+        Vector#(tlbSz, tlbIdxT) idxVec = genWith(fromInteger);
         if(find(isMatch, idxVec) matches tagged Valid .idx) begin
             // hit a TLB entry, get its content
             return FullAssocTlbResp {
                 hit: True,
+                index: idx,
                 entry: entryVec[idx]
             };
         end
         else begin // miss
             return FullAssocTlbResp {
                 hit: False,
+                index: ?,
                 entry: ?
             };
         end
@@ -114,13 +116,13 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
         validVec[addIdx] <= True;
         entryVec[addIdx] <= x;
         // check ppn and vpn lower bits are 0 for super pages
-        assert(x.ppn == getMaskedPpn(x.ppn, x.level), "ppn lower bits not 0");
-        assert(x.vpn == getMaskedVpn(x.vpn, x.level), "vpn lower bits not 0");
+        doAssert(x.ppn == getMaskedPpn(x.ppn, x.level), "ppn lower bits not 0");
+        doAssert(x.vpn == getMaskedVpn(x.vpn, x.level), "vpn lower bits not 0");
         // update LRU bits
         updateLRU(addIdx);
     endmethod
 
-    method Action updateRep(indexT index);
+    method Action updateRep(tlbIdxT index);
         updateLRU(index);
     endmethod
 endmodule

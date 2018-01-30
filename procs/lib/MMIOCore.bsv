@@ -2,6 +2,7 @@ import Types::*;
 import ProcTypes::*;
 import MMIOAddrs::*;
 import CacheUtils::*;
+import Fifo::*;
 
 // local MMIO logic in each core (MMIOCore)
 // Every MMIO req from the core is directly passed to the platform, while this
@@ -63,14 +64,14 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
     rule handlePRq(inIfc.noInflightCSRInst && inIfc.noInflightInterrupt);
         pRqQ.deq;
         MMIOPRq req = pRqQ.first;
-        MMIOCRs resp = unpack(0);
+        MMIOCRs resp = MMIOCRs {data: ?};
         case(req.target)
             MSIP: begin
                 if(req.write) begin
                     inIfc.setMSIP(req.data);
                 end
                 else begin
-                    resp = inIfc.getMSIP;
+                    resp.data = inIfc.getMSIP;
                 end
             end
             MTIP: begin
@@ -78,10 +79,10 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
                     inIfc.setMTIP(req.data);
                 end
                 else begin
-                    assert(False, "platform can only write MTIP");
+                    doAssert(False, "platform can only write MTIP");
                 end
             end
-            default: assert(False, "unknown target");
+            default: doAssert(False, "unknown target");
         endcase
         // resp to platform
         cRsQ.enq(resp);
@@ -99,8 +100,6 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
         toHostAddr <= getDataAlignedAddr(toHost);
         fromHostAddr <= getDataAlignedAddr(fromHost);
     endmethod
-
-    method Bool hasPlatformReq = pRqQ.notEmpty;
 
     interface MMIOCoreToPlatform toP;
         interface cRq = toFifoDeq(cRqQ);

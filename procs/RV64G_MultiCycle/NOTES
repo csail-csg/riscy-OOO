@@ -9,3 +9,7 @@ better way is to change CSRF to return if mtohost is written.
 When external world try to change a CSR, this change should be done when no
 inst is in-flight, because an inst may do read-modify-write on the CSR, and
 read and write are performed separately in different pipeline stages.
+
+Dynamic rounding mode are not substitute with frm CSR at decode time. Need to
+do this before sending to FPU. (It is done at checking for exception time, but
+not recorded.)

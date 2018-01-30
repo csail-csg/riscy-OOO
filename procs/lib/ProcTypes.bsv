@@ -73,7 +73,6 @@ typedef Bit#(`LOG_DEADLOCK_CYCLES) DeadlockTimer;
 
 typedef struct {
     // ISA modes
-    Bool h;
     Bool s;
     Bool u;
     // standard ISA extensions
@@ -81,15 +80,12 @@ typedef struct {
     Bool a;
     Bool f;
     Bool d;
-    // non-standard extensions
-    Bool x;
 } RiscVISASubset deriving (Bits, Eq, FShow);
 
 instance DefaultValue#(RiscVISASubset);
     function RiscVISASubset defaultValue = RiscVISASubset {
-        h: False, s: True, u: True,
-        m: `m , a: `a , f: `f , d: `d ,
-        x: False
+        s: True, u: True,
+        m: `m , a: `a , f: `f , d: `d
     };
 endinstance
 
@@ -152,6 +148,7 @@ function Bool allRegsReady(RegsReady x);
 endfunction
 
 typedef enum {
+    Invalid = 7'b0,
     Load    = 7'b0000011,
     LoadFp  = 7'b0000111,
     MiscMem = 7'b0001111,
@@ -175,6 +172,33 @@ typedef enum {
     System  = 7'b1110011
 } Opcode deriving(Bits, Eq, FShow);
 
+function Opcode unpackOpcode(Bit#(7) x);
+    return (case(x)
+        pack(Opcode'(Load   )): (Load   );
+        pack(Opcode'(LoadFp )): (LoadFp );
+        pack(Opcode'(MiscMem)): (MiscMem); 
+        pack(Opcode'(OpImm  )): (OpImm  );
+        pack(Opcode'(Auipc  )): (Auipc  );
+        pack(Opcode'(OpImm32)): (OpImm32);
+        pack(Opcode'(Store  )): (Store  );
+        pack(Opcode'(StoreFp)): (StoreFp);
+        pack(Opcode'(Amo    )): (Amo    );
+        pack(Opcode'(Op     )): (Op     );
+        pack(Opcode'(Lui    )): (Lui    );
+        pack(Opcode'(Op32   )): (Op32   );
+        pack(Opcode'(Fmadd  )): (Fmadd  );
+        pack(Opcode'(Fmsub  )): (Fmsub  );
+        pack(Opcode'(Fnmsub )): (Fnmsub );
+        pack(Opcode'(Fnmadd )): (Fnmadd );
+        pack(Opcode'(OpFp   )): (OpFp   );
+        pack(Opcode'(Branch )): (Branch );
+        pack(Opcode'(Jalr   )): (Jalr   );
+        pack(Opcode'(Jal    )): (Jal    );
+        pack(Opcode'(System )): (System );
+        default               : (Invalid);
+    endcase);
+endfunction
+
 typedef enum {
     // user standard CSRs
     CSRfflags     = 12'h001,
@@ -184,7 +208,7 @@ typedef enum {
     CSRtime       = 12'hc01,
     CSRinstret    = 12'hc02,
     // user non-standard CSRs (TODO)
-    CSRterminate = 12'h800, // terminate (used in Linux boot)
+    CSRterminate  = 12'h800, // terminate (used in Linux boot)
     //CSRstats     = 12'h0c0, // turn on/off perf counters
     // supervisor standard CSRs
     CSRsstatus    = 12'h100,
@@ -216,8 +240,52 @@ typedef enum {
     CSRmvendorid  = 12'hf11,
     CSRmarchid    = 12'hf12,
     CSRmimpid     = 12'hf13,
-    CSRmhartid    = 12'hf14
+    CSRmhartid    = 12'hf14,
+    // CSR that catches all the unimplemented CSRs. To avoid exception on this,
+    // make it a user non-standard read/write CSR.
+    CSRnone       = 12'h8ff
 } CSR deriving(Bits, Eq, FShow);
+
+function CSR unpackCSR(Bit#(12) x);
+    return (case(x)
+        pack(CSR'(CSRfflags    )): (CSRfflags    );
+        pack(CSR'(CSRfrm       )): (CSRfrm       );
+        pack(CSR'(CSRfcsr      )): (CSRfcsr      );
+        pack(CSR'(CSRcycle     )): (CSRcycle     );
+        pack(CSR'(CSRtime      )): (CSRtime      );
+        pack(CSR'(CSRinstret   )): (CSRinstret   );
+        pack(CSR'(CSRterminate )): (CSRterminate );
+        pack(CSR'(CSRsstatus   )): (CSRsstatus   );
+        pack(CSR'(CSRsie       )): (CSRsie       );
+        pack(CSR'(CSRstvec     )): (CSRstvec     );
+        pack(CSR'(CSRscounteren)): (CSRscounteren);
+        pack(CSR'(CSRsscratch  )): (CSRsscratch  );
+        pack(CSR'(CSRsepc      )): (CSRsepc      );
+        pack(CSR'(CSRscause    )): (CSRscause    );
+        pack(CSR'(CSRstval     )): (CSRstval     );
+        pack(CSR'(CSRsip       )): (CSRsip       );
+        pack(CSR'(CSRsatp      )): (CSRsatp      );
+        pack(CSR'(CSRmstatus   )): (CSRmstatus   );
+        pack(CSR'(CSRmisa      )): (CSRmisa      );
+        pack(CSR'(CSRmedeleg   )): (CSRmedeleg   );
+        pack(CSR'(CSRmideleg   )): (CSRmideleg   );
+        pack(CSR'(CSRmie       )): (CSRmie       );
+        pack(CSR'(CSRmtvec     )): (CSRmtvec     );
+        pack(CSR'(CSRmcounteren)): (CSRmcounteren);
+        pack(CSR'(CSRmscratch  )): (CSRmscratch  );
+        pack(CSR'(CSRmepc      )): (CSRmepc      );
+        pack(CSR'(CSRmcause    )): (CSRmcause    );
+        pack(CSR'(CSRmtval     )): (CSRmtval     );
+        pack(CSR'(CSRmip       )): (CSRmip       );
+        pack(CSR'(CSRmcycle    )): (CSRmcycle    );
+        pack(CSR'(CSRminstret  )): (CSRminstret  );
+        pack(CSR'(CSRmvendorid )): (CSRmvendorid );
+        pack(CSR'(CSRmarchid   )): (CSRmarchid   );
+        pack(CSR'(CSRmimpid    )): (CSRmimpid    );
+        pack(CSR'(CSRmhartid   )): (CSRmhartid   );
+        default                  : (CSRnone      );
+    endcase);
+endfunction
 
 typedef enum {
     Unsupported,
@@ -381,12 +449,13 @@ typedef struct {
 } VMInfo deriving(Bits, Eq, FShow);
 
 instance DefaultValue#(VMInfo);
-    function VMInfo defualtValue = VMInfo {
+    function VMInfo defaultValue = VMInfo {
         prv:  prvM,
         asid: 0,
         sv39: False,
         exeReadable: False,
-        userAccessibleByS: False
+        userAccessibleByS: False,
+        basePPN: 0
     };
 endinstance
 
@@ -468,7 +537,7 @@ typedef struct {
 // Boot rom: each block is 64-bit data
 typedef `LOG_BOOT_ROM_BYTES LgBootRomBytes;
 typedef TSub#(LgBootRomBytes, TLog#(NumBytes)) LgBootRomSzData;
-typedef Bit#(LgBootRoomSzData) BootRomIndex;
+typedef Bit#(LgBootRomSzData) BootRomIndex;
 
 // mtime: we increment mtime by 50 every 5000 cycles, this simulates a
 // 10MHz clock for a 1GHz CPU (same as spike)

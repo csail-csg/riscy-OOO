@@ -34,6 +34,7 @@
 `define sizeSup 1
 `define TLB_SIZE 32
 `define LOG_DCACHE_BANKS 0 // 1 bank for D$ (4 misses)
+`define LOG_BOOT_ROM_BYTES 12 // 4KB boot rom
 
 // tandem verification
 //`define VERIFICATION_PACKETS

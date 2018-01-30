@@ -40,7 +40,7 @@ function Maybe#(MemInst) decodeMemInst(Instruction inst);
                                 aq: False,
                                 rl: False };
     Bool illegalInst = False;
-    Opcode opcode = unpack(inst[6:0]);
+    Opcode opcode = unpackOpcode(inst[6:0]);
     let funct5 = inst[31:27];
     let funct3 = inst[14:12];
 
@@ -160,20 +160,20 @@ function DecodeResult decode(Instruction inst);
     };
     Bool illegalInst = False;
 
-    Opcode opcode = unpack(inst[  6 :  0 ]);
-    let rd        =        inst[ 11 :  7 ];
-    let funct3    =        inst[ 14 : 12 ];
-    let rs1       =        inst[ 19 : 15 ];
-    let rs2       =        inst[ 24 : 20 ];
-    let funct7    =        inst[ 31 : 25 ];
+    Opcode opcode = unpackOpcode(inst[  6 :  0 ]);
+    let rd        =              inst[ 11 :  7 ];
+    let funct3    =              inst[ 14 : 12 ];
+    let rs1       =              inst[ 19 : 15 ];
+    let rs2       =              inst[ 24 : 20 ];
+    let funct7    =              inst[ 31 : 25 ];
     // For "F" and "D" ISA extensions
-    let funct5    =        inst[ 31 : 27 ];
-    let fmt       =        inst[ 26 : 25 ];
-    let rs3       =        inst[ 31 : 27 ];
-    let funct2    =        inst[ 26 : 25 ];
+    let funct5    =              inst[ 31 : 27 ];
+    let fmt       =              inst[ 26 : 25 ];
+    let rs3       =              inst[ 31 : 27 ];
+    let funct2    =              inst[ 26 : 25 ];
     // For "A" ISA extension
-    Bool aq       = unpack(inst[ 26 ]);
-    Bool rl       = unpack(inst[ 25 ]);
+    Bool aq       =       unpack(inst[ 26 ]);
+    Bool rl       =       unpack(inst[ 25 ]);
 
     ImmData immI  = signExtend(inst[31:20]);
     ImmData immS  = signExtend({ inst[31:25], inst[11:7] });
@@ -671,7 +671,7 @@ function DecodeResult decode(Instruction inst);
                 regs.src1 = Invalid; // going to be CSR Reg
                 regs.src2 = (funct3[2] == 0 ? Valid(tagged Gpr rs1) : Invalid);
                 dInst.imm = (funct3[2] == 0 ? Invalid : Valid(zeroExtend(rs1)));
-                dInst.csr = Valid(unpack(truncate(immI)));
+                dInst.csr = Valid(unpackCSR(truncate(immI)));
             end
         end
 
@@ -690,12 +690,8 @@ function DecodeResult decode(Instruction inst);
 endfunction
 
 // All this does is add the CSR state to the decoding
-function DecodedInst updateRoundingMode(DecodedInst dInst, CsrState csrState);
-    if (dInst.execFunc matches tagged Fpu .fpu_f) begin
-        // update rounding mode
-        let new_fpu_f = fpu_f;
-        new_fpu_f.rm = (fpu_f.rm == RDyn) ? unpack(csrState.frm) : fpu_f.rm;
-        dInst.execFunc = tagged Fpu new_fpu_f;
-    end
-    return dInst;
+function FpuInst updateRoundingMode(FpuInst fpu_f, CsrDecodeInfo csrState);
+    let new_fpu_f = fpu_f;
+    new_fpu_f.rm = (fpu_f.rm == RDyn) ? unpack(csrState.frm) : fpu_f.rm;
+    return new_fpu_f;
 endfunction

@@ -1,6 +1,10 @@
+import BRAMCore::*;
+import Vector::*;
+import Fifo::*;
 import Types::*;
 import ProcTypes::*;
 import MMIOAddrs::*;
+import MMIOCore::*;
 import CacheUtils::*;
 
 // MMIO logic at platform (MMIOPlatform)
@@ -25,15 +29,15 @@ typedef enum {
 
 // MMIO device/reg targed by the core request together with offset within
 // reg/device
-typedef enum {
-    void TimerInterrupt, // auto-generated timer interrupt
-    BootRomIndex BootRom,
-    MSIPDataAlignedOffset MSIP,
-    MTimCmpDataAlignedOffset MTimeCmp,
-    void MTime,
-    void ToHost,
-    void FromHost,
-    void Invalid // invalid req target
+typedef union tagged {
+    void Invalid; // invalid req target
+    void TimerInterrupt; // auto-generated timer interrupt
+    BootRomIndex BootRom;
+    MSIPDataAlignedOffset MSIP;
+    MTimCmpDataAlignedOffset MTimeCmp;
+    void MTime;
+    void ToHost;
+    void FromHost;
 } MMIOPlatformReq deriving(Bits, Eq, FShow);
 
 module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
@@ -141,19 +145,19 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 wrData <= req.data;
                 // find out which MMIO reg/device is being requested
                 DataAlignedAddr addr = getDataAlignedAddr(req.addr);
-                if(addr >= bootRomBaseAddr && req.addr < msipBoundAddr) begin
+                if(addr >= bootRomBaseAddr && addr < bootRomBoundAddr) begin
                     curReq <= BootRom (truncate(addr - bootRomBaseAddr));
                 end
-                else if(addr >= msipBaseAddr && req.addr < msipBoundAddr) begin
+                else if(addr >= msipBaseAddr && addr < msipBoundAddr) begin
                     curReq <= MSIP (truncate(addr - msipBaseAddr));
                 end
                 else if(addr >= mtimecmpBaseAddr &&
-                        req.addr < mtimecmpBoundAddr) begin
+                        addr < mtimecmpBoundAddr) begin
                     curReq <= MTimeCmp (truncate(addr - mtimecmpBaseAddr));
                 end
                 else if(addr == mtimeBaseAddr) begin
                     // assume mtime is of size Data
-                    cureq <= MTime;
+                    curReq <= MTime;
                 end
                 else if(addr == toHostAddr) begin
                     // assume tohost is of size Data
@@ -165,7 +169,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 end
                 else begin
                     curReq <= Invalid;
-                    assert(False, "Invalid MMIO req addr");
+                    doAssert(False, "Invalid MMIO req addr");
                 end
             end
         end
@@ -178,7 +182,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 cores[i].cRs.deq;
             end
         end
-        state <= SelectCRq;
+        state <= SelectReq;
     endrule
 
     // handle boot rom access
@@ -251,14 +255,18 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         curReq matches tagged MSIP .offset &&& state == WaitResp
     );
         Bit#(32) lower_data = 0;
-        if(waitLowerMSIPCRs matches tagged Valid .c) begin
-            cores[c].cRs.deq;
-            lower_data = zeroExtend(cores[c].cRs.first.data);
-        end
         Bit#(32) upper_data = 0;
-        if(waitUpperMSIPCRs matches tagged Valid .c) begin
-            cores[c].cRs.deq;
-            upper_data = zeroExtend(cores[c].cRs.first.data);
+        for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
+            if (waitLowerMSIPCRs matches tagged Valid .c &&&
+                c == fromInteger(i)) begin
+                cores[i].cRs.deq;
+                lower_data = zeroExtend(cores[i].cRs.first.data);
+            end
+            else if(waitUpperMSIPCRs matches tagged Valid .c &&&
+                    c == fromInteger(i)) begin
+                cores[i].cRs.deq;
+                upper_data = zeroExtend(cores[i].cRs.first.data);
+            end
         end
         state <= SelectReq;
         cores[reqCore].pRs.enq(MMIOPRs {
@@ -293,7 +301,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 let newData = getWriteData(mtimecmp[offset]);
                 mtimecmp[offset] <= newData;
                 // check changes to MTIP
-                if(newData <= mtime && !mtip[offset]]) begin
+                if(newData <= mtime && !mtip[offset]) begin
                     // need to post new timer interrupt
                     mtip[offset] <= True;
                     cores[offset].pRq.enq(MMIOPRq {
@@ -384,7 +392,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 cores[i].cRs.deq;
             end
         end
-        cores.pRs.enq(MMIOPRs {valid: True, data: ?});
+        cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: ?});
         state <= SelectReq;
     endrule
 
@@ -400,7 +408,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 resp.valid = True;
             end
             else begin
-                assert(False, "should not write tohost when not zero");
+                doAssert(False, "should not write tohost when not zero");
             end
         end
         else begin
@@ -426,7 +434,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                     resp.valid = True;
                 end
                 else begin
-                    assert(False, "Can only write 0 to fromhost");
+                    doAssert(False, "Can only write 0 to fromhost");
                 end
             end
             else begin
@@ -434,7 +442,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                     resp.valid = True;
                 end
                 else begin
-                    assert(False, "Can only write 0 to fromhost");
+                    doAssert(False, "Can only write 0 to fromhost");
                 end
             end
         end
@@ -452,7 +460,8 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     endrule
 
     method Action bootRomInitReq(BootRomIndex idx, Data data) if(state == Init);
-        bootRom.put(maxBound, idx, data)
+        bootRom.put(maxBound, idx, data);
+        bootRomInitRespQ.enq(?);
     endmethod
 
     method ActionValue#(void) bootRomInitResp;

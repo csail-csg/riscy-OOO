@@ -32,6 +32,7 @@ import Fifo::*;
 import Vector::*;
 import FIFO::*;
 import GetPut::*;
+import BuildVector::*;
 
 interface CsrFile;
     // Read
@@ -40,7 +41,7 @@ interface CsrFile;
     method Action csrInstWr(CSR csr, Data x);
     // normal write by FPU inst to FPU CSR
     method Bool fpuInstNeedWr(Bit#(5) fflags, Bool fpu_dirty);
-    method Action fpuInstWr(Bit#(5) fflags, Bool fpu_dirty);
+    method Action fpuInstWr(Bit#(5) fflags); // FPU must become dirty
 
     // Methods for handling traps
     method Maybe#(Interrupt) pending_interrupt;
@@ -51,7 +52,7 @@ interface CsrFile;
     // Outputs for CSRs that the rest of the processor needs to know about
     method VMInfo vmI;
     method VMInfo vmD;
-    method CsrDecInfo decodeInfo;
+    method CsrDecodeInfo decodeInfo;
 
     // Updating minstret CSR outside of normal CSR write instructions. This
     // increment will see the effect of normal CSR write.
@@ -148,7 +149,7 @@ module mkTerminate(Terminate);
         method Action _write(Data x);
             terminateQ.enq(?);
             $display(
-                "[Terminate CSR] being written (val = %d), "
+                "[Terminate CSR] being written (val = %x), ",
                 "send terminate signal to host", x
             );
         endmethod
@@ -160,10 +161,7 @@ endmodule
 
 // same as EHR except that read port 0 is not ordered with other methods. Read
 // port 1 will still get bypassing from write port 0.
-module mkConfigEhr#(
-    t init,
-    ReadOnly#(Data) mtime
-)(Ehr#(n, t)) provisos(Bits#(t, w));
+module mkConfigEhr#(t init)(Ehr#(n, t)) provisos(Bits#(t, w));
     Ehr#(n, t) data <- mkEhr(init);
     Wire#(t) read <- mkBypassWire;
 
@@ -175,11 +173,11 @@ module mkConfigEhr#(
     Ehr#(n, t) ifc = ?;
     ifc[0] = (interface Reg;
         method _read = read._read;
-        method _write = data[i]._write;
+        method _write = data[0]._write;
     endinterface);
     for(Integer i = 1; i < valueOf(n); i = i+1) begin
         ifc[i] = (interface Reg;
-            method _read = read[i]._read;
+            method _read = data[i]._read;
             method _write = data[i]._write;
         endinterface);
     end
@@ -198,7 +196,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     
     // Machine level CSRs
     // mstatus
-    Reg#(Bit#(2)) xs_reg   <- isa.x ? mkCsrReg(0) : mkReadOnlyReg(0);
+    Reg#(Bit#(2)) xs_reg   <- mkReadOnlyReg(0); // XXX no extension
     Reg#(Bit#(2)) fs_reg   <- (isa.f || isa.d) ? mkCsrReg(0) : mkReadOnlyReg(0);
     Reg#(Bit#(1)) sd_reg   =  readOnlyReg(
         ((xs_reg == 2'b11) || (fs_reg == 2'b11)) ? 1 : 0
@@ -216,7 +214,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     Vector#(4, Reg#(Bit#(2))) prev_prv_vec = vec(
         // prev_prv_vec[x]: privilege mode before trapping into mode x
         readOnlyReg(prvU), // upp
-        ConcatReg2(readOnlyReg(1'b0), spp_reg), // spp
+        concatReg2(readOnlyReg(1'b0), spp_reg), // spp
         readOnlyReg(2'b0), // reserved
         mpp_reg
     );
@@ -247,7 +245,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     Reg#(Bit#(1)) medeleg_15_reg <- mkCsrReg(0); // cause 15
     Reg#(Bit#(3)) medeleg_13_11_reg <- mkCsrReg(0); // case 13-11
     Reg#(Bit#(10)) medeleg_9_0_reg <- mkCsrReg(0); // cause 9-0
-    Reg#(Data) medeleg_csr <- concatReg6(
+    Reg#(Data) medeleg_csr = concatReg6(
         readOnlyReg(48'b0), medeleg_15_reg,
         readOnlyReg(1'b0), medeleg_13_11_reg,
         readOnlyReg(1'b0), medeleg_9_0_reg
@@ -257,9 +255,9 @@ module mkCsrFile#(Data hartid)(CsrFile);
     Reg#(Bit#(3)) mideleg_9_7_reg <- mkCsrReg(0);
     Reg#(Bit#(3)) mideleg_5_3_reg <- mkCsrReg(0);
     Reg#(Bit#(2)) mideleg_1_0_reg <- mkCsrReg(0);
-    Reg#(Data) mideleg_csr <- concatReg8(
+    Reg#(Data) mideleg_csr = concatReg8(
         readOnlyReg(52'b0), mideleg_11_reg,
-        readOnlyReg(1'b0), mideleg_9_10_reg,
+        readOnlyReg(1'b0), mideleg_9_7_reg,
         readOnlyReg(1'b0), mideleg_5_3_reg,
         readOnlyReg(1'b0), mideleg_1_0_reg
     );
@@ -283,7 +281,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
         timer_int_en_vec[prvM],    readOnlyReg(1'b0),
         timer_int_en_vec[prvS],    timer_int_en_vec[prvU],
         software_int_en_vec[prvM], readOnlyReg(1'b0),
-        software_int_en_vec[prvS], software_int_en_vec[prvU],
+        software_int_en_vec[prvS], software_int_en_vec[prvU]
     );
     // mtvec
     Reg#(Bit#(62)) mtvec_base_hi_reg <- mkCsrReg(0); // this is BASE[63:2]
@@ -295,7 +293,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     Reg#(Bit#(1)) mcounteren_ir_reg <- mkCsrReg(0);
     Reg#(Bit#(1)) mcounteren_tm_reg <- mkCsrReg(0);
     Reg#(Bit#(1)) mcounteren_cy_reg <- mkCsrReg(0);
-    Reg#(Data) mcounteren_csr = concatReg4(
+    Reg#(Data) mcounteren_csr = concatReg5(
         readOnlyReg(32'b0),
         readOnlyReg(29'b0), // hpmcounter 3-31 not accessible in S mode
         mcounteren_ir_reg, mcounteren_tm_reg, mcounteren_cy_reg
@@ -334,7 +332,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
         readOnlyReg(1'b0),
         timer_int_pend_vec[prvS],    timer_int_pend_vec[prvU],
         software_int_pend_vec[prvM], readOnlyReg(1'b0),
-        software_int_pend_vec[prvS], software_int_pend_vec[prvU],
+        software_int_pend_vec[prvS], software_int_pend_vec[prvU]
     );
     // minstret
     Ehr#(2, Data) minstret_ehr <- mkCsrEhr(0);
@@ -378,7 +376,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     Reg#(Bit#(1)) scounteren_ir_reg <- mkCsrReg(0);
     Reg#(Bit#(1)) scounteren_tm_reg <- mkCsrReg(0);
     Reg#(Bit#(1)) scounteren_cy_reg <- mkCsrReg(0);
-    Reg#(Data) scounteren_csr = concatReg4(
+    Reg#(Data) scounteren_csr = concatReg5(
         readOnlyReg(32'b0),
         readOnlyReg(29'b0), // hpmcounter 3-31 not accessible in U mode
         scounteren_ir_reg, scounteren_tm_reg, scounteren_cy_reg
@@ -411,7 +409,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     Reg#(Bit#(1)) vm_mode_sv39_reg <- mkCsrReg(0);
     Reg#(Bit#(4)) vm_mode_reg = concatReg2(vm_mode_sv39_reg, readOnlyReg(3'b0));
     Reg#(Asid) asid_reg <- mkCsrReg(0);
-    Reg#(Bit#(16)) full_asid_reg = zeroExtendReg(vm_asid_reg);
+    Reg#(Bit#(16)) full_asid_reg = zeroExtendReg(asid_reg);
     Reg#(Bit#(44)) ppn_reg <- mkCsrReg(0);
     Reg#(Data) satp_csr = concatReg3(vm_mode_reg, full_asid_reg, ppn_reg);
 
@@ -531,7 +529,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
         // interrupt needs to be handled at M mode: interrupts handled at S
         // mode must be delegated in mideleg_csr
         if (enabled_ints == 0 &&
-            (prv_reg < prvS || (prv_reg == prvS && ie_vec[prvS]))) begin
+            (prv_reg < prvS || (prv_reg == prvS && ie_vec[prvS] == 1))) begin
             enabled_ints = pend_ints & truncate(mideleg_csr);
         end
         // According to spike, return the interrupt bit at LSB
@@ -579,7 +577,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
             end
         endfunction
         // check if trap is delegated
-        Bool deleg = from_mode <= prvS && (case(t) matches
+        Bool deleg = prv_reg <= prvS && (case(t) matches
             tagged Exception .e: return medeleg_csr[pack(e)] == 1;
             tagged Interrupt .i: return mideleg_csr[pack(i)] == 1;
             default: return False;
@@ -674,7 +672,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     };
 
     method Action incInstret(SupCnt x);
-        instret_ehr[1] <= instret_ehr[1] + zeroExtend(x);
+        minstret_ehr[1] <= minstret_ehr[1] + zeroExtend(x);
     endmethod
 
     method Action setTime(Data t);
