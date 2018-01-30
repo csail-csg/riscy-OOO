@@ -64,9 +64,9 @@ static ProcIndication   *procIndication = 0;
 static PerfStats perf_stats;
 
 // tandem verify params
-//static uint64_t verification_packets_skipped = 0;
-//static uint64_t verification_packets_printed = 0;
-//static bool synchronization_packets_sent = true;
+static uint64_t verification_packets_skipped = 0;
+static uint64_t verification_packets_printed = 0;
+static bool synchronization_packets_sent = true;
 
 // host dma request & indications
 static HostDmaRequestProxy *hostDmaRequestProxy = 0;
@@ -94,10 +94,9 @@ static void handle_signal(int sig) {
     fclose(debug_file);
     exit(1);
 }
-static void call_from_host(uint32_t coreid, uint64_t v) {
-    fprintf(debug_file, "[from_host] core %d, val 0x%016llx\n",
-            (int)coreid, (long long) v);
-    procRequestProxy->from_host(coreid, v);
+static void call_from_host(uint64_t v) {
+    fprintf(debug_file, "[from_host] val 0x%016llx\n", (long long) v);
+    procRequestProxy->from_host(v);
 }
 static void call_dma_read(addr_t addr, size_t len, void *dst) {
     hostDmaIndication->dma_read(addr, len, dst);
@@ -144,8 +143,8 @@ int runHtifTest() {
     addr_t fromhost_addr = riscy_htif->get_fromhost_addr();
     fprintf(stderr, "startpc %llx, total %d cores, "
             "toHost addr %llx, fromHost addr %llx\n",
-            (long)startpc, (int)core_num,
-            (long long)tohost_addr, (long long)fromhost_addr);
+            (long long unsigned)startpc, (int)core_num,
+            (long long unsigned)tohost_addr, (long long unsigned)fromhost_addr);
     procRequestProxy->start(startpc,
                             tohost_addr, fromhost_addr,
                             verification_packets_skipped,
@@ -188,7 +187,7 @@ int main(int argc, char * const *argv) {
     // parse arguments
     const char *prog_name = argv[0];
     bool assembly_test_mode = false;
-    bool print_mode = false;
+    //bool print_mode = false;
     char *shell_cmd = 0;
     int cmd_delay_sec = 0;
 
@@ -204,7 +203,7 @@ int main(int argc, char * const *argv) {
             // this enables printing the trace starting at the next argument
             verification_packets_skipped = (uint64_t) atoi(argv[2]);
             verification_packets_printed = 100000;
-            print_mode = true;
+            //print_mode = true;
             // shift argc and argv accordingly
             argc-=2; argv+=2;
         } else if (argc > 2 && strcmp(argv[1],"--skip") == 0) {

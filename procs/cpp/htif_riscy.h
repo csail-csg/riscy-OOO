@@ -39,7 +39,7 @@ public:
     typedef std::function<void(addr_t, size_t, void*)> DmaReadFunc;
     typedef std::function<void(addr_t, size_t, const void*)> DmaWriteFunc;
     // function to write fromhost
-    typedef std::function<void(uint32_t, reg_t)> WriteFromHostFunc;
+    typedef std::function<void(reg_t)> WriteFromHostFunc;
     // function to write boot rom
     typedef std::function<void(uint16_t, uint64_t)> WriteBootRomFunc;
     typedef std::function<void()> WaitBootRomFunc;
@@ -97,6 +97,7 @@ private:
     std::mutex htif_lock;
 
     // creat boot rom (reset vector + device tree)
+    void make_dtb(std::vector<char> &rom);
 };
 
 #endif

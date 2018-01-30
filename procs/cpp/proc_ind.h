@@ -87,7 +87,7 @@ protected:
         ToHostHandler(ProcIndication *p_ind);
         ~ToHostHandler();
 
-        void enq_to_host_msg(uint32_t core, uint64_t v);
+        void enq_to_host_msg(uint64_t v);
         void spawn_handler_thread();
     };
     ToHostHandler to_host_handler;
@@ -146,7 +146,9 @@ public:
     void waitReset();
     void waitBootRomInit();
     virtual void resetDone();
-    virtual void debug_verify(uint8_t core, VerificationPacket packet);
+    virtual void debug_verify(uint8_t core, VerificationPacket packet) {
+        fprintf(stderr, "Verification not implemented\n");
+    }
     virtual void to_host(uint64_t v);
     virtual void bootRomInitResp();
     virtual void perfResp(uint8_t core, ProcPerfResp resp);
@@ -155,7 +157,7 @@ public:
 
 class ProcIndicationAssembly : public ProcIndication {
 public:
-    virtual void to_host(uint8_t core, uint64_t v);
+    virtual void to_host(uint64_t v);
     virtual void spawn_to_host_handler() {} // don't need this handler thread
 
     ProcIndicationAssembly(

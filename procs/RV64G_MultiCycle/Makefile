@@ -85,7 +85,7 @@ CONNECTALFLAGS += --bsvpath=$(FPGA_LIB_DIR) --bsvpath=$(PROC_LIB_DIR) --bsvpath=
 CONNECTALFLAGS += --verilog $(XILINX_IP_DIR)/reset_regs --verilog $(XILINX_IP_DIR)/fpu
 CONNECTALFLAGS += --cflags=" -std=c++0x "
 CONNECTALFLAGS += --clibdir=$(RISCY_TOOLS)/lib --clib=riscv --clib=fesvr
-CONNECTALFLAGS += -I$(RISCY_TOOLS)/include/spike -I$(RISCY_TOOLS)/include
+CONNECTALFLAGS += -I$(RISCY_TOOLS)/include
 
 # always use xilinx sync fifo
 CONNECTALFLAGS += --bscflags " -D USE_XILINX_SYNC_FIFO "

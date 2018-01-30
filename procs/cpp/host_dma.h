@@ -33,7 +33,7 @@
 #include "GeneratedTypes.h"
 #include "HostDmaIndication.h"
 #include "HostDmaRequest.h"
-#include "fesvr/packet.h"
+#include "fesvr/memif.h" // for addr_t definition
 
 class HostDmaIndication : public HostDmaIndicationWrapper {
 private:

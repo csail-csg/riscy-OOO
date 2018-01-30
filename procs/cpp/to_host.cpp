@@ -68,7 +68,7 @@ void ProcIndication::ToHostHandler::handler() {
                 fprintf(stderr, "[to_host] ERROR: to_host = 0\n");
                 exit(1);
             }
-            proc_ind->riscy_htif->get_to_host(msg.core, v);
+            proc_ind->riscy_htif->get_to_host(v);
             bool htif_done = false;
             int exit_code = 0;
             if(proc_ind->riscy_htif->done()) {
@@ -76,9 +76,6 @@ void ProcIndication::ToHostHandler::handler() {
                 exit_code = proc_ind->riscy_htif->exit_code();
             }
             proc_ind->riscy_htif->unlock();
-
-            //fprintf(stderr, "[ProcIndication] to_host(%llx) done\n",
-            //        (long long)v); 
 
             if(htif_done) {
                 {

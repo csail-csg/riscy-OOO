@@ -23,6 +23,7 @@
 
 #include <stdlib.h>
 #include "proc_ind.h"
+#include "fesvr/term.h"
 
 // ProcIndication
 ProcIndication::~ProcIndication() {
@@ -96,10 +97,8 @@ void ProcIndication::resetDone() {
 }
 
 void ProcIndication::to_host(uint64_t v) {
-    // debug
     fprintf(debug_file, "[to_host] value 0x%016llx\n", (long long) v);
-
-    to_host_handler.enq_to_host_msg(core, v);
+    to_host_handler.enq_to_host_msg(v);
 }
 
 void ProcIndication::bootRomInitResp() {

@@ -21,8 +21,9 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// See LICENSE for license details.
-// This was modified from htif.cc in spike
+#include <iostream>
+#include <sstream>
+#include <string>
 #include <unistd.h>
 #include <stdexcept>
 #include <stdlib.h>
@@ -30,8 +31,9 @@
 #include <assert.h>
 #include <stddef.h>
 #include <poll.h>
+#include <sys/wait.h>
+#include <sys/types.h>
 #include "htif_riscy.h"
-#include "spike/encoding.h"
 
 htif_riscy_t::htif_riscy_t(const std::vector<std::string>& args,
                            uint32_t _core_num) :
@@ -54,8 +56,7 @@ void htif_riscy_t::get_to_host(reg_t x) {
                          "htif_riscy_t::get_to_host(0x%llx)\n",
                          (long long)x);
 
-    command_t cmd(this, x, std::bind(write_from_host, coreid,
-                                     std::placeholders::_1));
+    command_t cmd(this, x, std::bind(write_from_host, std::placeholders::_1));
     get_device_list().handle_command(cmd);
 
     if (exit_code() != 0) {
@@ -86,7 +87,7 @@ void htif_riscy_t::write_chunk(addr_t taddr, size_t len, const void* src) {
 }
 
 bool htif_riscy_t::bcd_wait_for_stdin() {
-    return get_bcd().wait_for_stdin();
+    return get_bcd().waiting_for_stdin();
 }
 
 void htif_riscy_t::bcd_feed_stdin(int ch) {
@@ -101,11 +102,12 @@ void htif_riscy_t::reset() {
                 (long long unsigned)(&rom[0]));
     }
     if(rom.size() % 8) {
-        fprintf(stderr, ">> ERROR: rom size int not algined to 8B\n",
-                (int)(&rom.size()));
+        fprintf(stderr, ">> ERROR: rom size %d not algined to 8B\n",
+                (int)(rom.size()));
     }
     uint64_t *ptr = (uint64_t*)(&rom[0]);
-    for(int i = 0; i < rom.size() / 8; i++) {
+    int data_count = rom.size() / 8;
+    for(int i = 0; i < data_count; i++) {
         write_boot_rom(i, ptr[i]);
         wait_boot_rom();
     }
@@ -148,6 +150,7 @@ static std::string dts_compile(const std::string& dts)
   }
 
   // Child process to output dtb
+  const char *DTC = "/usr/bin/dtc";
   if (dtb_pid == 0) {
     dup2(dts_pipe[0], 0);
     dup2(dtb_pipe[1], 1);
@@ -156,7 +159,7 @@ static std::string dts_compile(const std::string& dts)
     close(dtb_pipe[0]);
     close(dtb_pipe[1]);
     execl(DTC, DTC, "-O", "dtb", 0);
-    std::cerr << "Failed to run " DTC ": " << strerror(errno) << std::endl;
+    std::cerr << "Failed to run " << DTC << ": " << strerror(errno) << std::endl;
     exit(1);
   }
 
@@ -216,6 +219,7 @@ void htif_riscy_t::make_dtb(std::vector<char> &rom)
     size_t cpu_freq = 1000000000; // 1GHz
     std::string isa_str = "rv64imafd";
     std::string vm_mode = "sv39";
+    // addresses copied from spike
     reg_t mem_base = 0x80000000;
     reg_t clint_base = 0x02000000;
     reg_t clint_size = 0x000c0000;
@@ -273,7 +277,7 @@ void htif_riscy_t::make_dtb(std::vector<char> &rom)
              "  };\n"
              "};\n";
 
-    dts = s.str();
+    std::string dts = s.str();
     fprintf(stderr, ">> INFO: dts\n%s", dts.c_str());
     std::string dtb = dts_compile(dts);
 
@@ -281,6 +285,6 @@ void htif_riscy_t::make_dtb(std::vector<char> &rom)
     const int align = 0x1000;
     rom.resize((rom.size() + align - 1) / align * align);
 
-    fprintf(stderr, ">> INFO: boot rom size = %d\n", int(boot_rom->contents().size()));
+    fprintf(stderr, ">> INFO: boot rom size = %d\n", int(rom.size()));
 }
 
