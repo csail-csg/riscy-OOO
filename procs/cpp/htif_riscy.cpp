@@ -60,7 +60,7 @@ void htif_riscy_t::get_to_host(reg_t x) {
     command_t cmd(this, x, std::bind(write_from_host, std::placeholders::_1));
     get_device_list().handle_command(cmd);
 
-    if (exit_code() != 0) {
+    if (raw_exitcode_nonzero()) {
         stop();
     }
 }
