@@ -45,6 +45,8 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
 ) provisos(
     Bits#(Data, 64) // this module assumes Data is 64-bit wide
 );
+    Bool verbose = True;
+
     // boot rom
     BRAM_PORT_BE#(BootRomIndex, Data, NumBytes) bootRom <- mkBRAMCore1BE(
         valueOf(TExp#(LgBootRomSzData)), False
@@ -130,6 +132,13 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             state <= WaitResp;
             curReq <= TimerInterrupt;
             waitMTIPCRs <= needTimerInt;
+            if(verbose) begin
+                $display("[Platform - SelectReq] timer interrupt",
+                         ", mtime %x", mtime,
+                         ", mtimcmp ", fshow(readVReg(mtimecmp)),
+                         ", old mtip ", fshow(readVReg(mtip)),
+                         ", new interrupts ", fshow(needTimerInt));
+            end
         end
         else begin
             // now check for MMIO req from core
@@ -138,38 +147,48 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             if(find(hasReq, idxVec) matches tagged Valid .i) begin
                 cores[i].cRq.deq;
                 MMIOCRq req = cores[i].cRq.first;
-                state <= ProcessReq;
+                // record req
                 reqCore <= fromInteger(i);
                 isWrite <= req.write;
                 byteEn <= req.byteEn;
                 wrData <= req.data;
                 // find out which MMIO reg/device is being requested
                 DataAlignedAddr addr = getDataAlignedAddr(req.addr);
+                MMIOPlatformReq newReq = Invalid;
                 if(addr >= bootRomBaseAddr && addr < bootRomBoundAddr) begin
-                    curReq <= BootRom (truncate(addr - bootRomBaseAddr));
+                    newReq = BootRom (truncate(addr - bootRomBaseAddr));
                 end
                 else if(addr >= msipBaseAddr && addr < msipBoundAddr) begin
-                    curReq <= MSIP (truncate(addr - msipBaseAddr));
+                    newReq = MSIP (truncate(addr - msipBaseAddr));
                 end
                 else if(addr >= mtimecmpBaseAddr &&
                         addr < mtimecmpBoundAddr) begin
-                    curReq <= MTimeCmp (truncate(addr - mtimecmpBaseAddr));
+                    newReq = MTimeCmp (truncate(addr - mtimecmpBaseAddr));
                 end
                 else if(addr == mtimeBaseAddr) begin
                     // assume mtime is of size Data
-                    curReq <= MTime;
+                    newReq = MTime;
                 end
                 else if(addr == toHostAddr) begin
                     // assume tohost is of size Data
-                    curReq <= ToHost;
+                    newReq = ToHost;
                 end
                 else if(addr == fromHostAddr) begin
                     // assume fromhost is of size Data
-                    curReq <= FromHost;
+                    newReq = FromHost;
+                end
+                if(newReq != Invalid) begin
+                    // process valid req
+                    curReq <= newReq;
+                    state <= ProcessReq;
                 end
                 else begin
-                    curReq <= Invalid;
-                    doAssert(False, "Invalid MMIO req addr");
+                    // access fault
+                    cores[i].pRs.enq(MMIOPRs {valid: False, data: ?});
+                end
+                if(verbose) begin
+                    $display("[Platform - SelectReq] new req, core %d, req ",
+                             i, fshow(req), ", type ", fshow(newReq));
                 end
             end
         end
@@ -183,6 +202,11 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             end
         end
         state <= SelectReq;
+        if(verbose) begin
+            $display("[Platform - Done] timer interrupt",
+                     ", mtip ", fshow(readVReg(mtip)),
+                     ", waitCRs ", fshow(waitMTIPCRs));
+        end
     endrule
 
     // handle boot rom access
@@ -208,6 +232,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             valid: True,
             data: bootRom.read
         });
+        if(verbose) begin
+            $display("[Platform - boot rom done], core %d, data %x",
+                     reqCore, bootRom.read);
+        end
     endrule
 
     // handle MSIP access
@@ -229,6 +257,9 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             // access invalid core's MSIP, fault
             state <= SelectReq;
             cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
+            if(verbose) begin
+                $display("[Platform - process msip] access fault");
+            end
         end
         else begin
             if(lower_en) begin
@@ -273,6 +304,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             valid: True,
             data: {upper_data, lower_data}
         });
+        if(verbose) begin
+            $display("[Platform - msip done] lower %x, upper %x",
+                     lower_data, upper_data);
+        end
     endrule
 
     function Data getWriteData(Data orig);
@@ -290,10 +325,13 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     rule processMTimeCmp(
         curReq matches tagged MTimeCmp .offset &&& state == ProcessReq
     );
-        if(offset <= fromInteger(valueof(CoreNum) - 1)) begin
+        if(offset > fromInteger(valueof(CoreNum) - 1)) begin
             // access invalid core's mtimecmp, fault
             cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
             state <= SelectReq;
+            if(verbose) begin
+                $display("[Platform - process mtimecmp] access fault");
+            end
         end
         else begin
             if(isWrite) begin
@@ -325,6 +363,13 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                     // nothing happens to mtip, just finish this req
                     cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: ?});
                     state <= SelectReq;
+                    if(verbose) begin
+                        $display("[Platform - process mtimecmp] ",
+                                 "no change to mtip ", fshow(readVReg(mtip)),
+                                 ", mtime %x", mtime,
+                                 ", old mtimecmp ", fshow(readVReg(mtimecmp)),
+                                 ", new mtimecmp[%d] %x", offset, newData);
+                    end
                 end
             end
             else begin
@@ -333,6 +378,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                     data: mtimecmp[offset]
                 });
                 state <= SelectReq;
+                if(verbose) begin
+                    $display("[Platform - process mtimecmp] read done, data %x",
+                             mtimecmp[offset]);
+                end
             end
         end
     endrule
@@ -343,6 +392,12 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         cores[offset].cRs.deq;
         cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: ?});
         state <= SelectReq;
+        if(verbose) begin
+            $display("[Platform - mtimecmp done]",
+                     ", mtime %x", mtime,
+                     ", mtimecmp ", fshow(readVReg(mtimecmp)),
+                     ", mtip ", fshow(readVReg(mtip)));
+        end
     endrule
 
     // handle mtime access
@@ -378,11 +433,21 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             else begin
                 cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: ?});
                 state <= SelectReq;
+                if(verbose) begin
+                    $display("[Platform - process mtime] ",
+                             "no change to mtip ", fshow(readVReg(mtip)),
+                             ", new mtime %x", newData,
+                             ", mtimecmp ", fshow(readVReg(mtimecmp)));
+                end
             end
         end
         else begin
             cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: mtime});
             state <= SelectReq;
+            if(verbose) begin
+                $display("[Platform - process mtime] read done, data %x",
+                         mtime);
+            end
         end
     endrule
 
@@ -394,6 +459,12 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         end
         cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: ?});
         state <= SelectReq;
+        if(verbose) begin
+            $display("[Platform - mtime done]",
+                     ", mtime %x", mtime,
+                     ", mtimecmp ", fshow(readVReg(mtimecmp)),
+                     ", mtip ", fshow(readVReg(mtip)));
+        end
     endrule
 
     // handle tohost access
@@ -401,14 +472,15 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         let resp = MMIOPRs {valid: False, data: ?};
         if(isWrite) begin
             if(toHostQ.notEmpty) begin
+                doAssert(False, "Cannot write tohost when toHostQ not empty");
+                // this will raise access fault
+            end
+            else begin
                 let data = getWriteData(0);
                 if(data != 0) begin // 0 means nothing for tohost
                     toHostQ.enq(data);
                 end
                 resp.valid = True;
-            end
-            else begin
-                doAssert(False, "should not write tohost when not zero");
             end
         end
         else begin
@@ -422,6 +494,15 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         end
         state <= SelectReq;
         cores[reqCore].pRs.enq(resp);
+        if(verbose) begin
+            $display("[Platform - process tohost] resp ", fshow(resp));
+        end
+    endrule
+
+    rule writeToHostStuck(state == ProcessReq && curReq == ToHost &&
+                       isWrite && toHostQ.notEmpty);
+        $display("[Platform - process tohost] WARNING: ",
+                 "write when toHostQ not empty");
     endrule
 
     // handle fromhost access
@@ -457,6 +538,9 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         end
         state <= SelectReq;
         cores[reqCore].pRs.enq(resp);
+        if(verbose) begin
+            $display("[Platform - process fromhost] resp ", fshow(resp));
+        end
     endrule
 
     method Action bootRomInitReq(BootRomIndex idx, Data data) if(state == Init);
@@ -472,6 +556,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     method Action start(Addr toHost, Addr fromHost) if(state == Init);
         toHostAddr <= getDataAlignedAddr(toHost);
         fromHostAddr <= getDataAlignedAddr(fromHost);
+        state <= SelectReq;
     endmethod
 
     method ActionValue#(Data) to_host;

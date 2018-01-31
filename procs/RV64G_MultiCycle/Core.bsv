@@ -818,6 +818,7 @@ module mkCore#(CoreId coreId)(Core);
             pcReg <= startpc;
             stage <= FetchITlb;
             mmio.setHtifAddrs(toHostAddr, fromHostAddr);
+            $display("Core %d started", coreId);
         endmethod
 
         method Action perfReq(PerfLocation loc, PerfType t);

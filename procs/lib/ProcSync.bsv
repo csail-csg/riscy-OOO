@@ -198,6 +198,7 @@ module mkProcReqSync#(
                           toHostAddr, fromHostAddr,
                           verification_packets_to_ignore,
                           send_synchronization_packets));
+        $display("[ProcSync] start");
     endmethod
     method Action bootRomInitReq(Bit#(16) index, Data v);
         bootRomInitQ.enq(tuple2(truncate(index), v));
