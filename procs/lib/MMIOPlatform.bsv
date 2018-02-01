@@ -125,7 +125,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             if(!mtip[i] && mtimecmp[i] <= mtime) begin
                 cores[i].pRq.enq(MMIOPRq {
                     target: MTIP,
-                    write: True,
+                    func: St,
                     data: 1
                 });
                 mtip[i] <= True;
@@ -250,12 +250,12 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     );
         // core corresponding to lower bits of requested Data
         CoreId lower_core = truncate({offset, 1'b0});
-        Bool lower_en = byteEn[0];
+        Bool lower_en = reqBE[0];
         // core corresponding to upper bits of requested Data. Need to check if
         // this core truly exists
         CoreId upper_core = truncate({offset, 1'b1});
         Bool upper_valid = {offset, 1'b1} < fromInteger(valueof(CoreNum));
-        Bool upper_en = byteEn[4];
+        Bool upper_en = reqBE[4];
 
         if(upper_en && !upper_valid) begin
             // access invalid core's MSIP, fault
@@ -300,7 +300,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             end
             else begin
                 // AMO access nothing: fault
-                state <= SelectCRq;
+                state <= SelectReq;
                 cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
                 if(verbose) begin
                     $display("[Platform - process msip] access nothing");
@@ -439,7 +439,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                     mtip[offset] <= True;
                     cores[offset].pRq.enq(MMIOPRq {
                         target: MTIP,
-                        write: True,
+                        func: St,
                         data: 1
                     });
                     state <= WaitResp;
@@ -449,7 +449,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                     mtip[offset] <= False;
                     cores[offset].pRq.enq(MMIOPRq {
                         target: MTIP,
-                        write: True,
+                        func: St,
                         data: 0
                     });
                     state <= WaitResp;
@@ -516,7 +516,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 if(mtimecmp[i] <= newData && !mtip[i]) begin
                     cores[i].pRq.enq(MMIOPRq {
                         target: MTIP,
-                        write: True,
+                        func: St,
                         data: 1
                     });
                     changeMTIP[i] = True;
@@ -524,7 +524,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 else if(mtimecmp[i] > newData && mtip[i]) begin
                     cores[i].pRq.enq(MMIOPRq {
                         target: MTIP,
-                        write: True,
+                        func: St,
                         data: 0
                     });
                     changeMTIP[i] = True;
@@ -603,12 +603,6 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         if(verbose) begin
             $display("[Platform - process tohost] resp ", fshow(resp));
         end
-    endrule
-
-    rule writeToHostStuck(state == ProcessReq && curReq == ToHost &&
-                       isWrite && toHostQ.notEmpty);
-        $display("[Platform - process tohost] WARNING: ",
-                 "write when toHostQ not empty");
     endrule
 
     // handle fromhost access
