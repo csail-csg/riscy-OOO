@@ -6,6 +6,7 @@ import ProcTypes::*;
 import MMIOAddrs::*;
 import MMIOCore::*;
 import CacheUtils::*;
+import Amo::*;
 
 // MMIO logic at platform (MMIOPlatform)
 // XXX Currently all MMIO requests and posts of timer interrupts are handled
@@ -66,15 +67,18 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     // current req (valid when state != Init && state != SelectReq
     Reg#(MMIOPlatformReq) curReq <- mkRegU;
     Reg#(CoreId) reqCore <- mkRegU;
-    Reg#(Bool) isWrite <- mkRegU;
-    Reg#(ByteEn) byteEn <- mkRegU;
-    Reg#(Data) wrData <- mkRegU;
+    Reg#(MMIOFunc) reqFunc <- mkRegU;
+    Reg#(ByteEn) reqBE <- mkRegU;
+    Reg#(Data) reqData <- mkRegU;
     // we need to wait for resp from cores when we need to change MTIP
     Reg#(Vector#(CoreNum, Bool)) waitMTIPCRs <- mkRegU;
     // for MSIP access: lower bits and upper bits of requested memory location
     // correspond to two cores. We need to wait resp from these two cores.
     Reg#(Maybe#(CoreId)) waitLowerMSIPCRs <- mkRegU;
     Reg#(Maybe#(CoreId)) waitUpperMSIPCRs <- mkRegU;
+    // in case of AMO on mtime and mtimecmp, resp may be sent after waiting for
+    // CRs, we record the AMO resp at processing time
+    Reg#(Data) amoResp <- mkRegU;
 
     // we increment mtime periodically
     Reg#(Bit#(TLog#(CyclesPerTimeInc))) cycle <- mkReg(0);
@@ -149,9 +153,9 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 MMIOCRq req = cores[i].cRq.first;
                 // record req
                 reqCore <= fromInteger(i);
-                isWrite <= req.write;
-                byteEn <= req.byteEn;
-                wrData <= req.data;
+                reqFunc <= req.func;
+                reqBE <= req.byteEn;
+                reqData <= req.data;
                 // find out which MMIO reg/device is being requested
                 DataAlignedAddr addr = getDataAlignedAddr(req.addr);
                 MMIOPlatformReq newReq = Invalid;
@@ -213,14 +217,17 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     rule processBootRom(
         curReq matches tagged BootRom .offset &&& state == ProcessReq
     );
-        if(isWrite) begin
-            bootRom.put(pack(byteEn), offset, wrData);
-            state <= SelectReq;
-            cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: ?});
-        end
-        else begin
+        if(reqFunc == Ld) begin
             bootRom.put(0, offset, ?);
             state <= WaitResp;
+        end
+        else begin
+            // boot rom is read only, access fault
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
+            if(verbose) begin
+                $display("[Platform - process boot rom] cannot write");
+            end
         end
     endrule
 
@@ -233,8 +240,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             data: bootRom.read
         });
         if(verbose) begin
-            $display("[Platform - boot rom done], core %d, data %x",
-                     reqCore, bootRom.read);
+            $display("[Platform - boot rom done] data %x", bootRom.read);
         end
     endrule
 
@@ -245,35 +251,76 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         // core corresponding to lower bits of requested Data
         CoreId lower_core = truncate({offset, 1'b0});
         Bool lower_en = byteEn[0];
-        Bit#(1) lower_data = wrData[0];
         // core corresponding to upper bits of requested Data. Need to check if
         // this core truly exists
         CoreId upper_core = truncate({offset, 1'b1});
         Bool upper_valid = {offset, 1'b1} < fromInteger(valueof(CoreNum));
         Bool upper_en = byteEn[4];
-        Bit#(1) upper_data = wrData[32];
 
         if(upper_en && !upper_valid) begin
             // access invalid core's MSIP, fault
             state <= SelectReq;
             cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
             if(verbose) begin
-                $display("[Platform - process msip] access fault");
+                $display("[Platform - process msip] access invalid core");
+            end
+        end
+        else if(reqFunc matches tagged Amo .amoFunc) begin
+            // AMO req: should only access MSIP of one core. Thus, we always
+            // treat the accessed core as the lower core to save the shift (AMO
+            // resp is different from load that valid data is already shifted
+            // to LSBs). Besides, we only use the lower 32 bits of reqData.
+            if(lower_en && upper_en) begin
+                state <= SelectReq;
+                cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
+                if(verbose) begin
+                    $display("[Platform - process msip] ",
+                             "AMO cannot access 2 cores");
+                end
+            end
+            else if(lower_en) begin
+                cores[lower_core].pRq.enq(MMIOPRq {
+                    target: MSIP,
+                    func: reqFunc,
+                    data: truncate(reqData)
+                });
+                waitLowerMSIPCRs <= Valid (lower_core);
+                waitUpperMSIPCRs <= Invalid;
+                state <= WaitResp;
+            end
+            else if(upper_en) begin
+                cores[upper_core].pRq.enq(MMIOPRq {
+                    target: MSIP,
+                    func: reqFunc,
+                    data: truncate(reqData)
+                });
+                waitLowerMSIPCRs <= Valid (upper_core);
+                waitUpperMSIPCRs <= Invalid;
+                state <= WaitResp;
+            end
+            else begin
+                // AMO access nothing: fault
+                state <= SelectCRq;
+                cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
+                if(verbose) begin
+                    $display("[Platform - process msip] access nothing");
+                end
             end
         end
         else begin
+            // normal load and store
             if(lower_en) begin
                 cores[lower_core].pRq.enq(MMIOPRq {
                     target: MSIP,
-                    write: isWrite,
-                    data: lower_data
+                    func: reqFunc,
+                    data: zeroExtend(reqData[0])
                 });
             end
             if(upper_en) begin
                 cores[upper_core].pRq.enq(MMIOPRq {
                     target: MSIP,
-                    write: isWrite,
-                    data: upper_data
+                    func: reqFunc,
+                    data: zeroExtend(reqData[32]) 
                 });
             end
             state <= WaitResp;
@@ -302,6 +349,9 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         state <= SelectReq;
         cores[reqCore].pRs.enq(MMIOPRs {
             valid: True,
+            // for AMO, resp data should be signExtend(lower_data). However,
+            // lower_data is just 1 or 0, and upper_data is always 0, so we
+            // don't need to do signExtend.
             data: {upper_data, lower_data}
         });
         if(verbose) begin
@@ -311,14 +361,44 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     endrule
 
     function Data getWriteData(Data orig);
-        Vector#(NumBytes, Bit#(8)) data = unpack(orig);
-        Vector#(NumBytes, Bit#(8)) wrVec = unpack(wrData);
-        for(Integer i = 0; i < valueof(NumBytes); i = i+1) begin
-            if(byteEn[i]) begin
-                data[i] = wrVec[i];
-            end
+        if(reqFunc matches tagged Amo .amoFunc) begin
+            // amo
+            Bool doubleWord = reqBE[4] && reqBE[0];
+            Bool upper32 = reqBE[4] && !reqBE[0];
+            let amoInst = AmoInst {
+                func: amoFunc,
+                doubleWord: doubleWord,
+                aq: False,
+                rl: False
+            };
+            return amoExec(amoInst, orig, reqData, upper32);
         end
-        return pack(data);
+        else begin
+            // normal store
+            Vector#(NumBytes, Bit#(8)) data = unpack(orig);
+            Vector#(NumBytes, Bit#(8)) wrVec = unpack(reqData);
+            for(Integer i = 0; i < valueof(NumBytes); i = i+1) begin
+                if(reqBE[i]) begin
+                    data[i] = wrVec[i];
+                end
+            end
+            return pack(data);
+        end
+    endfunction
+
+    function Data getAmoResp(Data orig);
+        if(reqBE[4] && reqBE[0]) begin
+            // double word
+            return orig;
+        end
+        else if(reqBE[4]) begin
+            // upper 32 bit
+            return signExtend(orig[63:32]);
+        end
+        else begin
+            // lower 32 bit
+            return signExtend(orig[31:0]);
+        end
     endfunction
 
     // handle mtimecmp access
@@ -334,10 +414,25 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             end
         end
         else begin
-            if(isWrite) begin
-                // do write
-                let newData = getWriteData(mtimecmp[offset]);
+            let oldMTimeCmp = mtimecmp[offset];
+            if(reqFunc == Ld) begin
+                cores[reqCore].pRs.enq(MMIOPRs {
+                    valid: True,
+                    data: oldMTimeCmp
+                });
+                state <= SelectReq;
+                if(verbose) begin
+                    $display("[Platform - process mtimecmp] read done, data %x",
+                             oldMTimeCmp);
+                end
+            end
+            else begin
+                // do updates for store or AMO
+                let newData = getWriteData(oldMTimeCmp);
                 mtimecmp[offset] <= newData;
+                // get and record amo resp
+                let respData = getAmoResp(oldMTimeCmp);
+                amoResp <= respData;
                 // check changes to MTIP
                 if(newData <= mtime && !mtip[offset]) begin
                     // need to post new timer interrupt
@@ -361,7 +456,11 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 end
                 else begin
                     // nothing happens to mtip, just finish this req
-                    cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: ?});
+                    cores[reqCore].pRs.enq(MMIOPRs {
+                        valid: True,
+                        // store doesn't need resp data, just fill in AMO resp
+                        data: respData
+                    });
                     state <= SelectReq;
                     if(verbose) begin
                         $display("[Platform - process mtimecmp] ",
@@ -372,17 +471,6 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                     end
                 end
             end
-            else begin
-                cores[reqCore].pRs.enq(MMIOPRs {
-                    valid: True,
-                    data: mtimecmp[offset]
-                });
-                state <= SelectReq;
-                if(verbose) begin
-                    $display("[Platform - process mtimecmp] read done, data %x",
-                             mtimecmp[offset]);
-                end
-            end
         end
     endrule
 
@@ -390,7 +478,12 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         curReq matches tagged MTimeCmp .offset &&& state == WaitResp
     );
         cores[offset].cRs.deq;
-        cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: ?});
+        cores[reqCore].pRs.enq(MMIOPRs {
+            valid: True,
+            // store doesn't need resp data, just fill in AMO resp. We cannot
+            // recompute AMO resp now, because mtimecmp has changed
+            data: amoResp
+        });
         state <= SelectReq;
         if(verbose) begin
             $display("[Platform - mtimecmp done]",
@@ -402,10 +495,21 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
 
     // handle mtime access
     rule processMTime(state == ProcessReq && curReq == MTime);
-        if(isWrite) begin
-            // do write
+        if(reqFunc == Ld) begin
+            cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: mtime});
+            state <= SelectReq;
+            if(verbose) begin
+                $display("[Platform - process mtime] read done, data %x",
+                         mtime);
+            end
+        end
+        else begin
+            // do update for store or AMO
             let newData = getWriteData(mtime);
             mtime <= newData;
+            // get and record AMO resp
+            let respData = getAmoResp(mtime);
+            amoResp <= respData;
             // check change in MTIP
             Vector#(CoreNum, Bool) changeMTIP = replicate(False);
             for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
@@ -431,7 +535,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 state <= WaitResp;
             end
             else begin
-                cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: ?});
+                cores[reqCore].pRs.enq(MMIOPRs {
+                    valid: True,
+                    data: respData // AMO resp
+                });
                 state <= SelectReq;
                 if(verbose) begin
                     $display("[Platform - process mtime] ",
@@ -439,14 +546,6 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                              ", new mtime %x", newData,
                              ", mtimecmp ", fshow(readVReg(mtimecmp)));
                 end
-            end
-        end
-        else begin
-            cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: mtime});
-            state <= SelectReq;
-            if(verbose) begin
-                $display("[Platform - process mtime] read done, data %x",
-                         mtime);
             end
         end
     endrule
@@ -457,7 +556,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 cores[i].cRs.deq;
             end
         end
-        cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: ?});
+        cores[reqCore].pRs.enq(MMIOPRs {
+            valid: True,
+            data: amoResp // recorded amo resp
+        });
         state <= SelectReq;
         if(verbose) begin
             $display("[Platform - mtime done]",
@@ -470,7 +572,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     // handle tohost access
     rule processToHost(state == ProcessReq && curReq == ToHost);
         let resp = MMIOPRs {valid: False, data: ?};
-        if(isWrite) begin
+        if(reqFunc == St) begin
             if(toHostQ.notEmpty) begin
                 doAssert(False, "Cannot write tohost when toHostQ not empty");
                 // this will raise access fault
@@ -483,7 +585,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 resp.valid = True;
             end
         end
-        else begin
+        else if(reqFunc == Ld) begin
             resp.valid = True;
             if(toHostQ.notEmpty) begin
                 resp.data = toHostQ.first;
@@ -491,6 +593,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             else begin
                 resp.data = 0;
             end
+        end
+        else begin
+            // amo: access fault
+            doAssert(False, "Cannot do AMO on toHost");
         end
         state <= SelectReq;
         cores[reqCore].pRs.enq(resp);
@@ -508,7 +614,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     // handle fromhost access
     rule processFromHost(state == ProcessReq && curReq == FromHost);
         let resp = MMIOPRs {valid: False, data: ?};
-        if(isWrite) begin
+        if(reqFunc == St) begin
             if(fromHostQ.notEmpty) begin
                 if(getWriteData(fromHostQ.first) == 0) begin
                     fromHostQ.deq;
@@ -527,7 +633,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 end
             end
         end
-        else begin
+        else if(reqFunc == Ld) begin
             resp.valid = True;
             if(fromHostQ.notEmpty) begin
                 resp.data = fromHostQ.first;
@@ -535,6 +641,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             else begin
                 resp.data = 0;
             end
+        end
+        else begin
+            // amo: access fault
+            doAssert(False, "Cannot do AMO on fromHost");
         end
         state <= SelectReq;
         cores[reqCore].pRs.enq(resp);

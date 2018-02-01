@@ -201,6 +201,22 @@ function Maybe#(Exception) checkForException(
     return exception;
 endfunction
 
+// check mem access misaligned: byteEn is unshifted (just from Decode)
+function Bool memAddrMisaligned(Addr addr, ByteEn byteEn);
+    if(byteEn[7]) begin
+        return addr[2:0] != 0;
+    end
+    else if(byteEn[3]) begin
+        return addr[1:0] != 0;
+    end
+    else if(byteEn[1]) begin
+        return addr[0] != 0;
+    end
+    else begin
+        return False;
+    end
+endfunction
+
 function Data gatherLoad(Addr addr, ByteEn byteEn, Bool unsignedLd, Data data);
     function extend = unsignedLd ? zeroExtend : signExtend;
     Bit#(IndxShamt) offset = truncate(addr);

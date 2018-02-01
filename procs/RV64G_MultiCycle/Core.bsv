@@ -297,10 +297,18 @@ module mkCore#(CoreId coreId)(Core);
                            && iTlb.flush_done && dTlb.flush_done);
 
     rule doFetchITlb(stage == FetchITlb && all_flush_done);
-        iTlb.to_proc.request.put(pcReg);
-        predPc <= pcReg + 4; // use PC+4 here, for branches we overwrite this later
-        stage <= FetchICache;
-        if(verbose) $display("[doFetchITlb] PC %x", pcReg);
+        if(pcReg[1:0] != 0) begin
+            exception <= Valid (InstAddrMisaligned);
+            stage <= Commit;
+            if(verbose) $display("[doFetchITlb] PC %x misaligned", pcReg);
+        end
+        else begin
+            iTlb.to_proc.request.put(pcReg);
+            // use PC+4 as next pc, for branches we overwrite this later
+            predPc <= pcReg + 4;
+            stage <= FetchICache;
+            if(verbose) $display("[doFetchITlb] PC %x", pcReg);
+        end
     endrule
 
     rule doFetchICache(stage == FetchICache);
@@ -311,7 +319,7 @@ module mkCore#(CoreId coreId)(Core);
             if(mmio.isMMIOAddr(phy_pc)) begin
                 mmio.mmioReq.enq(MMIOCRq {
                     addr: phy_pc,
-                    write: False,
+                    func: Ld,
                     byteEn: replicate(True),
                     data: ?
                 });
@@ -555,7 +563,15 @@ module mkCore#(CoreId coreId)(Core);
             doAssert(False, "Must be mem inst");
         end
 
-        if(isValid(cause)) begin
+        if(memAddrMisaligned(memVAddr, mem.byteEn)) begin
+            exception <= Valid (case(mem.mem_func)
+                Ld, Lr: (LoadAddrMisaligned);
+                default: (StoreAddrMisaligned);
+            endcase);
+            stage <= Commit;
+            if(verbose) $display("[doExeTlbResp] addr misalgined");
+        end
+        else if(isValid(cause)) begin
             // page fault
             exception <= cause;
             stage <= Commit;
@@ -573,17 +589,19 @@ module mkCore#(CoreId coreId)(Core);
                 exception <= Valid (StoreAccessFault);
                 stage <= Commit;
             end
-            else if(mem.mem_func == Amo) begin
-                doAssert(False, "no AMO for MMIO");
-                exception <= Valid (StoreAccessFault);
-                stage <= Commit;
-            end
             else begin
                 MMIOCRq r = MMIOCRq {
                     addr: paddr,
-                    write: mem.mem_func == St,
+                    func: (case(mem.mem_func)
+                               Ld: (Ld);
+                               St: (St);
+                               Amo: (Amo (mem.amo_func));
+                               default: ?;
+                           endcase),
+                    // BE is always shifted
                     byteEn: tpl_1(shiftedBeData),
-                    data: tpl_2(shiftedBeData)
+                    // amo use unshifted data
+                    data: mem.mem_func == Amo ? amoData : tpl_2(shiftedBeData)
                 };
                 mmio.mmioReq.enq(r);
                 stage <= ExeMMIOResp;
@@ -594,7 +612,7 @@ module mkCore#(CoreId coreId)(Core);
             end
         end
         else begin
-            // successfull translation, main mem access, now issue to D$
+            // main mem access, now issue to D$
             ProcRq#(DProcReqId) r = ProcRq {
                 id: 0,
                 addr: paddr,
@@ -675,9 +693,16 @@ module mkCore#(CoreId coreId)(Core);
         MMIOPRs resp = mmio.mmioResp.first;
         if(resp.valid) begin
             if(srcDstRegs.dst matches tagged Valid .idx) begin
-                doAssert(mem.mem_func == Ld, "must be ld");
-                rf.wr(idx,
-                      gatherLoad(memVAddr, mem.byteEn, mem.unsignedLd, resp.data));
+                Data res;
+                if(mem.mem_func == Ld) begin
+                    res = gatherLoad(memVAddr, mem.byteEn,
+                                     mem.unsignedLd, resp.data);
+                end
+                else begin
+                    doAssert(mem.mem_func == Amo, "must be AMO");
+                    res = resp.data; // directly use resp data
+                end
+                rf.wr(idx, res);
             end
             else begin
                 doAssert(mem.mem_func == St, "must be st");

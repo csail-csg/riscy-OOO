@@ -3,6 +3,7 @@ import ProcTypes::*;
 import MMIOAddrs::*;
 import CacheUtils::*;
 import Fifo::*;
+import Amo::*;
 
 // local MMIO logic in each core (MMIOCore)
 // Every MMIO req from the core is directly passed to the platform, while this
@@ -67,16 +68,30 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
         MMIOCRs resp = MMIOCRs {data: ?};
         case(req.target)
             MSIP: begin
-                if(req.write) begin
-                    inIfc.setMSIP(req.data);
+                if(req.func == St) begin
+                    inIfc.setMSIP(req.data[0]);
                 end
                 else begin
-                    resp.data = inIfc.getMSIP;
+                    // both AMO and Ld need the original data as resp
+                    Bit#(1) msip = inIfc.getMSIP;
+                    resp.data = msip;
+                    // AMO also needs to write
+                    if(req.func matches tagged Amo .amoFunc) begin
+                        let amoInst = AmoInst {
+                            func: amoFunc,
+                            doubleWord: False,
+                            aq: False,
+                            rl: False
+                        };
+                        let newData = amoExec(amoInst, zeroExtend(msip),
+                                              zeroExtend(req.data), False);
+                        inIfc.setMSIP(newData[0]);
+                    end
                 end
             end
             MTIP: begin
-                if(req.write) begin
-                    inIfc.setMTIP(req.data);
+                if(req.func == St) begin
+                    inIfc.setMTIP(req.data[0]);
                 end
                 else begin
                     doAssert(False, "platform can only write MTIP");

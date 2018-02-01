@@ -501,23 +501,35 @@ typedef struct {
 } ExecResult deriving(Bits, Eq, FShow);
 
 // MMIO
+typedef union tagged {
+    void Ld;
+    void St;
+    AmoFunc Amo;
+} MMIOFunc deriving(Bits, Eq, FShow);
+
 // req fom core to platform
 typedef struct {
     Addr addr; // physical address
-    Bool write;
-    // BE, shifted for 64-bit aligned. Both LOAD and store need to specify
-    // this. We need this for load to remove redundant MMIO accessed (for MSIP)
+    MMIOFunc func; // req type
+    // BE, shifted for 64-bit aligned. LOAD, STORE and AMO all need to specify
+    // this. We need this for to remove redundant MMIO accesses (for MSIP), and
+    // to determine AMO access range (upper 32 bits, lower 32 bits, or full 64
+    // bits)
     ByteEn byteEn;
-    Data data; // store data (shifted for 64-bit aligned)
+    // For STORE: this is store data shifted to be 64-bit aligned
+    // For AMO: this is UNshifted data (like normal mem req)
+    Data data;
 } MMIOCRq deriving(Bits, Eq, FShow);
 
 // resp from platform to core
 typedef struct {
     Bool valid; // if fase, then access fault
-    // resp data only for load req, and resp data is read by adapting the req
-    // address to be aligned to Data (i.e., ignore lower bits in req address).
-    // This is similar to normal cache loads, i.e., the receiver needs to
-    // transform the resp data.
+    // resp data only for LOAD or AMO req.
+    // For LOAD: this is the aligned 64-bit result that contains the load
+    // access range (similar to normal cache loads, i.e., the receiver needs to
+    // shift the result before writting back to reg).
+    // For AMO: this is the result that can be directly written into reg, i.e.,
+    // for 32-bit access, the result has been shifted and sign-extended.
     Data data;
 } MMIOPRs deriving(Bits, Eq, FShow);
 
@@ -525,13 +537,19 @@ typedef struct {
 typedef enum {MSIP, MTIP} MMIOPRqTarget deriving(Bits, Eq, FShow);
 typedef struct {
     MMIOPRqTarget target;
-    Bool write; // True -> store
-    Bit#(1) data; // write data (ignored if write = False)
+    MMIOFunc func;
+    // For STORE: only data[0] matters.
+    // For AMO: this is unshifted data which is truncated from the data in the
+    // original cRq. AMO should only access MSIP with 32-bit access range
+    // because MSIP is viewed as 32-bit wide in MMIO.
+    Bit#(32) data;
 } MMIOPRq deriving(Bits, Eq, FShow); // req from core to platform,
 
 // resp from core to platform
 typedef struct {
-    Bit#(1) data; // MSIP load value, garbage if resp to store
+    // For LOAD or AMO: this is the original MSIP value
+    // For STORE: this is garbage
+    Bit#(1) data;
 } MMIOCRs deriving(Bits, Eq, FShow);
 
 // Boot rom: each block is 64-bit data

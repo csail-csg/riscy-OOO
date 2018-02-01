@@ -468,7 +468,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
             CSRscause:     scause_csr;
             CSRstval:      stval_csr;
             CSRsip:        sip_csr;
-            CSRsatp:      satp_csr;
+            CSRsatp:       satp_csr;
             // Machine CSRs
             CSRmstatus:    mstatus_csr;
             CSRmisa:       misa_csr;
@@ -504,7 +504,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
         Bool fflags_change = (fflags & fflags_reg) != fflags;
         // we need to set fs_reg as dirty in two cases
         // 1. FP reg is written (i.e., fpu_dirty)
-        // 2. FP exception (i.e., fflags) is non-zero
+        // 2. FP exception (i.e., fflags) is non-zero (try to match spike)
         Bool need_set_dirty = fs_reg != 2'b11 && (fpu_dirty || fflags != 0);
         return fflags_change || need_set_dirty;
     endmethod
