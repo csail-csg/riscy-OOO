@@ -254,7 +254,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         // core corresponding to upper bits of requested Data. Need to check if
         // this core truly exists
         CoreId upper_core = truncate({offset, 1'b1});
-        Bool upper_valid = {offset, 1'b1} < fromInteger(valueof(CoreNum));
+        Bool upper_valid = {offset, 1'b1} <= fromInteger(valueof(CoreNum) - 1);
         Bool upper_en = reqBE[4];
 
         if(upper_en && !upper_valid) begin

@@ -34,8 +34,8 @@ SIM_DRAM_TYPE := AWSF1
 # use Xilinx FPU IP cores
 USE_XILINX_FPU := true
 
-# default 1 core (multicore does not work now)
-CORE_NUM := 1
+# default 1 core
+CORE_NUM ?= 1
 # default check cache deadlock
 CHECK_DEADLOCK ?= true
 

@@ -173,7 +173,6 @@ void printHelp(const char *prog) {
     fprintf(stderr, "[--just-run] [--mem-size MEM_MB_SIZE] ");
     fprintf(stderr, "[--deadlock-check-after INST_NUM] ");
     fprintf(stderr, "[--core-num CORE_NUM] ");
-    fprintf(stderr, "[--ipi-wait-msip-zero] ");
     fprintf(stderr, "[--print-from INST_COUNT] [--skip INST_COUNT] ");
     fprintf(stderr, "[--shell-cmd CMD DELAY(sec)] ");
     fprintf(stderr, "[--perf-file PERF_OUTPUT_FILE] ");
