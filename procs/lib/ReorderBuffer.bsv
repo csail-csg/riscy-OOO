@@ -81,8 +81,8 @@ endinterface
 interface ReorderBufferRowEhr#(numeric type aluExeNum);
     method Action write_enq(ToReorderBuffer x);
     method ToReorderBuffer read_deq;
-    // record Ld/Amo/Lr/Sc result just for verify packets
-    method Action setExecuted_deqLSQ(Data res, RobInstState new_state);
+    // deqLSQ rules set ROB state (result are just for verify packets)
+    method Action setExecuted_deqLSQ(Data res, Maybe#(Exception) cause, RobInstState new_state);
     // doFinishXXX rules set ROB state (future may have vector of doFinishAlu ifc)
     interface Vector#(aluExeNum, Row_setExecuted_doFinishAlu) setExecuted_doFinishAlu;
     method Action setExecuted_doFinishFpuMulDiv(Data res, Bit#(5) fflags, RobInstState new_state);
@@ -103,8 +103,9 @@ endinterface
 
 module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum)) provisos(Add#(1, a__, aluExeNum));
     Integer trap_deq_port = 0;
-    Integer trap_finishMem_port = 0; // write trap
-    Integer trap_enq_port = 1; // write trap
+    Integer trap_deqLSQ_port = 0; // write trap
+    Integer trap_finishMem_port = 1; // write trap
+    Integer trap_enq_port = 2; // write trap
 
     Integer pvc_deq_port = 0;
     function Integer pvc_finishAlu_port(Integer i) = i; // write ppc_vaddr_csrData
@@ -142,7 +143,7 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum)) provisos(Add#(1, a
     Reg#(Maybe#(CSR))                          csr                  <- mkRegU;
     //Reg#(Maybe#(RenamingTag))                  rename_tag           <- mkRegU;
     Reg#(Bool)                                 claimed_phy_reg      <- mkRegU;
-    Ehr#(2, Maybe#(Trap))                      trap                 <- mkEhr(?);
+    Ehr#(3, Maybe#(Trap))                      trap                 <- mkEhr(?);
     Ehr#(TAdd#(2, aluExeNum), PPCVAddrCSRData) ppc_vaddr_csrData    <- mkEhr(?);
     Ehr#(2, Bit#(5))                           fflags               <- mkEhr(?);
     Reg#(Bool)                                 will_dirty_fpu_state <- mkRegU;
@@ -204,7 +205,7 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum)) provisos(Add#(1, a
     method Action setExecuted_doFinishMem(Data data, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
         // always update ROB state
         rob_inst_state[state_finishMem_port] <= new_state; 
-        // update trap
+        // update trap: TODO the check on trap = invalid is redundant
         if(cause matches tagged Valid .e &&& !isValid(trap[trap_finishMem_port])) begin
             trap[trap_finishMem_port] <= Valid (Exception (e));
         end
@@ -258,11 +259,15 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum)) provisos(Add#(1, a
         };
     endmethod
 
-    method Action setExecuted_deqLSQ(Data res, RobInstState new_state);
+    method Action setExecuted_deqLSQ(Data res, Maybe#(Exception) cause, RobInstState new_state);
 `ifdef VERIFICATION_PACKETS
         result_data[result_deqLSQ_port] <= res;
 `endif
         rob_inst_state[state_deqLSQ_port] <= new_state;
+        // update trap: TODO the check on trap = invalid is redundant
+        if(cause matches tagged Valid .e &&& !isValid(trap[trap_deqLSQ_port])) begin
+            trap[trap_deqLSQ_port] <= Valid (Exception (e));
+        end
     endmethod
 
     method Action setLdSpecBit(SpecTag ldSpecTag);
@@ -289,267 +294,6 @@ interface ROB_SpeculationUpdate;
     method Action correctSpeculation(SpecBits mask);
 endinterface
 
-`ifndef SUP_ROB
-///////////////////////////
-// single scalar version //
-//////////////////////////
-
-error("Single scalar ROB is not maintained");
-
-interface ReorderBufferEhr;
-    method Action enq(ToReorderBuffer x);
-    method InstTag getEnqInstTag;
-    method Bool isEmpty; // empty signal for enq port (for FENCE/System inst etc.)
-
-    method Action deq;
-    method InstTag getDeqInstTag;
-    method ToReorderBuffer deq_data;
-
-    // record Ld/Amo/Lr/Sc result just for verify packets
-    method Action setExecuted_deqLSQ(InstTag x, Data res, RobInstState new_state);
-    // doFinishXXX rules set ROB state
-    method Action setExecuted_doFinishAlu(InstTag x, Data res, Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state);
-    method Action setExecuted_doFinishFpuMulDiv(InstTag x, Data res, Bit#(5) fflags, RobInstState new_state);
-    method Action setExecuted_doFinishMem(InstTag x, Data data, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
-    // for Ld in doFinishMem without exception, set this Ld to depend on itself's spec tag
-    // this won't be called simultaneously with correct or wrong specution in one rule
-    // (spec tag of this Ld is kept)
-    method Action setLdSpecBit(InstTag x, SpecTag ldSpecTag);
-
-    // get original PC/PPC before execution, EHR port 0 will suffice
-    method Addr getOrigPC(InstTag x);
-    method Addr getOrigPredPC(InstTag x);
-    // get renaming tag for fast kill in renaming table
-    //method Maybe#(RenamingTag) getRenameTag(InstTag x);
-
-    method Bool isEmpty_ehrPort0;
-    method Bool isFull_ehrPort0;
-
-    interface ROB_SpeculationUpdate specUpdate;
-endinterface
-
-module mkReorderBufferEhr#(Bool lazyEnq)(ReorderBufferEhr);
-    // doCommit rule: deq, deq_data
-    Integer deq_port = 0;
-
-    // doFinishXXX, doDeqLSQ_XXX: setExecute_XXX, correctSpeculation
-    // these are handled in mkReorderBufferRowEhr
-
-    // doRenaming rule: enq, getEnqInstTag, isEmpty
-    Integer enq_port = 1;
-
-    // wrong speculation: overwrite deq in the same doCommit rule
-    // (this will be set to conflict with enq, so can use EHR port 1)
-    Integer wrongSpec_port = 1;
-    // make wrong speculation conflict with enq
-    RWire#(void) wrongSpec_enq_conflict <- mkRWire;
-
-    Vector#(NumInstTags, ReorderBufferRowEhr) row <- replicateM(mkReorderBufferRowEhr);
-    Vector#(NumInstTags, Ehr#(2, Bool)) valid <- replicateM(mkEhr(False));
-    Ehr#(2, InstTag) deqP <- mkEhr(0);
-    Reg#(InstTag) enqP <- mkReg(0);
-
-    function InstTag getNextPtr(InstTag p);
-        return p == fromInteger(valueOf(NumInstTags)-1) ? 0 : p + 1;
-    endfunction
-
-`ifdef BSIM
-    // sanity check in simulation
-    // all valid entry are within [deqP, enqP), outsiders are invalid entries
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule sanityCheck;
-        Bool empty = all( \== (False), readVEhr(0, valid) );
-        function Bool in_range(InstTag i);
-            // i is within [deqP, enqP)
-            if(empty) begin
-                return False;
-            end
-            else begin
-                if(deqP[0] < enqP) begin
-                    return deqP[0] <= i && i < enqP;
-                end
-                else begin
-                    return deqP[0] <= i || i < enqP;
-                end
-            end
-        endfunction
-        for(Integer i = 0; i < valueof(NumInstTags); i = i+1) begin
-            doAssert(in_range(fromInteger(i)) == valid[i][0],
-                "entries inside [deqP, enqP) should be valid, otherwise invalid"
-            );
-        end
-    endrule
-`endif
-
-    Bool empty_for_enq = ?; // enq port empty signal (enqP == deqP && !valid[enqP])
-    Bool can_enq = ?; // when enq slot is not valid
-    if(lazyEnq) begin
-        Wire#(Bool) empty_for_enq_wire <- mkBypassWire;
-        Wire#(Bool) can_enq_wire <- mkBypassWire;
-        (* fire_when_enabled, no_implicit_conditions *)
-        rule setEnqWires;
-            empty_for_enq_wire <= !valid[enqP][0] && enqP == deqP[0];
-            can_enq_wire <= !valid[enqP][0];
-        endrule
-        empty_for_enq = empty_for_enq_wire;
-        can_enq = can_enq_wire;
-    end
-    else begin
-        empty_for_enq = !valid[enqP][enq_port] && enqP == deqP[enq_port];
-        can_enq = !valid[enqP][enq_port];
-    end
-
-    method Action enq(ToReorderBuffer x) if(can_enq);
-        enqP <= getNextPtr(enqP);
-        row[enqP].write_enq(x);
-        valid[enqP][enq_port] <= True;
-        // make it conflict with wrong speculation
-        wrongSpec_enq_conflict.wset(?);
-    endmethod
-
-    method Bool isEmpty;
-        return empty_for_enq;
-    endmethod
-
-    method InstTag getEnqInstTag;
-        return enqP;
-    endmethod
-
-    method Bool isEmpty_ehrPort0;
-        return !valid[enqP][0] && enqP == deqP[0];
-    endmethod
-
-    method Bool isFull_ehrPort0;
-        return valid[enqP][0] && enqP == deqP[0];
-    endmethod
-
-    method Action deq if (valid[deqP[deq_port]][deq_port]);
-        deqP[deq_port] <= getNextPtr(deqP[deq_port]);
-        valid[deqP[deq_port]][deq_port] <= False;
-    endmethod
-
-    method InstTag getDeqInstTag if (valid[deqP[deq_port]][deq_port]);
-        return deqP[deq_port];
-    endmethod
-
-    method ToReorderBuffer deq_data if (valid[deqP[deq_port]][deq_port]);
-        return row[deqP[deq_port]].read_deq;
-    endmethod
-
-    method Action setExecuted_deqLSQ(InstTag x, Data res, RobInstState new_state);
-        row[x].setExecuted_deqLSQ(res, new_state);
-    endmethod
-
-    method Action setExecuted_doFinishAlu(InstTag x, Data res, Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state);
-        row[x].setExecuted_doFinishAlu(res, csrData, cf, new_state);
-    endmethod
-
-    method Action setExecuted_doFinishFpuMulDiv(InstTag x, Data res, Bit#(5) fflags, RobInstState new_state);
-        row[x].setExecuted_doFinishFpuMulDiv(res, fflags, new_state);
-    endmethod
-
-    method Action setExecuted_doFinishMem(InstTag x, Data data, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
-        row[x].setExecuted_doFinishMem(data, vaddr, cause, new_state);
-    endmethod
-
-    method Action setLdSpecBit(InstTag x, SpecTag ldSpecTag);
-        row[x].setLdSpecBit(ldSpecTag);
-    endmethod
-
-    method Addr getOrigPC(InstTag x) = row[x].getOrigPC;
-    method Addr getOrigPredPC(InstTag x) = row[x].getOrigPredPC;
-    //method Maybe#(RenamingTag) getRenameTag(InstTag x) = row[x].getRenameTag;
-
-    interface ROB_SpeculationUpdate specUpdate;
-        method Action correctSpeculation(SpecBits mask);
-            for (Integer i = 0 ; i < valueOf(NumInstTags) ; i = i+1) begin
-                row[i].correctSpeculation(mask);
-            end
-        endmethod
-
-        method Action incorrectSpeculation(SpecTag x, InstTag inst_tag);
-            // only update valid, no need to change spec bits
-            for (Integer i = 0 ; i < valueOf(NumInstTags) ; i = i+1) begin
-                if (row[i].dependsOn_wrongSpec(x)) begin
-                    valid[i][wrongSpec_port] <= False;
-                end
-            end
-            // move enqP to be right after OR just the inst that initiates the kill
-            if(valid[inst_tag][wrongSpec_port] && row[inst_tag].dependsOn_wrongSpec(x)) begin
-                // the kill-initiating inst also kills itself (e.g. a Ld)
-                enqP <= inst_tag;
-            end
-            else begin
-                // the kill-initiating inst does not kill itself
-                enqP <= getNextPtr(inst_tag);
-            end
-            // make it conflict with enq
-            wrongSpec_enq_conflict.wset(?);
-
-`ifdef BSIM
-            // sanity check in simulation
-            function Bool getDepOn(Integer i) = row[i].dependsOn_wrongSpec(x);
-            Vector#(NumInstTags, Bool) depVec = map(getDepOn, genVector);
-            Vector#(NumInstTags, Bool) validVec = readVEhr(wrongSpec_port, valid);
-            $display("[ROB incorrectSpec] ",
-                fshow(x), " ; ",
-                fshow(inst_tag),
-                fshow(deqP[wrongSpec_port]), " ; ",
-                fshow(enqP), " ; ",
-                fshow(validVec), " ; ",
-                fshow(depVec)
-            );
-            // all valid entry are within [deqP, enqP), outsiders are invalid entries
-            Bool empty = all( \== (False), validVec );
-            function Bool in_range(InstTag i);
-                // i is within [deqP, enqP)
-                if(empty) begin
-                    return False;
-                end
-                else begin
-                    if(deqP[wrongSpec_port] < enqP) begin
-                        return deqP[wrongSpec_port] <= i && i < enqP;
-                    end
-                    else begin
-                        return deqP[wrongSpec_port] <= i || i < enqP;
-                    end
-                end
-            endfunction
-            for(Integer i = 0; i < valueof(NumInstTags); i = i+1) begin
-                doAssert(in_range(fromInteger(i)) == valid[i][wrongSpec_port],
-                    "entries inside [deqP, enqP) should be valid, otherwise invalid"
-                );
-            end
-            // inst_tag may be just dequeued
-            if(!valid[inst_tag][wrongSpec_port]) begin
-                doAssert(getNextPtr(inst_tag) == deqP[wrongSpec_port],
-                    "if the kill-initiating entry is invalid, it must be just dequeued"
-                );
-            end
-            // valid entries within (inst_tag, enqP) or [inst_tag, enqP) are killed, outsides are not
-            Bool kill_itself = valid[inst_tag][wrongSpec_port] && row[inst_tag].dependsOn_wrongSpec(x);
-            function Bool in_kill_range(InstTag i);
-                // when inst_tag == enqP, it must be a full ROB before the kill and inst_tag is the oldest
-                if(inst_tag < enqP) begin
-                    return (kill_itself ? inst_tag <= i : inst_tag < i) && i < enqP;
-                end
-                else begin
-                    return (kill_itself ? inst_tag <= i : inst_tag < i) || i < enqP;
-                end
-            endfunction
-            for(Integer i = 0; i < valueof(NumInstTags); i = i+1) begin
-                if(valid[i][wrongSpec_port]) begin
-                    doAssert(in_kill_range(fromInteger(i)) == row[i].dependsOn_wrongSpec(x),
-                        "valid entries inside (inst_tag, enqP) must be killed, outsiders must not"
-                    );
-                end
-            end
-`endif
-        endmethod
-    endinterface
-endmodule
-
-`else
 ////////////////////////////////////////////////////////
 ////////// Superscalar ehrized reorder buffer //////////
 ////////////////////////////////////////////////////////
@@ -598,8 +342,8 @@ interface SupReorderBuffer#(numeric type aluExeNum);
 
     interface Vector#(SupSize, ROB_DeqPort) deqPort;
 
-    // record Ld/Amo/Lr/Sc result just for verify packets
-    method Action setExecuted_deqLSQ(InstTag x, Data res, RobInstState new_state);
+    // deqLSQ rules set ROB state
+    method Action setExecuted_deqLSQ(InstTag x, Data res, Maybe#(Exception) cause, RobInstState new_state);
     // doFinishXXX rules set ROB state
     interface Vector#(aluExeNum, ROB_setExecuted_doFinishAlu) setExecuted_doFinishAlu;
     method Action setExecuted_doFinishFpuMulDiv(InstTag x, Data res, Bit#(5) fflags, RobInstState new_state);
@@ -1125,10 +869,10 @@ module mkSupReorderBuffer#(
         return all(isFullFunc, idxVec);
     endmethod
 
-    method Action setExecuted_deqLSQ(InstTag x, Data res, RobInstState new_state) if(
+    method Action setExecuted_deqLSQ(InstTag x, Data res, Maybe#(Exception) cause, RobInstState new_state) if(
         all(id, readVReg(setExeLSQ_SB_enq)) // ordering: < enq
     );
-        row[x.way][x.ptr].setExecuted_deqLSQ(res, new_state);
+        row[x.way][x.ptr].setExecuted_deqLSQ(res, cause, new_state);
     endmethod
 
     interface setExecuted_doFinishAlu = aluSetExeIfc;
@@ -1183,4 +927,3 @@ module mkSupReorderBuffer#(
         endmethod
     endinterface
 endmodule
-`endif

@@ -81,21 +81,19 @@ import CommitStage::*;
 import Bypass::*;
 
 interface CoreReq;
-    method Action start(Bit#(64) pc, Bool ipi_wait_msip_zero, Bit#(64) pack_ignore, Bool sync_pack);
-    method Action from_host(Bit#(64) v);
+    method Action start(
+        Addr startpc,
+        Addr toHostAddr, Addr fromHostAddr,
+        Bit#(64) verification_packets_to_ignore,
+        Bool send_synchronization_packets
+    );
     method Action perfReq(PerfLocation loc, PerfType t);
 endinterface
 
 interface CoreIndInv;
-    method ActionValue#(Bit#(64)) to_host;
     method ActionValue#(VerificationPacket) debug_verify;
     method ActionValue#(ProcPerfResp) perfResp;
     method ActionValue#(void) terminate;
-endinterface
-
-interface CoreIPI;
-    method Action recvIPI;
-    method ActionValue#(CoreId) sendIPI;
 endinterface
 
 interface CoreDeadlock;
@@ -119,27 +117,18 @@ interface Core;
     // core request & indication
     interface CoreReq coreReq;
     interface CoreIndInv coreIndInv;
-    // inter-proc interrupt
-    interface CoreIPI ipi;
     // coherent caches to LLC
     interface ChildCacheToParent#(L1Way, void) dCacheToParent;
     interface ChildCacheToParent#(L1Way, void) iCacheToParent;
     // DMA to LLC
     interface TlbMemClient tlbToMem;
+    // MMIO
+    interface MMIOCoreToPlatform mmioToPlatform;
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
     interface CoreDeadlock deadlock;
     // debug rename
     interface CoreRenameDebug renameDebug;
 endinterface
-
-// flush pipeline
-typedef enum {
-    Invalid,
-    HostToCsrf,
-    InterProcInterrupt
-} FlushPipeSrc deriving(Bits, Eq, FShow);
-
-typedef enum {FlushROB, FlushSTB, FlushCache} FlushPipeFSM deriving(Bits, Eq, FShow);
 
 // fixpoint to instantiate modules
 interface CoreFixPoint;
@@ -187,6 +176,22 @@ module mkCore#(CoreId coreId)(Core);
     // - Aggressive sb can be set early by a pipeline which sends out bypass
     ScoreboardCons sbCons <- mkScoreboardCons; // conservative sb
     ScoreboardAggr sbAggr <- mkScoreboardAggr; // aggressive sb
+
+    // MMIO: need to track in flight CSR inst or interrupt; note we can at most
+    // 1 CSR inst or 1 interrupt in ROB, so just use 1 bit track it. Commit
+    // stage use port 0 to reset this, and Rename stage use port 1 to set this.
+    Ehr#(2, Bool) csrInstOrInterruptInflight <- mkEhr(False);
+    Reg#(Bool) csrInstOrInterruptInflight_commit = csrInstOrInterruptInflight[0];
+    Reg#(Bool) csrInstOrInterruptInflight_rename = csrInstOrInterruptInflight[1];
+    MMIOCoreInput mmioInIfc = (interface MMIOCoreInput;
+        interface fetch = fetchStage.mmioIfc;
+        method getMSIP = csrf.getMSIP;
+        method setMSIP = csrf.setMSIP;
+        method setMTIP = csrf.setMTIP;
+        method noInflightCSRInstOrInterrupt = !csrInstOrInterruptInflight[0];
+        method setTime = csrf.setTime;
+    endinterface);
+    MMIOCore mmio <- mkMMIOCore(mmioInIfc);
 
     // fix point module to instantiate other function units
     module mkCoreFixPoint#(CoreFixPoint fix)(CoreFixPoint);
@@ -300,6 +305,9 @@ module mkCore#(CoreId coreId)(Core);
             method rob_setExecuted_doFinishMem = rob.setExecuted_doFinishMem;
             method rob_setExecuted_deqLSQ = rob.setExecuted_deqLSQ;
             method rob_setLdSpecBit = rob.setLdSpecBit;
+            method mmioReq = mmio.dataReq;
+            method mmioRespVal = mmio.dataRespVal;
+            method mmioRespDeq = mmio.dataRespDeq;
             method Action incrementEpochWithoutRedirect;
                 epochManager.incrementEpochWithoutRedirect;
                 // stop fetch until redirect
@@ -308,7 +316,7 @@ module mkCore#(CoreId coreId)(Core);
             method setRegReadyAggr_cache = writeAggr(cacheWrAggrPort);
             method setRegReadyAggr_forward = writeAggr(forwardWrAggrPort);
             method writeRegFile_Ld = writeCons(ldWrConsPort);
-            method writeRegFile_LrScAmo = writeCons(lrScAmoWrConsPort);
+            method writeRegFile_LrScAmoMMIO = writeCons(lrScAmoWrConsPort);
             method redirect_action = redirectFunc;
             method correctSpec_doFinishMem = globalSpecUpdate.correctSpec[finishMemCorrectSpecPort].put;
             method correctSpec_deqLSQ = globalSpecUpdate.correctSpec[deqLSQCorrectSpecPort].put;
@@ -341,46 +349,14 @@ module mkCore#(CoreId coreId)(Core);
     mkTlbConnect(iTlb.toParent, dTlb.toParent, l2Tlb.toChildren);
 
     // flags to flush
-    Reg#(Bool)  flush_caches <- mkReg(False);
     Reg#(Bool)  flush_tlbs <- mkReg(False);
     Reg#(Bool)  update_vm_info <- mkReg(False);
     Reg#(Bool)  flush_reservation <- mkReg(False);
 
-    // HTIF
-    Reg#(Bool) htifStall <- mkReg(False);
-    FIFO#(Data) toHostQ <- mkFIFO1;
-`ifdef FLUSH_CACHES_ON_HTIF
-    Fifo#(1, Bit#(64)) csrftohost_flushfifo <- mkCFFifo;
-`endif
-    Fifo#(2, Data) fromHostQ <- mkCFFifo;
-
-    // IPI
-    FIFO#(CoreId) ipiOutQ <- mkFIFO1;
-`ifdef FLUSH_CACHES_ON_IPI
-    // we flush local caches when sending out IPI
-    // (store buffer is flushed due to CSR inst which writes IPI CSR to send IPI)
-    FIFO#(CoreId) ipiFlushQ <- mkFIFO1;
-`endif
-    Fifo#(2, void) ipiInQ <- mkCFFifo; // buffer income IPI
-    Reg#(Bool) waitMsipZero <- mkConfigReg(False); // whether we wait msip == 0 for income IPI
-    // use config reg to prevent schedule cycle
-
-    // flush pipeline when there is incoming fromhost or inter-proc interrupt msg
-    // this avoids races between incoming msg and pending inst
-    Reg#(FlushPipeSrc) flushPipeSrc <- mkReg(Invalid);
-    Reg#(FlushPipeFSM) flushPipeState <- mkRegU;
-    // wires are used to avoid scheduling cycles
-    Wire#(Bool) robFlushed <- mkBypassWire;
-    Wire#(Bool) stbFlushed <- mkBypassWire;
-
     // performance counters
     Reg#(Bool) doStats = coreFix.doStatsIfc; // whether data is collected
 `ifdef PERF_COUNT
-    // OOO execute stage
-    // some in AluExePipeline and MemExePipeline
-    // htif stalls
-    Count#(Data) htifStallCnt <- mkCount(0);
-    Count#(Data) htifStallLat <- mkCount(0);
+    // OOO execute stag (in AluExePipeline and MemExePipeline)
 
     // commit stage (many in CommitStage.bsv)
     // cycle
@@ -429,8 +405,8 @@ module mkCore#(CoreId coreId)(Core);
         interface rsFpuMulDivIfc = reservationStationFpuMulDiv;
         interface rsMemIfc = reservationStationMem;
         interface lsqIfc = lsq;
-        method isHtifStall = htifStall._read;
-        method notFlushingPipe = flushPipeSrc == Invalid;
+        method pendingMMIOPRq = mmio.hasPendingPRq;
+        method issueCsrInstOrInterrupt = csrInstOrInterruptInflight_rename._write(True);
         method Bool checkDeadlock;
 `ifdef CHECK_DEADLOCK
             return startDeadlockCheck;
@@ -448,13 +424,13 @@ module mkCore#(CoreId coreId)(Core);
         interface rtIfc = regRenamingTable;
         interface csrfIfc = csrf;
         interface stbIfc = stb;
-        method tlbNoPendingReqOrWrite = iTlb.noPendingReq && dTlb.noPendingReqOrWrite && l2Tlb.noPendingReqOrWrite;
-        method isHtifStall = htifStall._read;
-        method setFlushCaches = flush_caches._write(True);
+        method tlbNoPendingReq = iTlb.noPendingReq && dTlb.noPendingReq;
+        method isHtifStall = False;
         method setFlushTlbs = flush_tlbs._write(True);
         method setUpdateVMInfo = update_vm_info._write(True);
         method setFlushReservation = flush_reservation._write(True);
         method redirect_action = coreFix.redirect_action;
+        method commitCsrInstOrInterrupt = csrInstOrInterruptInflight_commit._write(False);
         method doStats = coreFix.doStatsIfc._read;
         method Bool checkDeadlock;
 `ifdef CHECK_DEADLOCK
@@ -482,12 +458,7 @@ module mkCore#(CoreId coreId)(Core);
     // 2. XXX since csrf is configReg now, we should not let this rule fire together with doCommit
     // because we read csrf here and write csrf in doCommit
     (* preempts = "prepareCachesAndTlbs, commitStage.doCommit" *)
-    rule prepareCachesAndTlbs(flush_caches || flush_reservation || flush_tlbs || update_vm_info);
-        if (flush_caches) begin
-            flush_caches <= False;
-            iMem.flush;
-            dMem.flush;
-        end
+    rule prepareCachesAndTlbs(flush_reservation || flush_tlbs || update_vm_info);
         if (flush_reservation) begin
             flush_reservation <= False;
             dMem.resetLinkAddr;
@@ -508,156 +479,16 @@ module mkCore#(CoreId coreId)(Core);
     endrule
 
     rule readyToFetch(
-        !flush_caches && !flush_reservation && !flush_tlbs && !update_vm_info
-        && iMem.flush_done && dMem.flush_done && iTlb.flush_done && dTlb.flush_done
+        !flush_reservation && !flush_tlbs && !update_vm_info
+        && iTlb.flush_done && dTlb.flush_done
     );
         fetchStage.done_flushing();
-    endrule
-
-    // send to host msg
-    rule csrfToHost;
-        let ret <- csrf.csrfToHost;
-        if(verbose) $display("[csrfToHost] core %d, val %x", coreId, ret);
-        // Don't stall for reading from the terminal
-        // Thomas says this is awful
-        // [sizhuo] do not compare lower bits, they may be garbage
-        if (truncateLSB(ret) != 16'h0100) begin
-            htifStall <= True;
-`ifdef FLUSH_CACHES_ON_HTIF
-            // flush caches
-            // iMem.flush;
-            // dMem.flush;
-            flush_caches <= True;
-`endif
-
-`ifdef PERF_COUNT
-            // performance counter
-            if(doStats) begin
-                htifStallCnt.incr(1);
-            end
-`endif
-        end
-
-`ifdef FLUSH_CACHES_ON_HTIF
-        csrftohost_flushfifo.enq(ret);
-`else
-        toHostQ.enq(ret);
-`endif
-    endrule
-
-`ifdef FLUSH_CACHES_ON_HTIF
-    rule csrfToHost_wait_for_flush((!flush_caches) && iMem.flush_done && dMem.flush_done);
-        let ret = csrftohost_flushfifo.first;
-        csrftohost_flushfifo.deq;
-        toHostQ.enq(ret);
-        if(verbose) $display("[csrfToHost_wait_for_flush] core %d, val %x", coreId, ret);
-    endrule
-
-    //(* preempts = "hostToCsrf_wait_for_flush, doCommit" *)
-    //rule hostToCsrf_wait_for_flush((!flush_caches) && iMem.flush_done && dMem.flush_done);
-    //    let v = hosttocsrf_flushfifo.first;
-    //    hosttocsrf_flushfifo.deq;
-    //    csrf.hostToCsrf(v);
-    //    htifStall <= False;
-    //endrule
-`endif
-
-    // try to process fromhost msg, only do this when mfromhost CSR is 0
-    // and we are not processing other msg (e.g. other IPI/fromhost)
-    rule doFromHost(flushPipeSrc == Invalid && fromHostQ.notEmpty && csrf.fromHostZero);
-        flushPipeState <= FlushROB;
-        flushPipeSrc <= HostToCsrf;
-        // XXX don't deq fromHostQ
-        // since mfromhost CSR may be non-zero after flushing pipeline
-    endrule
-
-    // send IPI to outside
-    rule doSendIPI;
-        let c <- csrf.sendIPI;
-        if(verbose) $display("[doSendIPI] core %d, val %x", coreId, c);
-`ifdef FLUSH_CACHES_ON_IPI
-        ipiFlushQ.enq(c);
-        flush_caches <= True;
-`else
-        ipiOutQ.enq(c);
-`endif
-    endrule
-
-`ifdef FLUSH_CACHES_ON_IPI
-    rule doSendIPI_waitFlush(!flush_caches && iMem.flush_done && dMem.flush_done);
-        let c <- toGet(ipiFlushQ).get;
-        ipiOutQ.enq(c);
-        if(verbose) $display("[doSendIPI_waitFlush] core %d, val %x", coreId, c);
-    endrule
-`endif
-
-    // try to process income IPI by first flushing the pipeline
-    // only do this when no other msg is flushing pipeline
-    // it is configurable whether we also wait misp to be zero
-    Bool canAcceptIPI = !waitMsipZero || csrf.msipZero;
-    rule doRecvIPI(flushPipeSrc == Invalid && ipiInQ.notEmpty && canAcceptIPI);
-        flushPipeState <= FlushROB;
-        flushPipeSrc <= InterProcInterrupt;
-        // XXX don't deq ipiInQ
-        // since msip CSR may be non-zero after flushing pipeline
-    endrule
-
-    // set ROB/STB flushed signals 
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule setRobFlushed;
-        robFlushed <= rob.isEmpty_ehrPort0;
-    endrule
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule setStbFlushed;
-        stbFlushed <= stb.isEmpty;
-    endrule
-
-    // FSM for flushing pipeline for incoming fromhost or ipi msg
-    rule doFlushPipe_ROB(flushPipeSrc != Invalid && flushPipeState == FlushROB && robFlushed);
-        flushPipeState <= FlushSTB;
-    endrule
-
-    rule doFlushPipe_STB(flushPipeSrc != Invalid && flushPipeState == FlushSTB && stbFlushed);
-        flushPipeState <= FlushCache;
-        flush_caches <= True;
-    endrule
-
-    rule doFlushPipe_Cache_HostToCsrf(
-        flushPipeSrc == HostToCsrf && flushPipeState == FlushCache
-        && !flush_caches && iMem.flush_done && dMem.flush_done
-    );
-        flushPipeSrc <= Invalid; // resume pipeline
-        if(csrf.fromHostZero) begin
-            // mfromhost is 0, so write it and the fromhost msg is done
-            fromHostQ.deq;
-            csrf.hostToCsrf(fromHostQ.first);
-            htifStall <= False;
-        end
-        // else: don't touch fromHostQ, we will automatically retry when mfromhost == 0
-    endrule
-
-    rule doFlushPipe_Cache_InterProcInterrupt(
-        flushPipeSrc == InterProcInterrupt && flushPipeState == FlushCache
-        && !flush_caches && iMem.flush_done && dMem.flush_done
-    );
-        flushPipeSrc <= Invalid; // resume pipeline
-        if(canAcceptIPI) begin
-            // msip is 0 or we don't wait for msip, so write it and IPI msg is done
-            ipiInQ.deq;
-            csrf.recvIPI;
-        end
-        // else: don't touch ipiInQ, we will automatically retry when msip == 0
     endrule
 
 `ifdef PERF_COUNT
     // incr cycle count
     rule incCycleCnt(doStats);
         cycleCnt.incr(1);
-    endrule
-
-    // incr htif stall time
-    rule incHtifStall(started && htifStall && doStats);
-        htifStallLat.incr(1);
     endrule
 
     // broadcast whether we should collect data
@@ -717,8 +548,6 @@ module mkCore#(CoreId coreId)(Core);
             SupRenameCnt: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
             ExeKillLd, ExeTlbExcep: coreFix.memExeIfc.getPerf(pType);
-            HtifStallCnt: htifStallCnt;
-            HtifStallLat: htifStallLat;
             default: 0;
         endcase);
         exePerfRespQ.enq(PerfResp {
@@ -808,15 +637,16 @@ module mkCore#(CoreId coreId)(Core);
 
     interface CoreReq coreReq;
         method Action start(
-            Bit#(64) startpc, Bool ipi_wait_msip_zero,
+            Bit#(64) startpc,
+            Addr toHostAddr, Addr fromHostAddr,
             Bit#(64) verification_packets_to_ignore,
             Bool send_synchronization_packets
         );
-            commitStage.initVerify(send_synchronization_packets, 0, verification_packets_to_ignore);
+            commitStage.initVerify(send_synchronization_packets, 0,
+                                   verification_packets_to_ignore);
             fetchStage.start(startpc);
             started <= True;
-            waitMsipZero <= ipi_wait_msip_zero;
-            csrf.hostToCsrf(0);
+            mmio.setHtifAddrs(toHostAddr, fromHostAddr);
             // start rename debug
             commitStage.startRenameDebug;
         endmethod
@@ -834,8 +664,6 @@ module mkCore#(CoreId coreId)(Core);
     endinterface
 
     interface CoreIndInv coreIndInv;
-        method ActionValue#(Bit#(64)) to_host = toGet(toHostQ).get;
-
         method debug_verify = commitStage.debug_verify;
 
         method ActionValue#(ProcPerfResp) perfResp;
@@ -856,17 +684,12 @@ module mkCore#(CoreId coreId)(Core);
         method terminate = csrf.terminate;
     endinterface
 
-    interface CoreIPI ipi;
-        method Action recvIPI;
-            ipiInQ.enq(?);
-        endmethod
-        method ActionValue#(CoreId) sendIPI = toGet(ipiOutQ).get;
-    endinterface
-
     interface dCacheToParent = dMem.to_parent;
     interface iCacheToParent = iMem.to_parent;
 
     interface tlbToMem = l2Tlb.toMem;
+
+    interface mmioToPlatform = mmio.toP;
 
     // deadlock check
     interface CoreDeadlock deadlock;

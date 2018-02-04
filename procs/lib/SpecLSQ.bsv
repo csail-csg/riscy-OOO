@@ -92,6 +92,7 @@ typedef struct {
     MemInst          mem_inst; // from decode
     Maybe#(PhyDst)   dst;
     Addr             paddr;
+    Bool             isMMIO; // whether paddr is mmio addr; MMIO access is handled at deq time non-speculatively
     ByteEn           shiftedBE; // store byte enable after shift to align with dword boudary
     // XXX even for Amo this BE **IS** shifted to detect address overlap
     Data             shiftedData; // store data or load result
@@ -99,7 +100,7 @@ typedef struct {
     // for St/Sc: store data after shift data to align with dword boudary
     // for Amo: XXX store data **NOT** shifted, this doesn't affect forwarding to Ld, because AMO never forwards data
     LSQState         state; // only Ld can be non-Idle state
-    Bool             computed; // addr/data have been computed
+    Bool             computed; // paddr/isMMIO/data have been computed
     // reasons for Ld stall, can be non-Invalid only when state == Idle
     Maybe#(LdStQTag) ldDepLSQDeq; // Ld stalled by Lr/Sc/Amo/St for same addr or Reconcile, should wait it to deq
     Maybe#(LdStQTag) ldDepLdEx; // Ld stalled by unexecuted Ld to same addr, should wait it to be issued
@@ -107,7 +108,7 @@ typedef struct {
     Bool             ldInIssueQ; // Ld is in issueQ, can be true only when state == Idle
     Bool             ldKilled; // Ld is killed by older inst (failed speculation), can be true only when state == Done/Executing
     // I don't set computed/depSrc/InIssueQ/ReEx/Killed as separate LSQState to avoid conflicts on the state field
-    Maybe#(SpecTag)  ldSpecTag; // spec tag for load speculation (Ld)
+    Maybe#(SpecTag)  specTag; // spec tag for Ld or MMIO
     SpecBits         spec_bits; // spec bits contain the spec tag of the mem inst itself
     Bool             waitWPResp; // pending on a wrong path load resp (if current entry is Ld/Lr/Sc/Amo, it cannot issue)
 } LSQEntry deriving (Bits, Eq, FShow);
@@ -136,7 +137,7 @@ typedef struct {
 typedef struct {
     Addr pc;
     InstTag inst_tag;
-    Maybe#(SpecTag) ldSpecTag;
+    Maybe#(SpecTag) specTag;
 } LSQKillInfo deriving(Bits, Eq, FShow);
 
 typedef struct {
@@ -161,7 +162,7 @@ typedef struct {
     LSQState        state;
     Bool            computed;
     Bool            ldKilled;
-    Maybe#(SpecTag) ldSpecTag;
+    Maybe#(SpecTag) specTag;
     SpecBits        spec_bits;
     Bool            waitWPResp;
 } LSQDeqEntry deriving (Bits, Eq, FShow);
@@ -181,7 +182,7 @@ interface SpecLSQ;
     // and set the spec tag if it is a load
     // also search for the (oldest) younger load to kill
     method ActionValue#(LSQUpdateResult) update(
-        LdStQTag lsqTag, Addr paddr, ByteEn shiftedBE, Data shiftedData, Maybe#(SpecTag) ldSpecTag
+        LdStQTag lsqTag, Addr paddr, Bool isMMIO, ByteEn shiftedBE, Data shiftedData, Maybe#(SpecTag) specTag
     );
     // issue a load, and remove dependence on this load issue
     method ActionValue#(LSQIssueResult) issue(LdStQTag lsqTag, Addr paddr, ByteEn shiftedBE, SBSearchRes sbRes);
@@ -281,6 +282,12 @@ module mkSpecLSQ(SpecLSQ);
     Integer paddr_enqIss_port = 1;
     Integer paddr_respLd_port = 1;
 
+    Integer mmio_findIss_port = 0;
+    Integer mmio_deq_port = 0;
+    Integer mmio_update_port = 0; // write isMMIO
+    Integer mmio_issue_port = 1;
+    Integer mmio_enqIss_port = 1;
+
     Integer shBE_findIss_port = 0;
     Integer shBE_deq_port = 0;
     Integer shBE_update_port = 0; // write shiftedBE
@@ -340,8 +347,8 @@ module mkSpecLSQ(SpecLSQ);
 
     Integer specTag_getKill_port = 0;
     Integer specTag_deq_port = 0;
-    Integer specTag_update_port = 0; // write ldSpecTag
-    Integer specTag_enq_port = 1; // write ldSpecTag
+    Integer specTag_update_port = 0; // write specTag
+    Integer specTag_enq_port = 1; // write specTag
 
     Integer sb_wrongSpec_port = 0;
     Integer sb_deq_port = 0;
@@ -363,6 +370,7 @@ module mkSpecLSQ(SpecLSQ);
     Vector#(LdStQSize, Reg#(MemInst))             memInst     <- replicateM(mkRegU);
     Vector#(LdStQSize, Reg#(Maybe#(PhyDst)))      dst         <- replicateM(mkRegU);
     Vector#(LdStQSize, Ehr#(2, Addr))             paddr       <- replicateM(mkEhr(?));
+    Vector#(LdStQSize, Ehr#(2, Bool))             isMMIO      <- replicateM(mkEhr(?));
     Vector#(LdStQSize, Ehr#(2, ByteEn))           shiftedBE   <- replicateM(mkEhr(?));
     Vector#(LdStQSize, Ehr#(2, Data))             shiftedData <- replicateM(mkEhr(?));
     Vector#(LdStQSize, Ehr#(3, LSQState))         state       <- replicateM(mkEhr(?));
@@ -372,7 +380,7 @@ module mkSpecLSQ(SpecLSQ);
     Vector#(LdStQSize, Ehr#(3, Maybe#(SBIndex)))  ldDepSB     <- replicateM(mkEhr(?));
     Vector#(LdStQSize, Ehr#(3, Bool))             ldInIssueQ  <- replicateM(mkEhr(?));
     Vector#(LdStQSize, Ehr#(2, Bool))             ldKilled    <- replicateM(mkEhr(?));
-    Vector#(LdStQSize, Ehr#(2, Maybe#(SpecTag)))  ldSpecTag   <- replicateM(mkEhr(?));
+    Vector#(LdStQSize, Ehr#(2, Maybe#(SpecTag)))  specTag     <- replicateM(mkEhr(?));
     Vector#(LdStQSize, Ehr#(2, SpecBits))         specBits    <- replicateM(mkEhr(?));
     // wrong-path load filter (must init to all False)
     Vector#(LdStQSize, Reg#(Bool))                waitWPResp  <- replicateM(mkReg(False));
@@ -477,6 +485,7 @@ module mkSpecLSQ(SpecLSQ);
     // (4) not depend on any thing
     // (5) waitWPResp is False
     // (6) not in issueQ
+    // (7) not MMIO
     // Since this rule does not block any other rule, we can let it fire even when it may do nothing
     rule findIssue;
         function Bool canIssue(LdStQTag i);
@@ -488,7 +497,8 @@ module mkSpecLSQ(SpecLSQ);
                 !isValid(ldDepLdEx[i][depLdEx_findIss_port]) &&
                 !isValid(ldDepSB[i][depSB_findIss_port]) && // (4) no dependency
                 !waitWPResp[i] && // (5) not wating wrong path resp
-                !ldInIssueQ[i][inIssQ_findIss_port] // (6) not in issueQ
+                !ldInIssueQ[i][inIssQ_findIss_port] && // (6) not in issueQ
+                !isMMIO[i][mmio_findIss_port] // (7) not MMIO
             );
         endfunction
         Vector#(LdStQSize, LdStQTag) idxVec = genWith(fromInteger); // index vector
@@ -533,6 +543,7 @@ module mkSpecLSQ(SpecLSQ);
         doAssert(!ldInIssueQ[info.tag][inIssQ_enqIss_port], "enq issueQ entry cannot be in issueQ");
         doAssert(!ldKilled[info.tag][killed_enqIss_port], "enq issueQ entry cannot be ldKilled");
         doAssert(!waitWPResp[info.tag], "enq issueQ entry cannot wait for wrong path resp");
+        doAssert(!isMMIO[info.tag][mmio_enqIss_port], "enq issueQ entry cannot be MMIO");
         doAssert(
             !isValid(ldDepLSQDeq[info.tag][depLSQDeq_enqIss_port]) &&
             !isValid(ldDepLdEx[info.tag][depLdEx_enqIss_port]) &&
@@ -623,7 +634,7 @@ module mkSpecLSQ(SpecLSQ);
         ldDepSB[enqP][depSB_enq_port] <= Invalid;
         ldInIssueQ[enqP][inIssQ_enq_port] <= False;
         ldKilled[enqP][killed_enq_port] <= False;
-        ldSpecTag[enqP][specTag_enq_port] <= Invalid;
+        specTag[enqP][specTag_enq_port] <= Invalid;
         specBits[enqP][sb_enq_port] <= newSpecBits;
         // make conflict with incorrect spec
         wrongSpec_enq_conflict.wset(?);
@@ -632,7 +643,7 @@ module mkSpecLSQ(SpecLSQ);
     method enqTag = enqP;
 
     method ActionValue#(LSQUpdateResult) update(
-        LdStQTag lsqTag, Addr pa, ByteEn shift_be, Data shift_data, Maybe#(SpecTag) spec_tag
+        LdStQTag lsqTag, Addr pa, Bool mmio, ByteEn shift_be, Data shift_data, Maybe#(SpecTag) spec_tag
     );
         // sanity check
         doAssert(valid[lsqTag][valid_update_port], "updating entry must be valid");
@@ -648,12 +659,13 @@ module mkSpecLSQ(SpecLSQ);
             default: doAssert(False, "updating entry cannot be fence");
         endcase
 
-        // write computed, paddr, shift be, shift data, ldSpecTag
+        // write computed, paddr, shift be, shift data, specTag
         computed[lsqTag][comp_update_port] <= True;
         paddr[lsqTag][paddr_update_port] <= pa;
+        isMMIO[lsqTag][mmio_update_port] <= mmio;
         shiftedBE[lsqTag][shBE_update_port] <= shift_be;
         shiftedData[lsqTag][shData_update_port] <= shift_data; // data has been shifted for non-AMO
-        ldSpecTag[lsqTag][specTag_update_port] <= spec_tag;
+        specTag[lsqTag][specTag_update_port] <= spec_tag;
 
         // index vec for vector functions
         Vector#(LdStQSize, LdStQTag) idxVec = genWith(fromInteger);
@@ -712,11 +724,12 @@ module mkSpecLSQ(SpecLSQ);
                 data: tag,
                 spec_bits: specBits[tag][sb_update_port]
             });
+            doAssert(!isMMIO[tag][mmio_update_port], "cannot kill MMIO Ld");
             // when the Ld called incorrectSpeculation, it will kill itself
             // and set waitWPResp if it is still executing at that time
-            Maybe#(SpecTag) specTag = ldSpecTag[tag][specTag_update_port];
-            doAssert(isValid(specTag), "killed Ld must have spec tag");
-            doAssert(specBits[tag][sb_update_port][validValue(specTag)] == 1, "sb of killed Ld has itself's spec tag");
+            Maybe#(SpecTag) st = specTag[tag][specTag_update_port];
+            doAssert(isValid(st), "killed Ld must have spec tag");
+            doAssert(specBits[tag][sb_update_port][validValue(st)] == 1, "sb of killed Ld has itself's spec tag");
         end
 
         // make conflict with incorrect spec
@@ -743,6 +756,7 @@ module mkSpecLSQ(SpecLSQ);
         );
         doAssert(!waitWPResp[lsqTag], "issuing Ld cannot wait for WP resp");
         doAssert(!ldKilled[lsqTag][killed_issue_port], "issuing Ld cannot be killed");
+        doAssert(!isMMIO[lsqTag][mmio_issue_port], "issuing Ld cannot be MMIO");
 
         // current deq ptr
         LdStQTag curDeqP = deqP[deqP_issue_port];
@@ -908,7 +922,7 @@ module mkSpecLSQ(SpecLSQ);
         return LSQKillInfo {
             pc: pc[lsqTag],
             inst_tag: instTag[lsqTag],
-            ldSpecTag: ldSpecTag[lsqTag][specTag_getKill_port]
+            specTag: specTag[lsqTag][specTag_getKill_port]
         };
     endmethod
 
@@ -950,12 +964,13 @@ module mkSpecLSQ(SpecLSQ);
             mem_inst: memInst[curDeqP],
             dst: dst[curDeqP],
             paddr: paddr[curDeqP][paddr_deq_port],
+            isMMIO: isMMIO[curDeqP][mmio_deq_port],
             shiftedBE: shiftedBE[curDeqP][shBE_deq_port],
             shiftedData: shiftedData[curDeqP][shData_deq_port],
             state: state[curDeqP][state_deq_port],
             computed: computed[curDeqP][comp_deq_port],
             ldKilled: ldKilled[curDeqP][killed_deq_port],
-            ldSpecTag: ldSpecTag[curDeqP][specTag_deq_port],
+            specTag: specTag[curDeqP][specTag_deq_port],
             spec_bits: specBits[curDeqP][sb_deq_port],
             waitWPResp: waitWPResp[curDeqP]
         };
@@ -967,21 +982,21 @@ module mkSpecLSQ(SpecLSQ);
         doAssert(checkAddrAlign(paddr[curDeqP][paddr_deq_port], memInst[curDeqP].byteEn),
             "addr BE not naturally aligned"
         );
-        if(memInst[curDeqP].mem_func == Ld) begin
-            doAssert(isValid(ldSpecTag[curDeqP][specTag_deq_port]), "Ld must have spec tag");
-            doAssert(specBits[curDeqP][sb_deq_port] == (1 << validValue(ldSpecTag[curDeqP][specTag_deq_port])),
-                "Ld must be spec under itself"
+        if(memInst[curDeqP].mem_func == Ld || isMMIO[curDeqP][mmio_deq_port]) begin
+            doAssert(isValid(specTag[curDeqP][specTag_deq_port]), "Ld or MMIO must have spec tag");
+            doAssert(specBits[curDeqP][sb_deq_port] == (1 << validValue(specTag[curDeqP][specTag_deq_port])),
+                "Ld or MMIO must be spec under itself"
             );
         end
         else begin
-            doAssert(!isValid(ldSpecTag[curDeqP][specTag_deq_port]), "non Ld cannot have spec tag");
+            doAssert(!isValid(specTag[curDeqP][specTag_deq_port]), "non Ld cannot have spec tag");
             doAssert(specBits[curDeqP][sb_deq_port] == 0, "non Ld cannot under speculation");
         end
         case(memInst[curDeqP].mem_func)
             Ld: begin
-                doAssert(!waitWPResp[curDeqP] && state[curDeqP][state_deq_port] == Done && !ldKilled[curDeqP][killed_deq_port],
-                    "Ld must be done, cannot wait for wrong path resp, cannot be killed"
-                );
+                doAssert(!waitWPResp[curDeqP] && !ldKilled[curDeqP][killed_deq_port] &&
+                         state[curDeqP][state_deq_port] == (isMMIO[curDeqP][mmio_deq_port] ? Idle : Done),
+                         "Ld cannot wait for wrong path resp, cannot be killed; MMIO Ld is idle; non-MMIO Ld is done");
             end
             St: begin
                 doAssert(state[curDeqP][state_deq_port] == Idle && computed[curDeqP][comp_deq_port],
@@ -1047,14 +1062,14 @@ module mkSpecLSQ(SpecLSQ);
             killQ.specUpdate.correctSpeculation(mask);
         endmethod
 
-        method Action incorrectSpeculation(SpecTag specTag);
+        method Action incorrectSpeculation(SpecTag st);
             // idx vec
             Vector#(LdStQSize, LdStQTag) idxVec = genWith(fromInteger);
 
             // clear wrong path LSQ entries & set wrong path load filter
             function Action incorrectSpec(LdStQTag i);
             action
-                if(specBits[i][sb_wrongSpec_port][specTag] == 1) begin
+                if(specBits[i][sb_wrongSpec_port][st] == 1) begin
                     valid[i][valid_wrongSpec_port] <= False;
                     // set wrong path load resp filter
                     if(valid[i][valid_wrongSpec_port] && state[i][state_wrongSpec_port] == Executing) begin
@@ -1067,13 +1082,13 @@ module mkSpecLSQ(SpecLSQ);
             joinActions(map(incorrectSpec, idxVec));
 
             // kill entries in issueQ and killQ
-            issueQ.specUpdate.incorrectSpeculation(specTag);
-            killQ.specUpdate.incorrectSpeculation(specTag);
+            issueQ.specUpdate.incorrectSpeculation(st);
+            killQ.specUpdate.incorrectSpeculation(st);
 
             // change enqP: make valid entries always consecutive
             // search for the oldest **VALID** entry being killed
             function Bool killValid(LdStQTag i);
-                return valid[i][valid_wrongSpec_port] && specBits[i][sb_wrongSpec_port][specTag] == 1;
+                return valid[i][valid_wrongSpec_port] && specBits[i][sb_wrongSpec_port][st] == 1;
             endfunction
             Vector#(LdStQSize, Bool) isKillValid = map(killValid, idxVec);
             // start finding the oldest valid entry being killed

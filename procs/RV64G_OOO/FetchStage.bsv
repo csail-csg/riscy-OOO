@@ -47,6 +47,7 @@ import TlbTypes::*;
 import ITlb::*;
 import CCTypes::*;
 import L1CoCache::*;
+import MMIOInst::*;
 
 interface FetchStage;
     // pipeline
@@ -55,6 +56,7 @@ interface FetchStage;
     // tlb and mem connections
     interface ITlb iTlbIfc;
     interface ICoCache iMemIfc;
+    interface MMIOInstToCore mmioIfc;
 
     // starting and stopping
     method Action start(Addr pc);
@@ -95,6 +97,7 @@ typedef struct {
     Addr phys_pc;
     Addr pred_next_pc;
     Maybe#(Exception) cause;
+    Bool access_mmio; // inst fetch from MMIO
     Bool decode_epoch;
     Epoch main_epoch;
 } Fetch2ToFetch3 deriving(Bits, Eq, FShow);
@@ -174,6 +177,7 @@ module mkFetchStage(FetchStage);
     // TLB and Cache connections
     ITlb iTlb <- mkITlb;
     ICoCache iMem <- mkICoCache;
+    MMIOInst mmio <- mkMMIOInst;
     Server#(Addr, TlbResp) tlb_server = iTlb.to_proc;
     Server#(Addr, Vector#(SupSize, Maybe#(Instruction))) mem_server = iMem.to_proc;
 
@@ -205,18 +209,6 @@ module mkFetchStage(FetchStage);
     endrule
 `endif
 
-    //rule debugEmptyness;
-    //    if(verbose && !f12f2.notFull) $display("First fifo f12f2 full");
-    //endrule
-    //rule debugEmptyness2;
-    //    if(!f22f3.notEmpty) begin
-    //        //$fdisplay(stdout, "out_fifo between decode and renaming is empty");
-    //    end
-    //endrule
-    //rule debugEMptyness3;
-    //    if (verbose && !out_fifo.notEmpty) $display("superscalar out fifo full");
-    //endrule
-
     // We don't send req to TLB when waiting for redirect or TLB flush
     // Since there is no FIFO between doFetch1 and TLB,
     // when OOO commit stage wait TLB idle and change VM CSR / signal flush TLB,
@@ -226,6 +218,9 @@ module mkFetchStage(FetchStage);
 
         // Chain of prediction for the next instructions
         // We need a BTB with a register file with enough ports!
+        // TODO instead of cascading predictions, we can always feed pc+4*i
+        // into predictor, because we will break superscaler fetch if nextpc !=
+        // pc+4
         Vector#(SupSize, Addr) pred_future_pc = newVector;
         pred_future_pc[0] = nextAddrPred.predPc(pc);
         for (Integer i = 1; i < valueof(SupSize); i = i+1) begin
@@ -240,7 +235,6 @@ module mkFetchStage(FetchStage);
             Bool notLastInst = getLineInstOffset(pc + fromInteger(4*i)) != maxBound;
             Bool noJump = pred_future_pc[i] == pc + fromInteger(4*(i+1));
             return (!(notLastInst && noJump));
-            //return (!((pc+fromInteger(4*i))[5:2]!= 4'b1111 && pred_future_pc[i] == pc + fromInteger(4*(i+1))));
         endfunction
 
         posLastSup = fromMaybe(fromInteger(valueof(SupSize) - 1), find(findNextPc(pc), indexes));
@@ -264,10 +258,28 @@ module mkFetchStage(FetchStage);
 
         // Get TLB response
         match {.phys_pc, .cause} <- tlb_server.response.get;
+
+        // Access main mem or boot rom
+        Bool access_mmio = False;
         if (!isValid(cause)) begin
-            $display("Send request to memory");
-            // Send ICache request if no exception
-            mem_server.request.put(phys_pc);
+            case(mmio.getFetchTarget(phys_pc))
+                MainMem: begin
+                    // Send ICache request
+                    mem_server.request.put(phys_pc);
+                end
+                BootRom: begin
+                    // Send MMIO req. Luckily boot rom is also aligned with
+                    // cache line size, so all nbSup+1 insts can be fetched
+                    // from boot rom. It won't happen that insts fetched from
+                    // boot rom is less than requested.
+                    mmio.bootRomReq(phys_pc, nbSup);
+                    access_mmio = True;
+                end
+                default: begin
+                    // Access fault
+                    cause = Valid (InstAccessFault);
+                end
+            endcase
         end
 
         let out = Fetch2ToFetch3 {
@@ -275,6 +287,7 @@ module mkFetchStage(FetchStage);
             phys_pc: phys_pc,
             pred_next_pc: in.pred_next_pc,
             cause: cause,
+            access_mmio: access_mmio,
             decode_epoch: in.decode_epoch,
             main_epoch: in.main_epoch };
         f22f3.enq(tuple2(nbSup,out));
@@ -282,16 +295,24 @@ module mkFetchStage(FetchStage);
     endrule
 
     rule doFetch3;
-        let {nbSup, fetch3In} = f22f3.first;
         f22f3.deq;
+        let {nbSup, fetch3In} = f22f3.first;
         if (verbose) $display("Fetch3 %d",fetch3In.pc);
-        Instruction inst = 0;
 
-        // Get ICache response if no exception
-        Vector#(SupSize,Maybe#(Instruction)) inst_data = replicate(tagged Valid unpack(0));
+        // Get ICache/MMIO response if no exception
+        // In case of exception, we still need to process at least inst_data[0]
+        // (it will be turned to an exception later), so inst_data[0] must be
+        // valid.
+        Vector#(SupSize,Maybe#(Instruction)) inst_data = replicate(tagged Valid (0));
         if(!isValid(fetch3In.cause)) begin
-            if(verbose) $display("get answer from memory %d", fetch3In.pc);
-            inst_data <- mem_server.response.get;
+            if(fetch3In.access_mmio) begin
+                if(verbose) $display("get answer from MMIO %d", fetch3In.pc);
+                inst_data <- mmio.bootRomResp;
+            end
+            else begin
+                if(verbose) $display("get answer from memory %d", fetch3In.pc);
+                inst_data <- mem_server.response.get;
+            end
         end
         if(verbose) $display("epoch instr: %d, epoch main : %d", fetch3In.main_epoch, f_main_epoch);
         
@@ -310,29 +331,18 @@ module mkFetchStage(FetchStage);
             for (Integer i = 0; i < valueof(SupSize); i=i+1) begin
                 if (inst_data[i] != tagged Invalid && fromInteger(i) <= nbSup) begin
                     // get the input to decode
-                    Fetch3ToDecode decIn = ?;
-                    if (fromInteger(i) == (nbSup)) begin
-                        // Get ICache response if no exception
-                        inst = fromMaybe(?,inst_data[i]);
-                        decIn = Fetch3ToDecode {pc: fetch3In.pc+fromInteger(4*i),
-                                              ppc: fetch3In.pred_next_pc,
-                                              decode_epoch: fetch3In.decode_epoch,
-                                              main_epoch: fetch3In.main_epoch,
-                                              inst: inst,
-                                              cause: fetch3In.cause};
-                    end
-                    else begin
-                        inst = fromMaybe(?,inst_data[i]);
-                        decIn = Fetch3ToDecode {pc: fetch3In.pc+fromInteger(4*i),
-                                              ppc: fetch3In.pc+fromInteger(4*(i+1)),
-                                              decode_epoch: fetch3In.decode_epoch,
-                                              main_epoch: fetch3In.main_epoch,
-                                              inst: inst,
-                                              cause: fetch3In.cause};
-                    end
-                    let in = decIn;
+                    let in = Fetch3ToDecode {
+                        pc: fetch3In.pc+fromInteger(4*i),
+                        // last inst, next pc may not be pc+4
+                        ppc: fromInteger(i) == nbSup ? fetch3In.pred_next_pc :
+                                                       fetch3In.pc+fromInteger(4*(i+1)),
+                        decode_epoch: fetch3In.decode_epoch,
+                        main_epoch: fetch3In.main_epoch,
+                        inst: fromMaybe(?,inst_data[i]),
+                        cause: fetch3In.cause
+                    };
                     let cause = in.cause;
-                    $display("%d\n",i);
+                    if (verbose) $display("Decode %d\n",i);
 
                     // do decode and branch prediction
                     // Drop here if does not match the decode_epoch.
@@ -341,8 +351,8 @@ module mkFetchStage(FetchStage);
 
                         let decode_result = decode(in.inst);
 
+                        // update cause if there was not an early detected exception
                         if (!isValid(cause)) begin
-                          //  update cause if there was not an early detected exception
                             cause = decode_result.illegalInst ? tagged Valid IllegalInst : tagged Invalid;
                         end
 
@@ -404,9 +414,15 @@ module mkFetchStage(FetchStage);
                         if (verbose) $display("Decode: ", fshow(out));
                     end
                     else begin
-                        $display("Drop decoded within a superscalar");
+                        if (verbose) $display("Drop decoded within a superscalar");
                         // just drop wrong path instructions
                     end
+                end
+                else if (inst_data[i] == tagged Invalid && fromInteger(i) <= nbSup) begin
+                    // inst num is less than expected; this should not happen
+                    // because both I$ and boot rom are aligned to cache line
+                    // size.
+                    doAssert(False, "Fetched insts not enough");
                 end
             end
 
@@ -432,7 +448,7 @@ module mkFetchStage(FetchStage);
 `endif
         end
         else begin
-            $display("drop in fetch3decode");
+            if (verbose) $display("drop in fetch3decode");
         end
     endrule
 
@@ -447,6 +463,7 @@ module mkFetchStage(FetchStage);
     interface Vector pipelines = out_fifo.deqS;
     interface iTlbIfc = iTlb;
     interface iMemIfc = iMem;
+    interface mmioIfc = mmio.toCore;
 
     method Action start(Addr start_pc);
         pc_reg[0] <= start_pc;

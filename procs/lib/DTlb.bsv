@@ -60,6 +60,7 @@ interface DTlb;
     method Bool flush_done;
     method Action flush;
     method Action updateVMInfo(VMInfo vm);
+    method Bool noPendingReq;
 
     // req/resp with core
     method Action procReq(TlbReq r);
@@ -185,6 +186,8 @@ module mkDTlb(DTlb::DTlb);
     method Action updateVMInfo(VMInfo vm) if(!isValid(miss));
         vm_info <= vm;
     endmethod
+
+    method Bool noPendingReq = !isValid(miss);
 
     // We do not accept new req when flushing flag is set. We also make the
     // guard more restrictive to reduce the time of computing guard, i.e. guard

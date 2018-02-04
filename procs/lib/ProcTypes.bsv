@@ -502,6 +502,9 @@ typedef struct {
 
 // MMIO
 typedef union tagged {
+    // inst fetch: contains the maximum superscaler way to fetch
+    SupWaySel Inst;
+    // data access
     void Ld;
     void St;
     AmoFunc Amo;
@@ -514,7 +517,7 @@ typedef struct {
     // BE, shifted for 64-bit aligned. LOAD, STORE and AMO all need to specify
     // this. We need this for to remove redundant MMIO accesses (for MSIP), and
     // to determine AMO access range (upper 32 bits, lower 32 bits, or full 64
-    // bits)
+    // bits). INST FETCH will not specify this field.
     ByteEn byteEn;
     // For STORE: this is store data shifted to be 64-bit aligned
     // For AMO: this is UNshifted data (like normal mem req)
@@ -531,6 +534,14 @@ typedef struct {
     // For AMO: this is the result that can be directly written into reg, i.e.,
     // for 32-bit access, the result has been shifted and sign-extended.
     Data data;
+} MMIODataPRs deriving(Bits, Eq, FShow);
+
+typedef union tagged {
+    // Resp for INST fetch. A vector entry can be invalid for two reasons: 1)
+    // that entry is not requested, 2) that entry is access fault.
+    Vector#(SupSize, Maybe#(Instruction)) InstFetch;
+    // Resp for DATA access, i.e. LOAD, STORE and AMO
+    MMIODataPRs DataAccess;
 } MMIOPRs deriving(Bits, Eq, FShow);
 
 // req from platform to core, only access MSIP or MTIP bit

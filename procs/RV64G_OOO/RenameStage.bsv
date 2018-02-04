@@ -68,10 +68,10 @@ interface RenameInput;
     interface ReservationStationFpuMulDiv rsFpuMulDivIfc;
     interface ReservationStationMem rsMemIfc;
     interface SpecLSQ lsqIfc;
-    // htif
-    method Bool isHtifStall;
-    // not flushing pipeline by recv host msg or ipi
-    method Bool notFlushingPipe;
+    // pending MMIO req from platform
+    method Bool pendingMMIOPRq;
+    // record that a CSR inst or interrupt is sent to ROB
+    method Action issueCsrInstOrInterrupt;
     // deadlock check
     method Bool checkDeadlock;
     // performance
@@ -159,8 +159,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     // This is because the rename correct path rule is conflict with other rules that redirect
     // If wrong path inst keeps coming in, the rename rule may only kill wrong path, but blocks the redirect rule
     rule doRenaming_wrongPath(
-        !inIfc.isHtifStall && inIfc.notFlushingPipe // stall when flushing pipeline
-        && !epochManager.checkEpoch[0].check(fetchStage.pipelines[0].first.main_epoch) // first wrong path, so at least kill one
+        !epochManager.checkEpoch[0].check(fetchStage.pipelines[0].first.main_epoch) // first wrong path, so at least kill one
     );
         // we stop when we see a correct path inst
         Bool stop = False;
@@ -187,7 +186,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     // check for exceptions and interrupts
     function Maybe#(Trap) getTrap(FromFetchStage x);
         Maybe#(Trap) trap = tagged Invalid;
-        let csr_state = csrf.csrState;
+        let csr_state = csrf.decodeInfo;
         let pending_interrupt = csrf.pending_interrupt;
         let new_exception = checkForException(x.dInst, x.regs, csr_state);
         if (isValid(x.cause)) begin
@@ -220,9 +219,10 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 
     // rename single trap
     rule doRenaming_Trap(
-        !inIfc.isHtifStall && inIfc.notFlushingPipe // stall when flushing pipeline
+        !inIfc.pendingMMIOPRq // stall when MMIO pRq is pending
         && epochManager.checkEpoch[0].check(fetchStage.pipelines[0].first.main_epoch) // correct path
         && isValid(firstTrap) // take trap
+        && rob.isEmpty // stall for ROB empty
     );
         fetchStage.pipelines[0].deq;
         let x = fetchStage.pipelines[0].first;
@@ -236,8 +236,6 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
         let cause = x.cause;
         if(verbose) $display("[doRenaming] trap: ", fshow(x));
 
-        // this may be system inst, stall for ROB empty
-        when(!doReplay(dInst.iType) || rob.isEmpty, noAction);
         // update prev epoch
         epochManager.updatePrevEpoch[0].update(main_epoch);
         // Flip epoch without redirecting
@@ -264,6 +262,10 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 `endif
                                };
         rob.enqPort[0].enq(y);
+        // record if we issue an interrupt
+        if(firstTrap matches tagged Valid (tagged Interrupt .i)) begin
+            inIfc.issueCsrInstOrInterrupt;
+        end
 `ifdef CHECK_DEADLOCK
         renameCorrectPath.send;
 `endif
@@ -272,7 +274,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 
     // rename correct path inst
     rule doRenaming(
-        !inIfc.isHtifStall && inIfc.notFlushingPipe // stall when flushing pipeline
+        !inIfc.pendingMMIOPRq // stall when MMIO pRq is pending
         && epochManager.checkEpoch[0].check(fetchStage.pipelines[0].first.main_epoch) // correct path
         && !isValid(firstTrap) // not trap
     );
@@ -504,6 +506,10 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                         if (needReplay) begin
                             when(rob.isEmpty, noAction);
                             incrEpochWithoutRedirect;
+                            // record if we issue an CSR inst
+                            if(dInst.iType == Csr) begin
+                                inIfc.issueCsrInstOrInterrupt;
+                            end
                             stop = True; // stop after this system inst
                         end
                         

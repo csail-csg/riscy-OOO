@@ -61,6 +61,7 @@ interface ITlb;
     method Bool flush_done;
     method Action flush;
     method Action updateVMInfo(VMInfo vm);
+    method Bool noPendingReq;
 
     // req/resp with core
     interface Server#(Addr, TlbResp) to_proc;
@@ -180,6 +181,8 @@ module mkITlb(ITlb::ITlb);
     method Action updateVMInfo(VMInfo vm) if(!isValid(miss));
         vm_info <= vm;
     endmethod
+
+    method Bool noPendingReq = !isValid(miss);
 
     interface Server to_proc;
         interface Put request;

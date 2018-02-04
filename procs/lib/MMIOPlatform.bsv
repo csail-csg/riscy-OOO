@@ -33,7 +33,7 @@ typedef enum {
 typedef union tagged {
     void Invalid; // invalid req target
     void TimerInterrupt; // auto-generated timer interrupt
-    BootRomIndex BootRom;
+    BootRomIndex BootRom,
     MSIPDataAlignedOffset MSIP;
     MTimCmpDataAlignedOffset MTimeCmp;
     void MTime;
@@ -64,18 +64,31 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
 
     // state machine
     Reg#(MMIOPlatformState) state <- mkReg(Init);
+
     // current req (valid when state != Init && state != SelectReq
     Reg#(MMIOPlatformReq) curReq <- mkRegU;
     Reg#(CoreId) reqCore <- mkRegU;
     Reg#(MMIOFunc) reqFunc <- mkRegU;
     Reg#(ByteEn) reqBE <- mkRegU;
     Reg#(Data) reqData <- mkRegU;
+
+    // For inst fetch on boot rom, we need more bookkeepings
+    // offset of the requested inst within a Data
+    Reg#(DataInstOffset) instSel <- mkRegU;
+    // the current superscaler way being fetched
+    Reg#(SupWaySel) fetchingWay <- mkRegU;
+    // the already fetched insts
+    Vector#(TSub#(SupSize, 1),
+            Reg#(Instruction)) fetchedInsts <- replicateM(mkRegU);
+
     // we need to wait for resp from cores when we need to change MTIP
     Reg#(Vector#(CoreNum, Bool)) waitMTIPCRs <- mkRegU;
+
     // for MSIP access: lower bits and upper bits of requested memory location
     // correspond to two cores. We need to wait resp from these two cores.
     Reg#(Maybe#(CoreId)) waitLowerMSIPCRs <- mkRegU;
     Reg#(Maybe#(CoreId)) waitUpperMSIPCRs <- mkRegU;
+
     // in case of AMO on mtime and mtimecmp, resp may be sent after waiting for
     // CRs, we record the AMO resp at processing time
     Reg#(Data) amoResp <- mkRegU;
@@ -156,6 +169,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 reqFunc <= req.func;
                 reqBE <= req.byteEn;
                 reqData <= req.data;
+                // set up bookkeepings in case of inst fetch (other
+                // bookkeepings are set at processing time)
+                instSel <= truncate(req.addr >> valueof(LgInstSzBytes));
+                fetchingWay <= 0;
                 // find out which MMIO reg/device is being requested
                 DataAlignedAddr addr = getDataAlignedAddr(req.addr);
                 MMIOPlatformReq newReq = Invalid;
@@ -213,9 +230,12 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         end
     endrule
 
-    // handle boot rom access
-    rule processBootRom(
-        curReq matches tagged BootRom .offset &&& state == ProcessReq
+    Bool isInstFetch = reqFunc matches tagged Inst .x ? True : False;
+
+    // handle boot rom data access
+    rule processBootRomData(
+        curReq matches tagged BootRom .offset &&&
+        state == ProcessReq &&& !isInstFetch
     );
         if(reqFunc == Ld) begin
             bootRom.put(0, offset, ?);
@@ -224,23 +244,71 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         else begin
             // boot rom is read only, access fault
             state <= SelectReq;
-            cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
+            cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
+                valid: False, data: ?
+            }));
             if(verbose) begin
                 $display("[Platform - process boot rom] cannot write");
             end
         end
     endrule
 
-    rule waitBootRom(
+    rule waitBootRomData(
         curReq matches tagged BootRom .offset &&& state == WaitResp
     );
         state <= SelectReq;
-        cores[reqCore].pRs.enq(MMIOPRs {
+        cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
             valid: True,
             data: bootRom.read
-        });
+        }));
         if(verbose) begin
             $display("[Platform - boot rom done] data %x", bootRom.read);
+        end
+    endrule
+
+    // handle boot rom inst fetch (in a super slow way ...)
+    rule processBootRomInst(
+        curReq matches tagged BootRom .index &&&
+        state == ProcessReq &&& isInstFetch
+    );
+        bootRom.put(0, index, ?);
+        state <= WaitResp;
+    endrule
+
+    rule waitBootRomInst(
+        curReq matches tagged BootRom .index &&&
+        state == WaitResp &&& isInstFetch
+    );
+        SupWaySel maxWay = 0;
+        if(reqFunc matches tagged Inst .w) begin
+            maxWay = w;
+        end
+        // extract inst from BRAM resp
+        Vector#(DataSzInst, Instruction) instVec = unpack(bootRom.read);
+        Instruction inst = instVec[instSel];
+        // check whether we are done or not
+        if (fetchingWay >= maxWay ||
+            (instSel == maxBound && index == maxBound)) begin
+            // all insts are fetched or boot rom index overflow. we can resp now
+            Vector#(SupSize, Maybe#(Instruction)) resp = replicate(Invalid);
+            for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
+                if(fromInteger(i) < fetchingWay) begin
+                    resp[i] = Valid (fetchedInsts[i]);
+                end
+                else if(fromInteger(i) == fetchingWay) begin
+                    resp[i] = Valid (inst);
+                end
+            end
+            cores[reqCore].enq(InstFetch (resp));
+            state <= SelectReq;
+        end
+        else begin
+            // continue to fetch next inst, save current inst, increment offset
+            fetchedInsts[fetchingWay] <= inst;
+            fetchingWay <= fetchingWay + 1;
+            instSel <= instSel + 1;
+            curReq <= BootRom (instSel == maxBound ? index + 1 : index);
+            state <= ProcessReq;
         end
     endrule
 
@@ -257,10 +325,19 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         Bool upper_valid = {offset, 1'b1} <= fromInteger(valueof(CoreNum) - 1);
         Bool upper_en = reqBE[4];
 
-        if(upper_en && !upper_valid) begin
+        if(isInstFetch) begin
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(InstFetch (replicate(Invalid)));
+            if(verbose) begin
+                $display("[Platform - process msip] cannot do inst fetch");
+            end
+        end
+        else if(upper_en && !upper_valid) begin
             // access invalid core's MSIP, fault
             state <= SelectReq;
-            cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
+            cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
+                valid: False, data: ?
+            }));
             if(verbose) begin
                 $display("[Platform - process msip] access invalid core");
             end
@@ -272,7 +349,9 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             // to LSBs). Besides, we only use the lower 32 bits of reqData.
             if(lower_en && upper_en) begin
                 state <= SelectReq;
-                cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
+                cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
+                    valid: False, data: ?
+                }));
                 if(verbose) begin
                     $display("[Platform - process msip] ",
                              "AMO cannot access 2 cores");
@@ -301,7 +380,9 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             else begin
                 // AMO access nothing: fault
                 state <= SelectReq;
-                cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
+                cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
+                    valid: False, data: ?
+                }));
                 if(verbose) begin
                     $display("[Platform - process msip] access nothing");
                 end
@@ -347,13 +428,13 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             end
         end
         state <= SelectReq;
-        cores[reqCore].pRs.enq(MMIOPRs {
+        cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
             valid: True,
             // for AMO, resp data should be signExtend(lower_data). However,
             // lower_data is just 1 or 0, and upper_data is always 0, so we
             // don't need to do signExtend.
             data: {upper_data, lower_data}
-        });
+        }));
         if(verbose) begin
             $display("[Platform - msip done] lower %x, upper %x",
                      lower_data, upper_data);
@@ -405,9 +486,18 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     rule processMTimeCmp(
         curReq matches tagged MTimeCmp .offset &&& state == ProcessReq
     );
-        if(offset > fromInteger(valueof(CoreNum) - 1)) begin
+        if(isInstFetch) begin
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(InstFetch (replicate(Invalid)));
+            if(verbose) begin
+                $display("[Platform - process mtimecmp] cannot do inst fetch");
+            end
+        end
+        else if(offset > fromInteger(valueof(CoreNum) - 1)) begin
             // access invalid core's mtimecmp, fault
-            cores[reqCore].pRs.enq(MMIOPRs {valid: False, data: ?});
+            cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
+                valid: False, data: ?
+            }));
             state <= SelectReq;
             if(verbose) begin
                 $display("[Platform - process mtimecmp] access fault");
@@ -416,10 +506,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         else begin
             let oldMTimeCmp = mtimecmp[offset];
             if(reqFunc == Ld) begin
-                cores[reqCore].pRs.enq(MMIOPRs {
+                cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
                     valid: True,
                     data: oldMTimeCmp
-                });
+                }));
                 state <= SelectReq;
                 if(verbose) begin
                     $display("[Platform - process mtimecmp] read done, data %x",
@@ -456,11 +546,11 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 end
                 else begin
                     // nothing happens to mtip, just finish this req
-                    cores[reqCore].pRs.enq(MMIOPRs {
+                    cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
                         valid: True,
                         // store doesn't need resp data, just fill in AMO resp
                         data: respData
-                    });
+                    }));
                     state <= SelectReq;
                     if(verbose) begin
                         $display("[Platform - process mtimecmp] ",
@@ -495,8 +585,17 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
 
     // handle mtime access
     rule processMTime(state == ProcessReq && curReq == MTime);
-        if(reqFunc == Ld) begin
-            cores[reqCore].pRs.enq(MMIOPRs {valid: True, data: mtime});
+        if(isInstFetch) begin
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(InstFetch (replicate(Invalid)));
+            if(verbose) begin
+                $display("[Platform - process mtime] cannot do inst fetch");
+            end
+        end
+        else if(reqFunc == Ld) begin
+            cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
+                valid: True, data: mtime
+            }));
             state <= SelectReq;
             if(verbose) begin
                 $display("[Platform - process mtime] read done, data %x",
@@ -535,10 +634,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 state <= WaitResp;
             end
             else begin
-                cores[reqCore].pRs.enq(MMIOPRs {
+                cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
                     valid: True,
                     data: respData // AMO resp
-                });
+                }));
                 state <= SelectReq;
                 if(verbose) begin
                     $display("[Platform - process mtime] ",
@@ -556,10 +655,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 cores[i].cRs.deq;
             end
         end
-        cores[reqCore].pRs.enq(MMIOPRs {
+        cores[reqCore].pRs.enq(DataAccess (MMIOPRs {
             valid: True,
             data: amoResp // recorded amo resp
-        });
+        }));
         state <= SelectReq;
         if(verbose) begin
             $display("[Platform - mtime done]",
@@ -571,79 +670,98 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
 
     // handle tohost access
     rule processToHost(state == ProcessReq && curReq == ToHost);
-        let resp = MMIOPRs {valid: False, data: ?};
-        if(reqFunc == St) begin
-            if(toHostQ.notEmpty) begin
-                doAssert(False, "Cannot write tohost when toHostQ not empty");
-                // this will raise access fault
-            end
-            else begin
-                let data = getWriteData(0);
-                if(data != 0) begin // 0 means nothing for tohost
-                    toHostQ.enq(data);
-                end
-                resp.valid = True;
-            end
-        end
-        else if(reqFunc == Ld) begin
-            resp.valid = True;
-            if(toHostQ.notEmpty) begin
-                resp.data = toHostQ.first;
-            end
-            else begin
-                resp.data = 0;
+        if(isInstFetch) begin
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(InstFetch (replicate(Invalid)));
+            if(verbose) begin
+                $display("[Platform - process tohost] cannot do inst fetch");
             end
         end
         else begin
-            // amo: access fault
-            doAssert(False, "Cannot do AMO on toHost");
-        end
-        state <= SelectReq;
-        cores[reqCore].pRs.enq(resp);
-        if(verbose) begin
-            $display("[Platform - process tohost] resp ", fshow(resp));
+            let resp = MMIODataPRs {valid: False, data: ?};
+            if(reqFunc == St) begin
+                if(toHostQ.notEmpty) begin
+                    doAssert(False,
+                             "Cannot write tohost when toHostQ not empty");
+                    // this will raise access fault
+                end
+                else begin
+                    let data = getWriteData(0);
+                    if(data != 0) begin // 0 means nothing for tohost
+                        toHostQ.enq(data);
+                    end
+                    resp.valid = True;
+                end
+            end
+            else if(reqFunc == Ld) begin
+                resp.valid = True;
+                if(toHostQ.notEmpty) begin
+                    resp.data = toHostQ.first;
+                end
+                else begin
+                    resp.data = 0;
+                end
+            end
+            else begin
+                // amo: access fault
+                doAssert(False, "Cannot do AMO on toHost");
+            end
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(DataAccess (resp));
+            if(verbose) begin
+                $display("[Platform - process tohost] resp ", fshow(resp));
+            end
         end
     endrule
 
     // handle fromhost access
     rule processFromHost(state == ProcessReq && curReq == FromHost);
-        let resp = MMIOPRs {valid: False, data: ?};
-        if(reqFunc == St) begin
-            if(fromHostQ.notEmpty) begin
-                if(getWriteData(fromHostQ.first) == 0) begin
-                    fromHostQ.deq;
-                    resp.valid = True;
-                end
-                else begin
-                    doAssert(False, "Can only write 0 to fromhost");
-                end
-            end
-            else begin
-                if(getWriteData(0) == 0) begin
-                    resp.valid = True;
-                end
-                else begin
-                    doAssert(False, "Can only write 0 to fromhost");
-                end
-            end
-        end
-        else if(reqFunc == Ld) begin
-            resp.valid = True;
-            if(fromHostQ.notEmpty) begin
-                resp.data = fromHostQ.first;
-            end
-            else begin
-                resp.data = 0;
+        if(isInstFetch) begin
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(InstFetch (replicate(Invalid)));
+            if(verbose) begin
+                $display("[Platform - process fromhost] cannot do inst fetch");
             end
         end
         else begin
-            // amo: access fault
-            doAssert(False, "Cannot do AMO on fromHost");
-        end
-        state <= SelectReq;
-        cores[reqCore].pRs.enq(resp);
-        if(verbose) begin
-            $display("[Platform - process fromhost] resp ", fshow(resp));
+            let resp = MMIODataPRs {valid: False, data: ?};
+            if(reqFunc == St) begin
+                if(fromHostQ.notEmpty) begin
+                    if(getWriteData(fromHostQ.first) == 0) begin
+                        fromHostQ.deq;
+                        resp.valid = True;
+                    end
+                    else begin
+                        doAssert(False, "Can only write 0 to fromhost");
+                    end
+                end
+                else begin
+                    if(getWriteData(0) == 0) begin
+                        resp.valid = True;
+                    end
+                    else begin
+                        doAssert(False, "Can only write 0 to fromhost");
+                    end
+                end
+            end
+            else if(reqFunc == Ld) begin
+                resp.valid = True;
+                if(fromHostQ.notEmpty) begin
+                    resp.data = fromHostQ.first;
+                end
+                else begin
+                    resp.data = 0;
+                end
+            end
+            else begin
+                // amo: access fault
+                doAssert(False, "Cannot do AMO on fromHost");
+            end
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(DataAccess (resp));
+            if(verbose) begin
+                $display("[Platform - process fromhost] resp ", fshow(resp));
+            end
         end
     endrule
 

@@ -62,16 +62,17 @@ interface CommitInput;
     interface CsrFile csrfIfc;
     interface StoreBuffer stbIfc;
     // TLB has stopped processing now
-    method Bool tlbNoPendingReqOrWrite;
+    method Bool tlbNoPendingReq;
     // htif
     method Bool isHtifStall;
     // set flags
-    method Action setFlushCaches;
     method Action setFlushTlbs;
     method Action setUpdateVMInfo;
     method Action setFlushReservation;
     // redirect
     method Action redirect_action(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag);
+    // record if we commit a CSR inst or interrupt
+    method Action commitCsrInstOrInterrupt;
     // performance
     method Bool doStats;
     // deadlock check
@@ -118,12 +119,10 @@ typedef struct {
     InstTag instTag;
 } CommitRedirect deriving(Bits, Eq, FShow);
 
-typedef struct {
-    Maybe#(CSR) csr;
-    Data csrData;
-    Bit#(5) fflags;
-    Bool fpuDirty;
-    Bool xDirty;
+typedef union tagged {
+    void Invalid;
+    Tuple2#(CSR, Data) CsrInst; // csr index + data
+    Bit#(5) FpuInst; // fflags
 } CommitWrCsrf deriving(Bits, Eq, FShow);
 
 module mkCommitStage#(CommitInput inIfc)(CommitStage);
@@ -245,8 +244,10 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         Maybe#(IType) prepareFlush = Invalid;
         Maybe#(CommitTrap) doTrap = Invalid;
         Maybe#(CommitRedirect) redirect = Invalid;
-        Maybe#(CommitWrCsrf) wrCsrf = Invalid;
+        CommitWrCsrf wrCsrf = Invalid;
         Maybe#(RenameErrInfo) renameError = Invalid;
+        // track if we have committed an CSR inst or interrupt
+        Bool commitCsrInstOrInterrupt = False;
         // incr committed inst cnt at the end of rule
         SupCnt comInstCnt = 0;
         SupCnt comUserInstCnt = 0;
@@ -308,6 +309,11 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
                             instTag: inst_tag
                         });
                         stop = True; // stop commmit
+                        
+                        // record if we commit an interrupt
+                        if(trap matches tagged Valid (tagged Interrupt .i)) begin
+                            commitCsrInstOrInterrupt = True;
+                        end
 
                         // We should not commit renaming here
                         // There are two cases for an inst to have trap
@@ -335,17 +341,21 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
                     end
                     else begin
                         // Do instruction commit
-                        // write csrf: don't write if redirect for Sret or Mrts
-                        if(iType != Sret && iType != Mrts && csrf.needWr(csr, fflags, will_dirty_fpu_state, False)) begin
-                            // record update csrf
-                            wrCsrf = Valid (CommitWrCsrf {
-                                csr: csr,
-                                csrData: csrData,
-                                fflags: fflags,
-                                fpuDirty: will_dirty_fpu_state,
-                                xDirty: False
-                            });
-                            stop = True; // stop commit
+                        // write csrf: don't write if redirect for Sret or Mret
+                        if(iType != Sret && iType != Mret) begin
+                            if(csr matches tagged Valid .idx) begin
+                                wrCsrf = CsrInst (tuple2(idx, csrData));
+                                stop = True; // stop commit
+                            end
+                            else if(csrf.fpuInstNeedWr(fflags, will_dirty_fpu_state)) begin
+                                wrCsrf = FpuInst (fflags);
+                                stop = True; // stop commit
+                            end
+                        end
+
+                        // record if we commit a CSR inst
+                        if(iType == Csr) begin
+                            commitCsrInstOrInterrupt = True;
                         end
 
                         // every inst here should have been renamed, and won't kill itself
@@ -364,8 +374,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
                             $fdisplay(stderr, "[doCommit - not trap] RENAME ERROR DETECTED!");
                         end
 
-                        // Redirect (Sret and Mrts redirect pc is got from CSRF)
-                        if (iType == Sret || iType == Mrts || doReplay(iType)) begin
+                        // Redirect (Sret and Mret redirect pc is got from CSRF)
+                        if (iType == Sret || iType == Mret || doReplay(iType)) begin
                             // record info for redirect
                             redirect = Valid (CommitRedirect {
                                 iType: iType,
@@ -399,22 +409,28 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         if(prepareFlush matches tagged Valid .iType) begin
             // Do Stuff in a later cycle because the vm update needs to see the effects of writes done in this rule
             if (iType == SFence) begin
-                inIfc.setFlushTlbs; //flush_tlbs <= True;
+                inIfc.setFlushTlbs;
             end
-            if (iType == Fence || iType == SFence) begin
-                inIfc.setFlushCaches; //flush_caches <= True;
-            end
-            inIfc.setUpdateVMInfo; //update_vm_info <= True;
+            inIfc.setUpdateVMInfo;
             // always wait store buffer to be empty
-            // this is needed for write mtohost, Fence, SFence, and probably trap?
             when(stb.isEmpty, noAction);
-            // since there is no younger inst in ROB,
-            // wo wait TLB to finish all requests and become sync with memory
-            // i.e. TLB commits all stores to memory
-            // this is needed probably for trap and send IPI?
-            when(inIfc.tlbNoPendingReqOrWrite, noAction);
+            // We wait TLB to finish all requests and become sync with memory.
+            // Notice that currently TLB is read only, so TLB is always in sync
+            // with memory (i.e., there is no write to commit to memory). Since
+            // all insts younger than this one have been killed, nothing can be
+            // issued to D TLB at this time. Since fetch stage is set to wait
+            // for redirect, fetch1 stage is stalled, and nothing can be issued
+            // to I TLB at this time.  Therefore, we just need to make sure
+            // that I and D TLBs are not handling any miss req. Besides, when I
+            // and D TLBs do not have any miss req, L2 TLB must be idling.
+            when(inIfc.tlbNoPendingReq, noAction);
             // yield load reservation in cache
-            inIfc.setFlushReservation; //flush_reservation <= True;
+            inIfc.setFlushReservation;
+        end
+
+        // record if we commit an interrupt or CSR inst
+        if(commitCsrInstOrInterrupt) begin
+            inIfc.commitCsrInstOrInterrupt;
         end
 
         (* split *)
@@ -430,19 +446,26 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 `endif
         end
         else (* nosplit *) begin
-            // write CSRF: don't write if we redirect for sret or mrts
-            // (only one of wrte csrf, sret, mrts can happen)
+            // write CSRF: don't write if we redirect for sret or mret
+            // (only one of wrte csrf, sret, mret can happen)
             Bool sret = False;
-            Bool mrts = False;
+            Bool mret = False;
             if(redirect matches tagged Valid .r) begin
                 sret = r.iType == Sret;
-                mrts = r.iType == Mrts;
+                mret = r.iType == Mret;
             end
-            if(wrCsrf matches tagged Valid .w &&& !sret &&& !mrts) begin
-                csrf.wr(w.csr, w.csrData, w.fflags, w.fpuDirty, w.xDirty);
+            if(!sret && !mret) begin
+                case(wrCsrf) matches
+                    tagged CsrInst {.idx, .data}: begin
+                        csrf.csrInstWr(idx, data);
+                    end
+                    tagged FpuInst .ff: begin
+                        csrf.fpuInstWr(ff);
+                    end
+                endcase
             end
             // incr inst cnt
-            csrf.instret_inc(comInstCnt);
+            csrf.incInstret(comInstCnt);
             // do redirect
             (* split *)
             if(redirect matches tagged Valid .r) (* nosplit *) begin
@@ -456,8 +479,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
                     end
 `endif
                 end
-                else if(r.iType == Mrts) begin
-                    let next_pc <- csrf.mrts;
+                else if(r.iType == Mret) begin
+                    let next_pc <- csrf.mret;
                     inIfc.redirect_action(next_pc, r.specTag, r.instTag);
 `ifdef PERF_COUNT
                     // performance counter

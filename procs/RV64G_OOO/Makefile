@@ -27,16 +27,8 @@ PROC := RV64G_OOO
 
 # FPGA is congested, use a slow clk...
 USER_CLK_PERIOD ?= 40
-# use superscalar ROB
-SUP_ROB := true
-# use virtual tag in LSQ
-LSQ_VTAG := true
 # always include perf counter
 PERF_COUNT := true
-# branch predictor can be: bht, gselect, tour
-DIR_PRED := gselect
-# 32-entry L1 TLB
-TLB_SIZE := 32
 # dram type in simulation: VC707 or AWSF1
 SIM_DRAM_TYPE := AWSF1
 # use Xilinx FPU IP cores
@@ -96,22 +88,7 @@ CONNECTALFLAGS += --clibdir=$(RISCY_TOOLS)/lib --clib=riscv --clib=fesvr
 CONNECTALFLAGS += -I$(RISCY_TOOLS)/include/spike -I$(RISCY_TOOLS)/include
 
 # core num
-ifeq ($(CORE_NUM),1)
-CONNECTALFLAGS += --bscflags=" -D SINGLE_CORE "
-else
-ifeq ($(CORE_NUM),2)
-CONNECTALFLAGS += --bscflags=" -D DUAL_CORE "
-else
-$(error CORE_NUM can only be 1 or 2)
-endif
-endif
-
-# branch predictor
-dirPredType := $(shell echo $(DIR_PRED) | tr a-z A-Z)
-CONNECTALFLAGS += --bscflags=" -D DIR_PRED_$(dirPredType) "
-
-# tlb size
-CONNECTALFLAGS += --bscflags=" -D TLB_SIZE=$(TLB_SIZE) "
+CONNECTALFLAGS += --bscflags=" -D NUM_CORES=$(CORE_NUM) "
 
 # perf counter
 ifeq ($(PERF_COUNT),true)
@@ -120,16 +97,6 @@ endif
 
 # always use xilinx sync fifo
 CONNECTALFLAGS += --bscflags " -D USE_XILINX_SYNC_FIFO "
-
-# use superscalar ROB
-ifeq ($(SUP_ROB),true)
-CONNECTALFLAGS += --bscflags=" -D SUP_ROB "
-endif
-
-# use virtual tags for LSQ
-ifeq ($(LSQ_VTAG),true)
-CONNECTALFLAGS += --bscflags=" -D LSQ_VTAG "
-endif
 
 # DO NOT use wire-based MSHR; it does not work
 #CONNECTALFLAGS += --bscflags=" -D UNSAFE_L1_CRQ_MSHR -D UNSAFE_L1_PRQ_MSHR -D UNSAFE_LL_CRQ_MSHR "

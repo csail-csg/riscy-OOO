@@ -40,6 +40,10 @@ typedef TDiv#(DataSz, 8) NumBytes;
 typedef TLog#(NumBytes) IndxShamt;
 typedef Vector#(NumBytes, Bool) ByteEn;
 
+typedef TDiv#(DataSz, InstSz) DataSzInst;
+typedef TLog#(DataSzInst) LgDataSzInst;
+typedef Bit#(LgDataSzInst) DataInstOffset;
+
 // These types show up in many places so they are defined here
 typedef enum {Swap, Add, Xor, And, Or, Min, Max, Minu, Maxu, None} AmoFunc deriving(Bits, Eq, FShow, Bounded);
 typedef enum { Ld, St, Lr, Sc, Amo } MemFunc deriving(Bits, Eq, FShow); // only mem access that needs addr translate is included

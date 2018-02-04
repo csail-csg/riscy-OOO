@@ -21,27 +21,30 @@ interface MMIOCoreToPlatform;
 endinterface
 
 interface MMIOCore;
-    // methods to other parts in the core
-    // is the PHYSICAL addr an MMIO addr
+    // is the PHYSICAL mem access addr an MMIO addr
     method Bool isMMIOAddr(Addr addr);
     // for mem exe pipeline to send/recv MMIO req/resp
-    interface FifoEnq#(MMIOCRq) mmioReq;
-    interface FifoDeq#(MMIOPRs) mmioResp;
+    method Action dataReq(MMIOCRq r);
+    method MMIODataPRs dataRespVal;
+    method Action dataRespDeq;
     // set tohost & fromhost addr
     method Action setHtifAddrs(Addr toHost, Addr fromHost);
-
+    // signal that we have a pending pRq, so some parts of the core (e.g.,
+    // rename/issue) may yield themselves.
+    method Bool hasPendingPRq;
     // methods to platform
     interface MMIOCoreToPlatform toP;
 endinterface
 
 interface MMIOCoreInput;
+    // ifc from inst fetch
+    interface MMIOInstToCore fetch;
     // MMIOCore needs to access MSIP and MTIP CSRs
     method Bit#(1) getMSIP;
     method Action setMSIP(Bit#(1) v);
     method Action setMTIP(Bit#(1) v);
-    // guards for accessing MSIP or MTIP
-    method Bool noInflightCSRInst;
-    method Bool noInflightInterrupt;
+    // guard for accessing MSIP or MTIP
+    method Bool noInflightCSRInstOrInterrupt;
     // MMIOCore needs to pass mtime to CSRF
     method Action setTime(Data t);
 endinterface
@@ -50,6 +53,14 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
     // HTIF mem mapped addrs
     Reg#(DataAlignedAddr) toHostAddr <- mkReg(0);
     Reg#(DataAlignedAddr) fromHostAddr <- mkReg(0);
+
+    // FIFOs connected to memory pipeline
+    Fifo#(1, MMIOCRq) dataReqQ <- mkCFFifo;
+    Fifo#(1, MMIOPRs) dataRespQ <- mkCFFifo;
+    // we limit to at most 1 data MMIO req by mem pipeline, so that this req
+    // will not clog requests from other cores
+    Fifo#(1, void) dataPendQ <- mkCFFifo;
+
     // FIFOs connected to platform
     Fifo#(1, MMIOCRq) cRqQ <- mkCFFifo;
     Fifo#(1, MMIOPRs) pRsQ <- mkCFFifo;
@@ -62,7 +73,7 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
     // does not touch MSIP/MTIP. Besides, a inst with exception may be after
     // the MMIO inst that accesses its own MSIP. Waiting for the clear of
     // exception may cause deadlock.
-    rule handlePRq(inIfc.noInflightCSRInst && inIfc.noInflightInterrupt);
+    rule handlePRq(inIfc.noInflightCSRInstOrInterrupt);
         pRqQ.deq;
         MMIOPRq req = pRqQ.first;
         MMIOCRs resp = MMIOCRs {data: ?};
@@ -103,17 +114,62 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
         cRsQ.enq(resp);
     endrule
 
+    // arbitrate requests from fetch stage and mem stage; prioritize mem stage
+    rule sendDataReq;
+        dataReqQ.deq;
+        cRqQ.enq(dataReqQ.first);
+    endrule
+
+    (* preempts = "sendDataReq, sendInstReq" *)
+    rule sendInstReq;
+        fetch.instReq.deq;
+        let {addr, maxWay} = fetch.instReq.first;
+        cRqQ.enq(MMIOCRq {
+            addr: addr,
+            func: Inst (maxWay),
+            byteEn: ?,
+            data: ?
+        });
+    endrule
+
+    // dispatch resp
+    rule sendDataResp(pRsQ.first matches tagged DataAccess .r);
+        pRsQ.deq;
+        dataRespQ.enq(r);
+    endrule
+
+    rule sendInstResp(pRsQ.first matches tagged InstAccess .r);
+        pRsQ.deq;
+        fetch.instResp.enq(r);
+    endrule
+
     method Bool isMMIOAddr(Addr addr);
         let a = getDataAlignedAddr(addr);
         return a < mainMemBaseAddr || a == toHostAddr || a == fromHostAddr;
     endmethod
 
-    interface mmioReq = toFifoEnq(cRqQ);
-    interface mmioResp = toFifoDeq(pRsQ);
+    method Action dataReq(MMIOCRq r);
+        dataReqQ.enq(r);
+        dataPendQ.enq(?);
+    endmethod
+
+    method MMIODataPRs dataRespVal if(dataPendQ.notEmpty);
+        return dataRespQ.first;
+    endmethod
+    
+    method Action dataRespDeq;
+        dataPendQ.deq;
+        dataRespQ.deq;
+    endmethod
 
     method Action setHtifAddrs(Addr toHost, Addr fromHost);
         toHostAddr <= getDataAlignedAddr(toHost);
         fromHostAddr <= getDataAlignedAddr(fromHost);
+        fetch.setHtifAddrs(toHost, fromHost);
+    endmethod
+
+    method Bool hasPendingPRq;
+        return pRqQ.notEmpty;
     endmethod
 
     interface MMIOCoreToPlatform toP;
