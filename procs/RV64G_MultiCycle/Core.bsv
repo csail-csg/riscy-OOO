@@ -219,7 +219,8 @@ module mkCore#(CoreId coreId)(Core);
         method getMSIP = csrf.getMSIP;
         method setMSIP = csrf.setMSIP;
         method setMTIP = csrf.setMTIP;
-        method noInflightCSRInstOrInterrupt = !csrInstInflight && stage != CheckInterrupt;
+        method noInflightCSRInstOrInterrupt = (!csrInstInflight &&
+                                               stage != CheckInterrupt);
         method setTime = csrf.setTime;
     endinterface);
     MMIOCore mmio <- mkMMIOCore(mmioInIfc);
@@ -686,7 +687,7 @@ module mkCore#(CoreId coreId)(Core);
         end
         // get mmio resp
         mmio.dataRespDeq;
-        MMIODataPRs resp = mmio.mmioRespVal;
+        MMIODataPRs resp = mmio.dataRespVal;
         if(resp.valid) begin
             if(srcDstRegs.dst matches tagged Valid .idx) begin
                 Data res;

@@ -3,6 +3,7 @@ import Fifo::*;
 import Types::*;
 import ProcTypes::*;
 import CCTypes::*;
+import CacheUtils::*;
 import MMIOAddrs::*;
 
 interface MMIOInstToCore;
@@ -49,7 +50,7 @@ module mkMMIOInst(MMIOInst);
     method InstFetchTarget getFetchTarget(Addr phyPc);
         let addr = getDataAlignedAddr(phyPc);
         if(addr >= bootRomBaseAddr && addr < bootRomBoundAddr) begin
-            return BoootRom;
+            return BootRom;
         end
         else if(addr >= mainMemBaseAddr &&
                 addr != toHostAddr && addr != fromHostAddr) begin
@@ -73,7 +74,7 @@ module mkMMIOInst(MMIOInst);
 
     interface MMIOInstToCore toCore;
         interface instReq = toFifoDeq(reqQ);
-        interface instRresp = toFifoEnq(respQ);
+        interface instResp = toFifoEnq(respQ);
         method Action setHtifAddrs(Addr toHost, Addr fromHost);
             toHostAddr <= getDataAlignedAddr(toHost);
             fromHostAddr <= getDataAlignedAddr(fromHost);

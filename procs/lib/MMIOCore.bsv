@@ -4,6 +4,7 @@ import MMIOAddrs::*;
 import CacheUtils::*;
 import Fifo::*;
 import Amo::*;
+import MMIOInst::*;
 
 // local MMIO logic in each core (MMIOCore)
 // Every MMIO req from the core is directly passed to the platform, while this
@@ -56,7 +57,7 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
 
     // FIFOs connected to memory pipeline
     Fifo#(1, MMIOCRq) dataReqQ <- mkCFFifo;
-    Fifo#(1, MMIOPRs) dataRespQ <- mkCFFifo;
+    Fifo#(1, MMIODataPRs) dataRespQ <- mkCFFifo;
     // we limit to at most 1 data MMIO req by mem pipeline, so that this req
     // will not clog requests from other cores
     Fifo#(1, void) dataPendQ <- mkCFFifo;
@@ -120,10 +121,10 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
         cRqQ.enq(dataReqQ.first);
     endrule
 
-    (* preempts = "sendDataReq, sendInstReq" *)
+    (* descending_urgency = "sendDataReq, sendInstReq" *)
     rule sendInstReq;
-        fetch.instReq.deq;
-        let {addr, maxWay} = fetch.instReq.first;
+        inIfc.fetch.instReq.deq;
+        let {addr, maxWay} = inIfc.fetch.instReq.first;
         cRqQ.enq(MMIOCRq {
             addr: addr,
             func: Inst (maxWay),
@@ -138,9 +139,9 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
         dataRespQ.enq(r);
     endrule
 
-    rule sendInstResp(pRsQ.first matches tagged InstAccess .r);
+    rule sendInstResp(pRsQ.first matches tagged InstFetch .r);
         pRsQ.deq;
-        fetch.instResp.enq(r);
+        inIfc.fetch.instResp.enq(r);
     endrule
 
     method Bool isMMIOAddr(Addr addr);
@@ -165,7 +166,7 @@ module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
     method Action setHtifAddrs(Addr toHost, Addr fromHost);
         toHostAddr <= getDataAlignedAddr(toHost);
         fromHostAddr <= getDataAlignedAddr(fromHost);
-        fetch.setHtifAddrs(toHost, fromHost);
+        inIfc.fetch.setHtifAddrs(toHost, fromHost);
     endmethod
 
     method Bool hasPendingPRq;

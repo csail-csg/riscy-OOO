@@ -3,6 +3,7 @@ import Vector::*;
 import Fifo::*;
 import Types::*;
 import ProcTypes::*;
+import CCTypes::*;
 import MMIOAddrs::*;
 import MMIOCore::*;
 import CacheUtils::*;
@@ -49,7 +50,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     Bool verbose = True;
 
     // boot rom
-    BRAM_PORT#(BootRomIndex, Data, NumBytes) bootRom <- mkBRAMCore1(
+    BRAM_PORT#(BootRomIndex, Data) bootRom <- mkBRAMCore1(
         valueOf(TExp#(LgBootRomSzData)), False
     );
     // mtimecmp
@@ -198,14 +199,22 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                     // assume fromhost is of size Data
                     newReq = FromHost;
                 end
+                curReq <= newReq;
+
                 if(newReq != Invalid) begin
                     // process valid req
-                    curReq <= newReq;
                     state <= ProcessReq;
                 end
                 else begin
                     // access fault
-                    cores[i].pRs.enq(MMIOPRs {valid: False, data: ?});
+                    MMIOPRs resp;
+                    if(req.func matches tagged Inst .x) begin
+                        resp = InstFetch (replicate(Invalid));
+                    end
+                    else begin
+                        resp = DataAccess (MMIODataPRs {valid: False, data: ?});
+                    end
+                    cores[i].pRs.enq(resp);
                 end
                 if(verbose) begin
                     $display("[Platform - SelectReq] new req, core %d, req ",
@@ -300,7 +309,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                     resp[i] = Valid (inst);
                 end
             end
-            cores[reqCore].enq(InstFetch (resp));
+            cores[reqCore].pRs.enq(InstFetch (resp));
             state <= SelectReq;
         end
         else begin
@@ -569,12 +578,12 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         curReq matches tagged MTimeCmp .offset &&& state == WaitResp
     );
         cores[offset].cRs.deq;
-        cores[reqCore].pRs.enq(MMIOPRs {
+        cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
             valid: True,
             // store doesn't need resp data, just fill in AMO resp. We cannot
             // recompute AMO resp now, because mtimecmp has changed
             data: amoResp
-        });
+        }));
         state <= SelectReq;
         if(verbose) begin
             $display("[Platform - mtimecmp done]",
@@ -656,7 +665,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 cores[i].cRs.deq;
             end
         end
-        cores[reqCore].pRs.enq(DataAccess (MMIOPRs {
+        cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
             valid: True,
             data: amoResp // recorded amo resp
         }));

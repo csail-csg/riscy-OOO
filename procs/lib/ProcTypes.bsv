@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 `include "ProcConfig.bsv"
+import Vector::*;
 import Types::*;
 import FShow::*;
 import DefaultValue::*;
