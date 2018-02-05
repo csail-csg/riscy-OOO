@@ -84,6 +84,7 @@ typedef struct {
     Data origData; // unshifted data just for verification packet
 `endif
     Addr vaddr; // virtual addr
+    Bool misaligned;
     // speculation
     Maybe#(SpecTag) spec_tag;
 } MemExeToFinish deriving(Bits, Eq, FShow);
@@ -317,11 +318,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
         // get shifted data and BE
         // we can use virtual addr to shift, since page size > dword size
+        ByteEn origBE = lsq.getOrigBE(x.ldstq_tag);
         function Tuple2#(ByteEn, Data) getShiftedBEData(Addr addr, ByteEn be, Data d);
             Bit#(TLog#(NumBytes)) byteOffset = truncate(addr);
             return tuple2(unpack(pack(be) << byteOffset), d << {byteOffset, 3'b0});
         endfunction
-        let {shiftBE, shiftData} = getShiftedBEData(vaddr, lsq.getOrigBE(x.ldstq_tag), data);
+        let {shiftBE, shiftData} = getShiftedBEData(vaddr, origBE, data);
 
         // go to next stage
         exeToFinQ.enq(ToSpecFifo {
@@ -335,6 +337,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
                 origData: data,
 `endif
                 vaddr: vaddr,
+                misalgined: memAddrMisaligned(vaddr, origBE),
                 spec_tag: x.spec_tag
             },
             spec_bits: regToExe.spec_bits
@@ -354,6 +357,18 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
         if(verbose) $display("  [doFinishMem - dTlb response] paddr %8x", paddr);
         if(isValid(cause) && verbose) $display("  [doFinishMem - dTlb response] PAGEFAULT!");
+
+        // check misalignment
+        if(!isValid(cause) && x.misaligned) begin
+            case(x.mem_func)
+                Ld, Lr: begin
+                    cause = Valid (LoadAddrMisaligned);
+                end
+                default: begin
+                    cause = Valid (StoreAddrMisaligned);
+                end
+            endcase
+        end
 
         // check if addr is MMIO (only valid in case of no page fault)
         Bool isMMIO = inIfc.isMMIO(paddr);
@@ -520,12 +535,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doIssueLd(info, False);
     endrule
 
-    function Action memInstSetRobEx(InstTag inst_tag, Data data, Maybe#(Exception) excep);
-    action
-        inIfc.rob_setExecuted_deqLSQ(inst_tag, data, excep, Executed);
-    endaction
-    endfunction
-
     // handle load resp
     rule doRespLd;
         let {t, d} <- toGet(respLdQ).get;
@@ -686,17 +695,17 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
     // deq MMIO from LSQ when valid resp comes
     rule doDeqLSQ_MMIO_deq(lsqDeqEn.isMMIO && waitLrScAmoMMIOResp && inIfc.mmioRespVal.valid);
+        inIfc.mmioRespDeq;
         // deq LSQ & reset wait bit
         lsq.deq;
         waitLrScAmoMMIOResp <= False;
         // release spec tag
         inIfc.correctSpec_deqLSQ(validValue(lsqDeqEn.specTag));
         // get resp (may shift data)
-        inIfc.mmioRespDeq;
         let d = inIfc.mmioRespVal.data;
         Data resp = (case(lsqDeqEn.mem_inst.mem_func)
-            Ld: return gatherLoad(lsqDeqEn.paddr, lsqDeqEn.mem_inst.byteEn, lsqDeqEn.mem_inst.unsignedLd, pRs.data); 
-            Amo: return pRs.data;
+            Ld: return gatherLoad(lsqDeqEn.paddr, lsqDeqEn.mem_inst.byteEn, lsqDeqEn.mem_inst.unsignedLd, d);
+            Amo: return d;
             default: return ?;
         endcase);
         // write reg file & set ROB as Executed
@@ -708,6 +717,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endrule
 
     rule doDeqLSQ_MMIO_fault(lsqDeqEn.isMMIO && waitLrScAmoMMIOResp && !inIfc.mmioRespVal.valid)
+        inIfc.mmioRespDeq;
         // reset wait bit
         waitLrScAmoMMIOResp <= False;
         // raise access fault

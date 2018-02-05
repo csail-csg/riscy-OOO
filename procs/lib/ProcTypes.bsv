@@ -51,15 +51,11 @@ typedef Bit#(TAdd#(1, TLog#(SingleScalarSize))) SingleScalarLen;
 // This indicates older/younger inst
 typedef Bit#(TLog#(NumInstTags)) InstTime;
 
-`ifdef SUP_ROB
 typedef struct {
     SupWaySel way; // which way in superscalar
     SingleScalarPtr ptr; // pointer within a way
     InstTime t; // inst time in ROB (for dispatch in reservation station)
 } InstTag deriving(Bits, Eq, FShow);
-`else
-typedef Bit#(TLog#(NumInstTags)) InstTag;
-`endif
 
 typedef `SB_SIZE SBSize;
 typedef Bit#(TLog#(SBSize)) SBIndex;

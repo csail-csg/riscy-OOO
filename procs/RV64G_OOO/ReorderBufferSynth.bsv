@@ -25,8 +25,6 @@
 import ReorderBuffer::*;
 import SynthParam::*;
 
-// macro SUP_ROB is controlled by Makefile, currently should not be defined
-
 typedef ReorderBufferRowEhr#(AluExeNum) RobRowSynth;
 (* synthesize *)
 module mkRobRowSynth(RobRowSynth);
@@ -34,7 +32,6 @@ module mkRobRowSynth(RobRowSynth);
     return m;
 endmodule
 
-`ifdef SUP_ROB
 // use superscalar ROB
 
 typedef SupReorderBuffer#(AluExeNum) ReorderBufferSynth;
@@ -45,8 +42,3 @@ module mkReorderBufferSynth(ReorderBufferSynth);
     return m;
 endmodule
 
-`else
-
-error("Single scalar is not maintained");
-
-`endif

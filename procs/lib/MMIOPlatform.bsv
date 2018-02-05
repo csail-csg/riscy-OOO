@@ -33,7 +33,7 @@ typedef enum {
 typedef union tagged {
     void Invalid; // invalid req target
     void TimerInterrupt; // auto-generated timer interrupt
-    BootRomIndex BootRom,
+    BootRomIndex BootRom;
     MSIPDataAlignedOffset MSIP;
     MTimCmpDataAlignedOffset MTimeCmp;
     void MTime;
@@ -49,7 +49,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     Bool verbose = True;
 
     // boot rom
-    BRAM_PORT_BE#(BootRomIndex, Data, NumBytes) bootRom <- mkBRAMCore1BE(
+    BRAM_PORT#(BootRomIndex, Data, NumBytes) bootRom <- mkBRAMCore1(
         valueOf(TExp#(LgBootRomSzData)), False
     );
     // mtimecmp
@@ -238,7 +238,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         state == ProcessReq &&& !isInstFetch
     );
         if(reqFunc == Ld) begin
-            bootRom.put(0, offset, ?);
+            bootRom.put(False, offset, ?);
             state <= WaitResp;
         end
         else begin
@@ -254,7 +254,8 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     endrule
 
     rule waitBootRomData(
-        curReq matches tagged BootRom .offset &&& state == WaitResp
+        curReq matches tagged BootRom .offset &&&
+        state == WaitResp &&& !isInstFetch
     );
         state <= SelectReq;
         cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
@@ -271,7 +272,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         curReq matches tagged BootRom .index &&&
         state == ProcessReq &&& isInstFetch
     );
-        bootRom.put(0, index, ?);
+        bootRom.put(False, index, ?);
         state <= WaitResp;
     endrule
 
@@ -766,7 +767,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
     endrule
 
     method Action bootRomInitReq(BootRomIndex idx, Data data) if(state == Init);
-        bootRom.put(maxBound, idx, data);
+        bootRom.put(True, idx, data);
         bootRomInitRespQ.enq(?);
     endmethod
 

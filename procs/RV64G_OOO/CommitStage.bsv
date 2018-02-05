@@ -63,8 +63,6 @@ interface CommitInput;
     interface StoreBuffer stbIfc;
     // TLB has stopped processing now
     method Bool tlbNoPendingReq;
-    // htif
-    method Bool isHtifStall;
     // set flags
     method Action setFlushTlbs;
     method Action setUpdateVMInfo;
@@ -175,11 +173,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     PulseWire commitUserInst <- mkPulseWire;
 
     function CommitStuck commitStuck;
-`ifdef SUP_ROB
         let x = rob.deqPort[0].deq_data;
-`else
-        let x = rob.deq_data;
-`endif
         return CommitStuck {
             pc: x.pc,
             iType: x.iType,
@@ -188,8 +182,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             specBits: x.spec_bits,
             specTag: x.spec_tag,
             stbEmpty: stb.isEmpty,
-            prv: csrf.csrState.prv,
-            htifStall: inIfc.isHtifStall
+            prv: csrf.decodeInfo.prv,
+            htifStall: False
         };
     endfunction
 

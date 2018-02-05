@@ -76,6 +76,7 @@ import CCTypes::*;
 import L1CoCache::*;
 import L1Bank::*;
 import IBank::*;
+import MMIOCore::*;
 import RenameStage::*;
 import CommitStage::*;
 import Bypass::*;
@@ -157,11 +158,11 @@ module mkCore#(CoreId coreId)(Core);
 
     // back end
     RFileSynth rf <- mkRFileSynth;
-    CsrFile csrf <- mkCsrFileWithId(zeroExtend(coreId)); // hartid in CSRF should be core id
+    CsrFile csrf <- mkCsrFile(zeroExtend(coreId)); // hartid in CSRF should be core id
     RegRenamingTable regRenamingTable <- mkRegRenamingTable;
     EpochManager epochManager <- mkEpochManager;
     SpecTagManager specTagManager <- mkSpecTagManager;
-    ReorderBufferSynth rob <- mkReorderBufferSynth; // super v.s. single scalar ROB is controlled by macro SUP_ROB
+    ReorderBufferSynth rob <- mkReorderBufferSynth;
 
     // We have two types of pipeline:
     // - One type recv bypass and early wakeup: we call it **aggressive** pipeline
@@ -425,7 +426,6 @@ module mkCore#(CoreId coreId)(Core);
         interface csrfIfc = csrf;
         interface stbIfc = stb;
         method tlbNoPendingReq = iTlb.noPendingReq && dTlb.noPendingReq;
-        method isHtifStall = False;
         method setFlushTlbs = flush_tlbs._write(True);
         method setUpdateVMInfo = update_vm_info._write(True);
         method setFlushReservation = flush_reservation._write(True);

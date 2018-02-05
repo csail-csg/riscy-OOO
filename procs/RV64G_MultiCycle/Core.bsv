@@ -58,6 +58,7 @@ import L1CoCache::*;
 import L1Bank::*;
 import IBank::*;
 import MMIOCore::*;
+import MMIOInst::*;
 
 // for legacy debug types
 import FetchStage::*;
@@ -212,20 +213,21 @@ module mkCore#(CoreId coreId)(Core);
     DCoCache dMem <- mkDCoCache(procRespIfc);
 
     // MMIO
+    MMIOInst mmioInst <- mkMMIOInst;
     MMIOCoreInput mmioInIfc = (interface MMIOCoreInput;
+        interface fetch = mmioInst.toCore;
         method getMSIP = csrf.getMSIP;
         method setMSIP = csrf.setMSIP;
         method setMTIP = csrf.setMTIP;
-        method noInflightCSRInst = !csrInstInflight;
-        method noInflightInterrupt = stage != CheckInterrupt;
+        method noInflightCSRInstOrInterrupt = !csrInstInflight && stage != CheckInterrupt;
         method setTime = csrf.setTime;
     endinterface);
     MMIOCore mmio <- mkMMIOCore(mmioInIfc);
 
     // flags to flush
-    Reg#(Bool)  flush_tlbs <- mkReg(False);
-    Reg#(Bool)  update_vm_info <- mkReg(False);
-    Reg#(Bool)  flush_reservation <- mkReg(False);
+    Reg#(Bool) flush_tlbs <- mkReg(False);
+    Reg#(Bool) update_vm_info <- mkReg(False);
+    Reg#(Bool) flush_reservation <- mkReg(False);
 
     // performance (dummy)
     FIFO#(ProcPerfReq) perfReqQ <- mkFIFO1;
@@ -313,16 +315,18 @@ module mkCore#(CoreId coreId)(Core);
 
     rule doFetchICache(stage == FetchICache);
         let {phy_pc, cause} <- iTlb.to_proc.response.get;
-        if(verbose) $display("[doFetchICache] phy PC %x, exception ", phy_pc, fshow(cause));
+        let target = mmioInst.getFetchTarget(phy_pc);
+        if(!isValid(cause) && target == Fault) begin
+            cause = Valid (InstAccessFault);
+        end
+        if(verbose) begin
+            $display("[doFetchICache] phy PC %x, exception ",
+                     phy_pc, fshow(cause));
+        end
         if(!isValid(cause)) begin
             // PC translation succeeds, req I$ or boot rom
-            if(mmio.isMMIOAddr(phy_pc)) begin
-                mmio.mmioReq.enq(MMIOCRq {
-                    addr: phy_pc,
-                    func: Ld,
-                    byteEn: replicate(True),
-                    data: ?
-                });
+            if(target == BootRom) begin
+                mmioInst.bootRomReq(phy_pc, 0); // just request 1 inst
                 instFromMMIO <= True;
             end
             else begin
@@ -339,21 +343,13 @@ module mkCore#(CoreId coreId)(Core);
     endrule
 
     // since MMIO checks if CSRXXX inst is inflight, we just stop issue if
-    // MMIO can handle pRq. Technically we don't need to, because rule ordering
-    // will take car of these things.
-    (* preempts = "mmio.handlePRq, doDecode" *)
-    rule doDecode(stage == Decode);
+    // MMIO can handle pRq.
+    rule doDecode(stage == Decode && !mmio.hasPendingPRq);
         // retrieve fetched inst
         Maybe#(Instruction) fetchedInst = Invalid;
         if(instFromMMIO) begin
-            mmio.mmioResp.deq;
-            MMIOPRs resp = mmio.mmioResp.first;
-            if(resp.valid) begin
-                // data from Boot Rom is 64-bit aligned, we choose the lower or
-                // upper 32-bit, dependeing on pcReg[2]
-                Vector#(2, Instruction) insts = unpack(resp.data);
-                fetchedInst = Valid (insts[pcReg[2]]);
-            end
+            Vector#(SupSize, Maybe#(Instruction)) insts <- mmioInst.bootRomResp;
+            fetchedInst = insts[0];
         end
         else begin
             // I$ may return multiple insts, we only do 1 inst
@@ -603,7 +599,7 @@ module mkCore#(CoreId coreId)(Core);
                     // amo use unshifted data
                     data: mem.mem_func == Amo ? amoData : tpl_2(shiftedBeData)
                 };
-                mmio.mmioReq.enq(r);
+                mmio.dataReq(r);
                 stage <= ExeMMIOResp;
                 if(verbose) begin
                     $display("[doExeTlbResp] paddr %x, mmio req ",
@@ -689,8 +685,8 @@ module mkCore#(CoreId coreId)(Core);
             doAssert(False, "Must be mem inst");
         end
         // get mmio resp
-        mmio.mmioResp.deq;
-        MMIOPRs resp = mmio.mmioResp.first;
+        mmio.dataRespDeq;
+        MMIODataPRs resp = mmio.mmioRespVal;
         if(resp.valid) begin
             if(srcDstRegs.dst matches tagged Valid .idx) begin
                 Data res;
