@@ -305,7 +305,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
                         stop = True; // stop commmit
                         
                         // record if we commit an interrupt
-                        if(trap matches tagged Valid (tagged Interrupt .i)) begin
+                        if(trap matches tagged Valid (tagged Interrupt .inter)) begin
                             commitCsrInstOrInterrupt = True;
                         end
 
@@ -382,7 +382,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
                         // inst commit counter
                         comInstCnt = comInstCnt + 1;
-                        if(csrf.csrState.prv == 0) begin
+                        if(csrf.decodeInfo.prv == 0) begin
                             comUserInstCnt = comUserInstCnt + 1; // user space inst
                         end
 

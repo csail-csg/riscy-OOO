@@ -351,7 +351,7 @@ module mkL2Tlb(L2Tlb);
         end
     endrule
 
-    method Action updateVMInfo(VMInfo vmI, VMInfo vmD) if(!isValid(pendReq));
+    method Action updateVMInfo(VMInfo vmI, VMInfo vmD); //if(!isValid(pendReq));
         vm_info_I <= vmI;
         vm_info_D <= vmD;
     endmethod

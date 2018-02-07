@@ -164,17 +164,13 @@ module mkCore#(CoreId coreId)(Core);
     SpecTagManager specTagManager <- mkSpecTagManager;
     ReorderBufferSynth rob <- mkReorderBufferSynth;
 
-    // We have two types of pipeline:
-    // - One type recv bypass and early wakeup: we call it **aggressive** pipeline
-    // - Other type does not check bypass or early wakeup: we call it **conservative** pipeline
-    // - all pipelines are aggressive now
     // We have two scoreboards: one conservative and other aggressive
-    // - Aggressive pipeline checks aggressive sb at rename stage,
-    //   and checks conservative sb at reg read stage
-    // - Conservative pipeline checks conservative sb at rename stage
-    // - Both sb must be set ready by all pipelines
-    // - Conservative sb can only be set when data is written into rf
-    // - Aggressive sb can be set early by a pipeline which sends out bypass
+    // - Aggressive sb is checked at rename stage, so inst after rename may be issued early
+    // - Conservative sb is checked at reg read stage, to ensure correctness
+    // Every pipeline should set both sb if it needs to write reg
+    // - Conservative sb is set when data is written into rf
+    // - Aggressive sb is set when pipeline sends out wakeup for reservation staion
+    //   Note that wakeup can be sent early if it knows when the data will be produced
     ScoreboardCons sbCons <- mkScoreboardCons; // conservative sb
     ScoreboardAggr sbAggr <- mkScoreboardAggr; // aggressive sb
 
@@ -229,7 +225,7 @@ module mkCore#(CoreId coreId)(Core);
         endaction
         endfunction
 
-        // write aggressive elements
+        // write aggressive elements + wakupe reservation stations
         function Action writeAggr(Integer wrAggrPort, PhyRIndx dst);
         action
             sbAggr.setReady[wrAggrPort].put(dst);
@@ -306,6 +302,7 @@ module mkCore#(CoreId coreId)(Core);
             method rob_setExecuted_doFinishMem = rob.setExecuted_doFinishMem;
             method rob_setExecuted_deqLSQ = rob.setExecuted_deqLSQ;
             method rob_setLdSpecBit = rob.setLdSpecBit;
+            method isMMIOAddr = mmio.isMMIOAddr;
             method mmioReq = mmio.dataReq;
             method mmioRespVal = mmio.dataRespVal;
             method mmioRespDeq = mmio.dataRespDeq;
@@ -314,14 +311,15 @@ module mkCore#(CoreId coreId)(Core);
                 // stop fetch until redirect
                 fetchStage.setWaitRedirect;
             endmethod
-            method setRegReadyAggr_cache = writeAggr(cacheWrAggrPort);
+            method setRegReadyAggr_mem = writeAggr(memWrAggrPort);
             method setRegReadyAggr_forward = writeAggr(forwardWrAggrPort);
-            method writeRegFile_Ld = writeCons(ldWrConsPort);
-            method writeRegFile_LrScAmoMMIO = writeCons(lrScAmoWrConsPort);
+            method writeRegFile = writeCons(memWrConsPort);
+            //method writeRegFile_LrScAmoMMIO = writeCons(lrScAmoWrConsPort);
             method redirect_action = redirectFunc;
             method correctSpec_doFinishMem = globalSpecUpdate.correctSpec[finishMemCorrectSpecPort].put;
             method correctSpec_deqLSQ = globalSpecUpdate.correctSpec[deqLSQCorrectSpecPort].put;
             method incorrectSpec = globalSpecUpdate.incorrectSpec;
+            method conflictWrongSpec = globalSpecUpdate.conflictWrongSpec[lsqFirstConflictWrongSpecPort].put(?);
             method doStats = doStatsReg._read;
         endinterface);
         let memExe <- mkMemExePipeline(memExeInput);
@@ -649,10 +647,6 @@ module mkCore#(CoreId coreId)(Core);
             mmio.setHtifAddrs(toHostAddr, fromHostAddr);
             // start rename debug
             commitStage.startRenameDebug;
-        endmethod
-
-        method Action from_host(Bit#(64) v);
-            fromHostQ.enq(v);
         endmethod
 
         method Action perfReq(PerfLocation loc, PerfType t);

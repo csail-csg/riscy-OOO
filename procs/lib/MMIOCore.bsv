@@ -1,4 +1,5 @@
 import Types::*;
+import ConfigReg::*;
 import ProcTypes::*;
 import MMIOAddrs::*;
 import CacheUtils::*;
@@ -52,8 +53,8 @@ endinterface
 
 module mkMMIOCore#(MMIOCoreInput inIfc)(MMIOCore);
     // HTIF mem mapped addrs
-    Reg#(DataAlignedAddr) toHostAddr <- mkReg(0);
-    Reg#(DataAlignedAddr) fromHostAddr <- mkReg(0);
+    Reg#(DataAlignedAddr) toHostAddr <- mkConfigReg(0);
+    Reg#(DataAlignedAddr) fromHostAddr <- mkConfigReg(0);
 
     // FIFOs connected to memory pipeline
     Fifo#(1, MMIOCRq) dataReqQ <- mkCFFifo;

@@ -132,11 +132,11 @@ interface AluExeInput;
     );
 
     // global broadcast methods
-    // set aggressive sb & wake up inst in pipelines that recv bypass 
+    // set aggressive sb & wake up inst in RS
     method Action setRegReadyAggr(PhyRIndx dst);
     // send bypass from exe and finish stage
     interface Vector#(2, SendBypass) sendBypass;
-    // write reg file & set conservative sb & wake up inst in pipelines that do not recv bypass
+    // write reg file & set conservative sb
     method Action writeRegFile(PhyRIndx dst, Data data);
     // redirect
     method Action redirect_action(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag);

@@ -129,7 +129,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     let renameStuck = RenameStuck {
         fetch: fetchStage.getFetchState,
         epoch: epochManager.getEpochState,
-        htifStall: inIfc.isHtifStall
+        htifStall: False
     };
 
     (* fire_when_enabled *)

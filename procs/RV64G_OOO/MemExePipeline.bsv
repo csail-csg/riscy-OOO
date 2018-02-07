@@ -121,9 +121,10 @@ interface MemExeInput;
     method Data csrf_rd(CSR csr);
     // ROB
     method Action rob_setExecuted_doFinishMem(InstTag t, Data data, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
-    method Action rob_setExecuted_deqLSQ(InstTag t, Data res, RobInstState new_state);
+    method Action rob_setExecuted_deqLSQ(InstTag t, Data res, Maybe#(Exception) cause, RobInstState new_state);
     method Action rob_setLdSpecBit(InstTag t, SpecTag specTag);
     // MMIO
+    method Bool isMMIOAddr(Addr a);
     method Action mmioReq(MMIOCRq r);
     method MMIODataPRs mmioRespVal;
     method Action mmioRespDeq;
@@ -131,19 +132,21 @@ interface MemExeInput;
     // incr epoch without redirection (trap happens)
     method Action incrementEpochWithoutRedirect;
 
-    // global broadcase methods
-    // set aggressive sb & wake up inst in pipelines that recv bypass 
-    method Action setRegReadyAggr_cache(PhyRIndx dst);
+    // global broadcast methods
+    // set aggressive sb & wake up RS 
+    method Action setRegReadyAggr_mem(PhyRIndx dst);
     method Action setRegReadyAggr_forward(PhyRIndx dst);
-    // write reg file & set both conservative and aggressive sb & wake up inst
-    method Action writeRegFile_Ld(PhyRIndx dst, Data data);
-    method Action writeRegFile_LrScAmoMMIO(PhyRIndx dst, Data data);
+    // write reg file & set conservative sb
+    method Action writeRegFile(PhyRIndx dst, Data data);
+    //method Action writeRegFile_LrScAmoMMIO(PhyRIndx dst, Data data);
     // redirect
     method Action redirect_action(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag);
     // spec update
     method Action correctSpec_doFinishMem(SpecTag t);
     method Action correctSpec_deqLSQ(SpecTag t);
     method Action incorrectSpec(SpecTag spec_tag, InstTag inst_tag);
+    // We block issuing LR/SC/AMO/MMIO at wrong spec; otherwise scheduling cycle
+    method Action conflictWrongSpec;
 
     // performance
     method Bool doStats;
@@ -204,7 +207,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // this is done only when the resp is not wrong path
         LSQHitInfo info <- lsq.getHit(t);
         if(info.dst matches tagged Valid .dst &&& !info.waitWPResp) begin
-            inIfc.setRegReadyAggr_cache(dst.indx);
+            inIfc.setRegReadyAggr_mem(dst.indx);
         end
     endaction
     endfunction
@@ -337,7 +340,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
                 origData: data,
 `endif
                 vaddr: vaddr,
-                misalgined: memAddrMisaligned(vaddr, origBE),
+                misaligned: memAddrMisaligned(vaddr, origBE),
                 spec_tag: x.spec_tag
             },
             spec_bits: regToExe.spec_bits
@@ -371,7 +374,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         end
 
         // check if addr is MMIO (only valid in case of no page fault)
-        Bool isMMIO = inIfc.isMMIO(paddr);
+        Bool isMMIO = inIfc.isMMIOAddr(paddr);
         // raise access fault in case of MMIO Lr/Sc
         if(!isValid(cause) && isMMIO) begin
             case(x.mem_func)
@@ -541,7 +544,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         LSQRespLdResult res <- lsq.respLd(t, d);
         if(verbose) $display("[doRespLd] ", fshow(t), "; ", fshow(d), "; ", fshow(res));
         if(res.dst matches tagged Valid .dst) begin
-            inIfc.writeRegFile_Ld(dst.indx, res.data);
+            inIfc.writeRegFile(dst.indx, res.data);
         end
         if(res.wrongPath) begin
             doAssert(res.dst == Invalid, "wrong path resp cannot write reg");
@@ -633,6 +636,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         };
         reqLrScAmoQ.enq(req);
         if(verbose) $display("[doDeqLSQ_LrScAmo_issue] LrScAmo ", fshow(lsqDeqEn), "; ", fshow(req));
+        // conflict with wrong spec
+        inIfc.conflictWrongSpec;
     endrule
 
     // deq Lr/Sc/Amo from LSQ when resp comes
@@ -650,7 +655,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         endcase);
         // write reg file & set ROB as Executed
         if(lsqDeqEn.dst matches tagged Valid .dst) begin
-            inIfc.writeRegFile_LrScAmoMMIO(dst.indx, resp);
+            inIfc.writeRegFile(dst.indx, resp);
         end
         inIfc.rob_setExecuted_deqLSQ(lsqDeqEn.inst_tag, resp, Invalid, Executed);
         if(verbose) $display("[doDeqLSQ_LrScAmo_deq] ", fshow(lsqDeqEn), "; ", fshow(d), "; ", fshow(resp));
@@ -691,6 +696,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         };
         inIfc.mmioReq(req);
         if(verbose) $display("[doDeqLSQ_MMIO_issue] MMIO ", fshow(lsqDeqEn), "; ", fshow(req));
+        // conflict with wrong spec
+        inIfc.conflictWrongSpec;
     endrule
 
     // deq MMIO from LSQ when valid resp comes
@@ -708,15 +715,16 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             Amo: return d;
             default: return ?;
         endcase);
-        // write reg file & set ROB as Executed
+        // write reg file & wakeup rs (this wakeup is late but MMIO is rare) & set ROB as Executed
         if(lsqDeqEn.dst matches tagged Valid .dst) begin
-            inIfc.writeRegFile_LrScAmoMMIO(dst.indx, resp);
+            inIfc.writeRegFile(dst.indx, resp);
+            inIfc.setRegReadyAggr_mem(dst.indx);
         end
         inIfc.rob_setExecuted_deqLSQ(lsqDeqEn.inst_tag, resp, Invalid, Executed);
-        if(verbose) $display("[doDeqLSQ_MMIO_deq] ", fshow(lsqDeqEn), "; ", fshow(pRs), "; ", fshow(resp));
+        if(verbose) $display("[doDeqLSQ_MMIO_deq] ", fshow(lsqDeqEn), "; ", fshow(d), "; ", fshow(resp));
     endrule
 
-    rule doDeqLSQ_MMIO_fault(lsqDeqEn.isMMIO && waitLrScAmoMMIOResp && !inIfc.mmioRespVal.valid)
+    rule doDeqLSQ_MMIO_fault(lsqDeqEn.isMMIO && waitLrScAmoMMIOResp && !inIfc.mmioRespVal.valid);
         inIfc.mmioRespDeq;
         // reset wait bit
         waitLrScAmoMMIOResp <= False;

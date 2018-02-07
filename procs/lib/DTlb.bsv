@@ -183,7 +183,7 @@ module mkDTlb(DTlb::DTlb);
 
     method Bool flush_done = !needFlush;
 
-    method Action updateVMInfo(VMInfo vm) if(!isValid(miss));
+    method Action updateVMInfo(VMInfo vm);
         vm_info <= vm;
     endmethod
 

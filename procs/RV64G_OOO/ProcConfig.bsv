@@ -34,6 +34,8 @@
 
 `define sizeSup 2 // 2 way superscalar
 
+`define LOG_BOOT_ROM_BYTES 12 // 4KB boot rom
+
 // speculation
 `define DIR_PRED_GSELECT // branch predictor, other options are: BHT, TOUR
 `define NUM_EPOCHS 16

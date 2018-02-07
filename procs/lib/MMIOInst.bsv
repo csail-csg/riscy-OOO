@@ -1,4 +1,5 @@
 import Vector::*;
+import ConfigReg::*;
 import Fifo::*;
 import Types::*;
 import ProcTypes::*;
@@ -36,8 +37,8 @@ module mkMMIOInst(MMIOInst);
     // MMIOInst module will be placed inside the fetch stage and we want to
     // synthesize fetch stage, we need to add these two regs instead of passing
     // in two reg interfaces.
-    Reg#(DataAlignedAddr) toHostAddr <- mkReg(0);
-    Reg#(DataAlignedAddr) fromHostAddr <- mkReg(0);
+    Reg#(DataAlignedAddr) toHostAddr <- mkConfigReg(0);
+    Reg#(DataAlignedAddr) fromHostAddr <- mkConfigReg(0);
     // MMIO requests are handled in a very slow manner at platform, so no need
     // to use large FIFO here
     Fifo#(1, Tuple2#(Addr, SupWaySel)) reqQ <- mkCFFifo;

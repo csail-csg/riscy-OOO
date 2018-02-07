@@ -117,9 +117,9 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum)) provisos(Add#(1, a
     Integer fflags_enq_port = 1; // write fflags
 
     Integer state_deq_port = 0;
-    Integer state_deqLSQ_port = 0; // write state
-    function Integer state_finishAlu_port(Integer i) = 1 + i; // write state
-    Integer state_finishFpuMulDiv_port = 1 + valueof(aluExeNum); // write state
+    function Integer state_finishAlu_port(Integer i) = i; // write state
+    Integer state_finishFpuMulDiv_port = valueof(aluExeNum); // write state
+    Integer state_deqLSQ_port = 1 + valueof(aluExeNum); // write state
     Integer state_finishMem_port = 2 + valueof(aluExeNum); // write state
     Integer state_enq_port = 3 + valueof(aluExeNum); // write state
 
@@ -131,9 +131,9 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum)) provisos(Add#(1, a
 
 `ifdef VERIFICATION_PACKETS
     Integer result_deq_port = 0;
-    Integer result_deqLSQ_port = 0; // write result_data
-    function Integer result_finishAlu_port(Integer i) = 1 + i; // write result_data
-    Integer result_finishFpuMulDiv_port = 1 + valueof(aluExeNum); // write result_data
+    function Integer result_finishAlu_port(Integer i) = i; // write result_data
+    Integer result_finishFpuMulDiv_port = valueof(aluExeNum); // write result_data
+    Integer result_deqLSQ_port = 1 + valueof(aluExeNum); // write result_data
     Integer result_finishMem_port = 2 + valueof(aluExeNum); // write result_data
     Integer result_enq_port = 3 + valueof(aluExeNum); // write result_data
 `endif

@@ -157,6 +157,7 @@ typedef struct {
     MemInst         mem_inst;
     Maybe#(PhyDst)  dst;
     Addr            paddr;
+    Bool            isMMIO;
     ByteEn          shiftedBE;
     Data            shiftedData;
     LSQState        state;
@@ -651,8 +652,8 @@ module mkSpecLSQ(SpecLSQ);
             "updating entry should be in Idle state and not computed yet"
         );
         doAssert(!computed[lsqTag][comp_update_port], "updating entry cannot be computed");
-        doAssert(isValid(spec_tag) == (memInst[lsqTag].mem_func == Ld),
-            "only Ld needs to set spec tag"
+        doAssert(isValid(spec_tag) == (mmio || memInst[lsqTag].mem_func == Ld),
+            "only Ld or MMIO needs to set spec tag"
         );
         case(memInst[lsqTag].mem_func)
             Ld, St, Lr, Sc, Amo: noAction;

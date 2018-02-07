@@ -168,6 +168,18 @@ module mkITlb(ITlb::ITlb);
         miss <= Invalid;
     endrule
 
+    // we check no pending req only at Commit when Fetch1 stage has been
+    // stalled (setWaitRedirect has been called in previous cycle). Note that
+    // Commit calls redirect method which is ordered after Fetch1, so checking
+    // no pending req cannot sequence before Fetch1 which calls iTlb.req.
+    // Therefore, we use a wire to catch the pending req a the beginning of the
+    // cycle. This does not matter because Fetch1 stage has been stalled.
+    Wire#(Bool) no_pending_wire <- mkBypassWire;
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule set_no_pending;
+        no_pending_wire <= !isValid(miss);
+    endrule
+
     method Action flush if(!needFlush);
         needFlush <= True;
         waitFlushP <= False;
@@ -178,11 +190,11 @@ module mkITlb(ITlb::ITlb);
 
     method Bool flush_done = !needFlush;
 
-    method Action updateVMInfo(VMInfo vm) if(!isValid(miss));
+    method Action updateVMInfo(VMInfo vm);
         vm_info <= vm;
     endmethod
 
-    method Bool noPendingReq = !isValid(miss);
+    method Bool noPendingReq = no_pending_wire._read;
 
     interface Server to_proc;
         interface Put request;
