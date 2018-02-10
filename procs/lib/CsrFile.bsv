@@ -337,8 +337,9 @@ module mkCsrFile#(Data hartid)(CsrFile);
     // minstret
     Ehr#(2, Data) minstret_ehr <- mkCsrEhr(0);
     Reg#(Data) minstret_csr = minstret_ehr[0];
-    // mcycle: FIXME we match spike behavior, i.e., use instret as cycle
-    Reg#(Data) mcycle_csr = minstret_csr;
+    // mcycle
+    Ehr#(2, Data) mcycle_ehr <- mkCsrEhr(0);
+    Reg#(Data) mcycle_csr = mcycle_ehr[0];
     // mvendorid
     Reg#(Data) mvendorid_csr = readOnlyReg(0);
     // marchid
@@ -445,6 +446,10 @@ module mkCsrFile#(Data hartid)(CsrFile);
     Reg#(Data) terminate_csr = terminate_module.reg_ifc;
     //// whether performance stats is collected (only need 1 bit)
     //Reg#(Data) stats_reg <- mkConfigReg(0); 
+
+    rule incCycle;
+        mcycle_ehr[1] <= mcycle_ehr[1] + 1;
+    endrule
 
     // Function for getting a csr given an index
     function Reg#(Data) get_csr(CSR csr);
