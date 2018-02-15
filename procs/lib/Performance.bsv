@@ -27,68 +27,70 @@ import FShow::*;
 
 // query performance counters in each stage/module
 typedef enum {
-  LdCnt,
-  LdMissCnt,
-  LdMissLat,
-  StCnt,
-  StMissCnt,
-  StMissLat,
-  AmoCnt,
-  AmoMissCnt,
-  AmoMissLat
+    LdCnt,
+    LdMissCnt,
+    LdMissLat,
+    StCnt,
+    StMissCnt,
+    StMissLat,
+    AmoCnt,
+    AmoMissCnt,
+    AmoMissLat
 } L1PerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
-  TlbAccessCnt,
-  TlbMissCnt,
-  TlbMissLat,
-  TlbFlushCnt
-} TlbPerfType deriving(Bits, Eq, FShow);
+    L1TlbAccessCnt,
+    L1TlbMissCnt,
+    L1TlbMissLat
+} L1TlbPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
-  DecRedirectBr,
-  DecRedirectJmp,
-  DecRedirectJr,
-  DecRedirectOther
+    L2TlbInstMissCnt,
+    L2TlbDataMissCnt
+} L2TlbPerfType deriving(Bits, Eq, FShow);
+
+typedef enum {
+    DecRedirectBr,
+    DecRedirectJmp,
+    DecRedirectJr,
+    DecRedirectOther
 } DecStagePerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
-  SupRenameCnt, // number of cycles that commit user cnt > 1
-  ExeRedirectBr,
-  ExeRedirectJr,
-  ExeRedirectOther,
-  ExeKillLd,
-  ExeTlbExcep,
-  HtifStallCnt,
-  HtifStallLat
+    SupRenameCnt, // number of cycles that rename correct path inst cnt > 1
+    ExeRedirectBr,
+    ExeRedirectJr,
+    ExeRedirectOther,
+    ExeKillLd,
+    ExeTlbExcep
 } ExeStagePerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
-  CycleCnt,
-  InstCnt,
-  UserInstCnt,
-  SupComUserCnt, // number of cycles that commit user cnt > 1
-  ComBrCnt,
-  ComJmpCnt,
-  ComJrCnt,
-  ComRedirect,
-  TrapCnt,
-  SretCnt,
-  MrtsCnt
+    CycleCnt,
+    InstCnt,
+    UserInstCnt,
+    SupComUserCnt, // number of cycles that commit user inst cnt > 1
+    ComBrCnt,
+    ComJmpCnt,
+    ComJrCnt,
+    ComRedirect, // redirect caused by system inst
+    ExcepCnt,
+    InterruptCnt,
+    FlushTlbCnt
 } ComStagePerfType deriving(Bits, Eq, FShow); 
 
 // PerfReq = XXPerfType
 
 typedef struct {
-  perfType pType;
-  Bit#(64) data;
+    perfType pType;
+    Bit#(64) data;
 } PerfResp#(type perfType) deriving(Bits, Eq);
 
 interface Perf#(type perfType);
-  method Action setStatus(Bool doStats); // change whether we collect data
-  method Action req(perfType r);
-  method ActionValue#(PerfResp#(perfType)) resp;
-  method Bool respValid;
+    method Action setStatus(Bool doStats); // change whether we collect data
+    method Action req(perfType r);
+    method ActionValue#(PerfResp#(perfType)) resp;
+    method Bool respValid;
 endinterface
 
 // query performance counters in the whole processor
@@ -96,22 +98,23 @@ typedef Bit#(4) PerfType; // for all XXPerfType
 
 // which stage/module to query
 typedef enum {
-  ICache,
-  DCache,
-  ITlb,
-  DTlb,
-  DecStage,
-  ExeStage,
-  ComStage
+    ICache,
+    DCache,
+    ITlb,
+    DTlb,
+    L2Tlb,
+    DecStage,
+    ExeStage,
+    ComStage
 } PerfLocation deriving(Bits, Eq, FShow);
 
 typedef struct {
-  PerfLocation loc;
-  PerfType pType;
+    PerfLocation loc;
+    PerfType pType;
 } ProcPerfReq deriving(Bits, Eq);
 
 typedef struct {
-  PerfLocation loc;
-  PerfType pType;
-  Bit#(64) data;
+    PerfLocation loc;
+    PerfType pType;
+    Bit#(64) data;
 } ProcPerfResp deriving(Bits, Eq);

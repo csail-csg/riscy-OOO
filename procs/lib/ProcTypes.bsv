@@ -205,8 +205,8 @@ typedef enum {
     CSRtime       = 12'hc01,
     CSRinstret    = 12'hc02,
     // user non-standard CSRs (TODO)
-    CSRterminate  = 12'h800, // terminate (used in Linux boot)
-    //CSRstats     = 12'h0c0, // turn on/off perf counters
+    CSRterminate  = 12'h800, // terminate (used to exit Linux)
+    CSRstats      = 12'h801, // turn on/off perf counters
     // supervisor standard CSRs
     CSRsstatus    = 12'h100,
     // no user trap handler, so no se/ideleg
@@ -252,6 +252,7 @@ function CSR unpackCSR(Bit#(12) x);
         pack(CSR'(CSRtime      )): (CSRtime      );
         pack(CSR'(CSRinstret   )): (CSRinstret   );
         pack(CSR'(CSRterminate )): (CSRterminate );
+        pack(CSR'(CSRstats     )): (CSRstats     );
         pack(CSR'(CSRsstatus   )): (CSRsstatus   );
         pack(CSR'(CSRsie       )): (CSRsie       );
         pack(CSR'(CSRstvec     )): (CSRstvec     );

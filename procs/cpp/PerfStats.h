@@ -109,16 +109,18 @@ public:
         //init(DCache, AmoMissLat, "D$ Amo miss total latency");
 
         // ITlb
-        init(ITlb, TlbAccessCnt, "ITlb access num");
-        init(ITlb, TlbMissCnt, "ITlb miss num");
-        init(ITlb, TlbMissLat, "ITlb miss total latency");
-        init(ITlb, TlbFlushCnt, "ITlb flush num");
+        init(ITlb, L1TlbAccessCnt, "ITlb access num");
+        init(ITlb, L1TlbMissCnt, "ITlb miss num");
+        //init(ITlb, L1TlbMissLat, "ITlb miss total latency");
 
         // DTlb
-        init(DTlb, TlbAccessCnt, "DTlb access num");
-        init(DTlb, TlbMissCnt, "DTlb miss num");
-        init(DTlb, TlbMissLat, "DTlb miss total latency");
-        init(DTlb, TlbFlushCnt, "DTlb flush num");
+        init(DTlb, L1TlbAccessCnt, "DTlb access num");
+        init(DTlb, L1TlbMissCnt, "DTlb miss num");
+        //init(DTlb, L1TlbMissLat, "DTlb miss total latency");
+        
+        // L2Tlb
+        init(L2Tlb, L2TlbInstMissCnt, "L2Tlb inst access miss num");
+        init(L2Tlb, L2TlbDataMissCnt, "L2Tlb data access miss num");
 
         // DecStage
         init(DecStage, DecRedirectBr, "Dec stage redirect branch num");
@@ -133,8 +135,6 @@ public:
         init(ExeStage, ExeRedirectOther, "Exe stage redirect other num");
         init(ExeStage, ExeKillLd, "Exe stage kill load num");
         init(ExeStage, ExeTlbExcep, "Exe stage TLB exception num");
-        init(ExeStage, HtifStallCnt, "HTIF stall num");
-        init(ExeStage, HtifStallLat, "HTIF stall total latency");
 
         // ComStage
         init(ComStage, CycleCnt, "cycles");
@@ -144,10 +144,10 @@ public:
         init(ComStage, ComBrCnt, "branch num");
         init(ComStage, ComJmpCnt, "jump num");
         init(ComStage, ComJrCnt, "jump reg num");
-        init(ComStage, ComRedirect, "Com stage redirect num");
-        init(ComStage, TrapCnt, "trap num");
-        init(ComStage, SretCnt, "sret num");
-        init(ComStage, MrtsCnt, "mrts num");
+        init(ComStage, ComRedirect, "Com stage system inst redirect num");
+        init(ComStage, ExcepCnt, "exception num");
+        init(ComStage, InterruptCnt, "interrupt num");
+        init(ComStage, FlushTlbCnt, "flush TLB num");
     }
 
     void set_req_perf(std::function<void(uint8_t, PerfLocation, PerfType)> f) {

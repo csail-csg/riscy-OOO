@@ -95,7 +95,7 @@ interface L2Tlb;
     interface TlbMemClient toMem;
 
     // performace
-    interface Perf#(TlbPerfType) perf;
+    interface Perf#(L2TlbPerfType) perf;
 endinterface
 
 typedef FullAssocTlb#(8) L2FullAssocTlb;
@@ -108,7 +108,7 @@ endmodule
 // address. (trap value is still the virtual address being translated).
 
 (* synthesize *)
-module mkL2Tlb(L2Tlb);
+module mkL2Tlb(L2Tlb::L2Tlb);
     Bool verbose = True;
    
     // set associative TLB for 4KB pages
@@ -148,7 +148,26 @@ module mkL2Tlb(L2Tlb);
     Fifo#(2, TlbLdResp) respLdQ <- mkCFFifo;
 
     // FIFO for perf req
-    Fifo#(1, TlbPerfType) perfReqQ <- mkCFFifo;
+    Fifo#(1, L2TlbPerfType) perfReqQ <- mkCFFifo;
+`ifdef PERF_COUNT
+    Fifo#(1, PerfResp#(L2TlbPerfType)) perfRespQ <- mkCFFifo;
+    Reg#(Bool) doStats <- mkConfigReg(False);
+    Count#(Data) instMissCnt <- mkCount(0);
+    Count#(Data) dataMissCnt <- mkCount(0);
+
+    rule doPerf;
+        let t <- toGet(perfReqQ).get;
+        Data d = (case(t)
+            L2TlbInstMissCnt: (instMissCnt);
+            L2TlbDataMissCnt: (dataMissCnt);
+            default: (0);
+        endcase);
+        perfRespQ.enq(PerfResp {
+            pType: t,
+            data: d
+        });
+    endrule
+`endif
 
     // when flushing is true, since both I and D TLBs have finished flush and
     // is waiting for L2 to flush, all I/D TLB req must have been responded.
@@ -253,6 +272,16 @@ module mkL2Tlb(L2Tlb);
             });
             // XXX we keep the 4KB array resp (not deq), because page walk
             // is done in a blocking way
+`ifdef PERF_COUNT
+            if(doStats) begin
+                if(cRq.child == I) begin
+                    instMissCnt.incr(1);
+                end
+                else begin
+                    dataMissCnt.incr(1);
+                end
+            end
+`endif
         end
     endrule
 
@@ -380,21 +409,36 @@ module mkL2Tlb(L2Tlb);
   
     interface Perf perf;
         method Action setStatus(Bool stats);
+`ifdef PERF_COUNT
+            doStats <= stats;
+`else
             noAction;
+`endif
         endmethod
 
-        method Action req(TlbPerfType r);
+        method Action req(L2TlbPerfType r);
             perfReqQ.enq(r);
         endmethod
 
-        method ActionValue#(PerfResp#(TlbPerfType)) resp;
-          perfReqQ.deq;
-          return PerfResp {
-              pType: perfReqQ.first,
-              data: 0
-          };
+        method ActionValue#(PerfResp#(L2TlbPerfType)) resp;
+`ifdef PERF_COUNT
+            perfRespQ.deq;
+            return perfRespQ.first;
+`else
+            perfReqQ.deq;
+            return PerfResp {
+                pType: perfReqQ.first,
+                data: 0
+            };
+`endif
         endmethod
 
-        method Bool respValid = perfReqQ.notEmpty;
+        method Bool respValid;
+`ifdef PERF_COUNT
+            return perfRespQ.notEmpty;
+`else
+            return perfReqQ.notEmpty;
+`endif
+        endmethod
     endinterface
 endmodule

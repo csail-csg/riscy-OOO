@@ -150,11 +150,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Count#(Data) comBrCnt <- mkCount(0);
     Count#(Data) comJmpCnt <- mkCount(0);
     Count#(Data) comJrCnt <- mkCount(0);
-    // exception related
+    // exception/sys inst related
     Count#(Data) comRedirectCnt <- mkCount(0);
-    Count#(Data) trapCnt <- mkCount(0);
-    Count#(Data) sretCnt <- mkCount(0);
-    Count#(Data) mrtsCnt <- mkCount(0);
+    Count#(Data) excepCnt <- mkCount(0);
+    Count#(Data) interruptCnt <- mkCount(0);
+    // flush tlb
+    Count#(Data) flushTlbCnt <- mkCount(0);
 `endif
 
     // deadlock check
@@ -404,6 +405,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             // Do Stuff in a later cycle because the vm update needs to see the effects of writes done in this rule
             if (iType == SFence) begin
                 inIfc.setFlushTlbs;
+`ifdef PERF_COUNT
+                // performance counter
+                if(inIfc.doStats) begin
+                    flushTlbCnt.incr(1);
+                end
+`endif
             end
             inIfc.setUpdateVMInfo;
             // always wait store buffer to be empty
@@ -435,7 +442,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 `ifdef PERF_COUNT
             // performance counter
             if(inIfc.doStats) begin
-                trapCnt.incr(1);
+                if(t.trap matches tagged Exception .e) begin
+                    excepCnt.incr(1);
+                end
+                else begin
+                    interruptCnt.incr(1);
+                end
             end
 `endif
         end
@@ -466,22 +478,10 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
                 if(r.iType == Sret) begin
                     let next_pc <- csrf.sret;
                     inIfc.redirect_action(next_pc, r.specTag, r.instTag);
-`ifdef PERF_COUNT
-                    // performance counter
-                    if(inIfc.doStats) begin
-                        sretCnt.incr(1);
-                    end
-`endif
                 end
                 else if(r.iType == Mret) begin
                     let next_pc <- csrf.mret;
                     inIfc.redirect_action(next_pc, r.specTag, r.instTag);
-`ifdef PERF_COUNT
-                    // performance counter
-                    if(inIfc.doStats) begin
-                        mrtsCnt.incr(1);
-                    end
-`endif
                 end
                 else begin
                     inIfc.redirect_action(r.nextPc, r.specTag, r.instTag);
@@ -616,9 +616,9 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             ComJmpCnt: comJmpCnt;
             ComJrCnt: comJrCnt;
             ComRedirect: comRedirectCnt;
-            TrapCnt: trapCnt;
-            SretCnt: sretCnt;
-            MrtsCnt: mrtsCnt;
+            ExcepCnt: excepCnt;
+            InterruptCnt: interruptCnt;
+            FlushTlbCnt: flushTlbCnt;
 `endif
             default: 0;
         endcase);

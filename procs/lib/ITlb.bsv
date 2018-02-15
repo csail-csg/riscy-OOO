@@ -70,7 +70,7 @@ interface ITlb;
     interface ITlbToParent toParent;
 
     // performance
-    interface Perf#(TlbPerfType) perf;
+    interface Perf#(L1TlbPerfType) perf;
 endinterface
 
 typedef FullAssocTlb#(ITlbSize) ITlbArray;
@@ -107,8 +107,27 @@ module mkITlb(ITlb::ITlb);
     Fifo#(1, void) flushRqToPQ <- mkCFFifo;
     Fifo#(1, void) flushRsFromPQ <- mkCFFifo;
 
-    // FIFO for perf req
-    Fifo#(1, TlbPerfType) perfReqQ <- mkCFFifo;
+    // perf counters
+    Fifo#(1, L1TlbPerfType) perfReqQ <- mkCFFifo;
+`ifdef PERF_COUNT
+    Fifo#(1, PerfResp#(L1TlbPerfType)) perfRespQ <- mkCFFifo;
+    Reg#(Bool) doStats <- mkConfigReg(False);
+    Count#(Data) accessCnt <- mkCount(0);
+    Count#(Data) missCnt <- mkCount(0);
+
+    rule doPerf;
+        let t <- toGet(perfReqQ).get;
+        Data d = (case(t)
+            L1TlbAccessCnt: (accessCnt);
+            L1TlbMissCnt: (missCnt);
+            default: (0);
+        endcase);
+        perfRespQ.enq(PerfResp {
+            pType: t,
+            data: d
+        });
+    endrule
+`endif
 
     // do flush: only start when all misses resolve
     rule doStartFlush(needFlush && !waitFlushP && !isValid(miss));
@@ -244,6 +263,11 @@ module mkITlb(ITlb::ITlb);
                         if(verbose) begin
                             $display("ITLB %m req (miss): ", fshow(vaddr));
                         end
+`ifdef PERF_COUNT
+                        if(doStats) begin
+                            missCnt.incr(1);
+                        end
+`endif
                     end
                 end
                 else begin
@@ -251,6 +275,11 @@ module mkITlb(ITlb::ITlb);
                     hitQ.enq(tuple2(vaddr, Invalid));
                     if (verbose) $display("ITLB %m req (bare): ", fshow(vaddr));
                 end
+`ifdef PERF_COUNT
+                if(doStats) begin
+                    accessCnt.incr(1);
+                end
+`endif
             endmethod
         endinterface
         interface Get response = toGet(hitQ);
@@ -267,21 +296,36 @@ module mkITlb(ITlb::ITlb);
 
     interface Perf perf;
         method Action setStatus(Bool stats);
+`ifdef PERF_COUNT
+            doStats <= stats;
+`else
             noAction;
+`endif
         endmethod
 
-        method Action req(TlbPerfType r);
+        method Action req(L1TlbPerfType r);
             perfReqQ.enq(r);
         endmethod
 
-        method ActionValue#(PerfResp#(TlbPerfType)) resp;
+        method ActionValue#(PerfResp#(L1TlbPerfType)) resp;
+`ifdef PERF_COUNT
+            perfRespQ.deq;
+            return perfRespQ.first;
+`else
             perfReqQ.deq;
             return PerfResp {
                 pType: perfReqQ.first,
                 data: 0
             };
+`endif
         endmethod
 
-        method Bool respValid = perfReqQ.notEmpty;
+        method Bool respValid;
+`ifdef PERF_COUNT
+            return perfRespQ.notEmpty;
+`else
+            return perfReqQ.notEmpty;
+`endif
+        endmethod
     endinterface
 endmodule

@@ -444,8 +444,9 @@ module mkCsrFile#(Data hartid)(CsrFile);
     // terminate (non-standard)
     Terminate  terminate_module <- mkTerminate;
     Reg#(Data) terminate_csr = terminate_module.reg_ifc;
-    //// whether performance stats is collected (only need 1 bit)
-    //Reg#(Data) stats_reg <- mkConfigReg(0); 
+    // whether performance stats is collected (0 is off, 1 is on)
+    Reg#(Bit#(1)) stats_reg <- mkCsrReg(0);
+    Reg#(Data) stats_csr = zeroExtendReg(stats_reg);
 
     rule incCycle;
         mcycle_ehr[1] <= mcycle_ehr[1] + 1;
@@ -462,7 +463,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
             CSRtime:       time_csr;
             CSRinstret:    instret_csr;
             CSRterminate:  terminate_csr;
-            // CSRsats (TODO)
+            CSRstats:      stats_csr;
             // Supervisor CSRs
             CSRsstatus:    sstatus_csr;
             CSRsie:        sie_csr;
@@ -692,6 +693,6 @@ module mkCsrFile#(Data hartid)(CsrFile);
 
     // performance stats
     method Bool doPerfStats;
-        return False; // TODO
+        return stats_reg == 1;
     endmethod
 endmodule

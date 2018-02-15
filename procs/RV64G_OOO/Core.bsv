@@ -497,11 +497,19 @@ module mkCore#(CoreId coreId)(Core);
         dMem.perf.setStatus(stats);
         iTlb.perf.setStatus(stats);
         dTlb.perf.setStatus(stats);
+        l2Tlb.perf.setStatus(stats);
         fetchStage.perf.setStatus(stats);
+
+        if(stats && !doStats) begin
+            $display("[stats] enabled");
+        end
+        else if(!stats && doStats) begin
+            $display("[stats] disabled");
+        end
     endrule
 
     // dispatch perf req
-    rule dispathPerfReq_ICache;
+    rule dispathPerfReq;
         perfReqQ.deq;
         let r = perfReqQ.first;
         case(r.loc)
@@ -517,6 +525,9 @@ module mkCore#(CoreId coreId)(Core);
             DTlb: begin
                 dTlb.perf.req(unpack(truncate(r.pType)));
             end
+            L2Tlb: begin
+                l2Tlb.perf.req(unpack(truncate(r.pType)));
+            end
             DecStage: begin
                 fetchStage.perf.req(unpack(truncate(r.pType)));
             end
@@ -528,6 +539,7 @@ module mkCore#(CoreId coreId)(Core);
             end
             default: begin
                 $fwrite(stderr, "[WARNING] unrecognzied perf req location ", fshow(r.loc), "\n");
+                doAssert(False, "unknown perf location");
             end
         endcase
     endrule
@@ -586,7 +598,7 @@ module mkCore#(CoreId coreId)(Core);
                 data: r.data
             });
         end
-        if(iTlb.perf.respValid) begin
+        else if(iTlb.perf.respValid) begin
             let r <- iTlb.perf.resp;
             resp = Valid(ProcPerfResp {
                 loc: ITlb,
@@ -594,10 +606,18 @@ module mkCore#(CoreId coreId)(Core);
                 data: r.data
             });
         end
-        if(dTlb.perf.respValid) begin
+        else if(dTlb.perf.respValid) begin
             let r <- dTlb.perf.resp;
             resp = Valid(ProcPerfResp {
                 loc: DTlb,
+                pType: zeroExtend(pack(r.pType)),
+                data: r.data
+            });
+        end
+        else if(l2Tlb.perf.respValid) begin
+            let r <- l2Tlb.perf.resp;
+            resp = Valid(ProcPerfResp {
+                loc: L2Tlb,
                 pType: zeroExtend(pack(r.pType)),
                 data: r.data
             });
