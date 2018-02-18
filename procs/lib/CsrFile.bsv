@@ -74,6 +74,9 @@ interface CsrFile;
 
     // performance stats is collected or not
     method Bool doPerfStats;
+    // send/recv updates on stats CSR globally
+    method ActionValue#(Bool) sendDoStats;
+    method Action recvDoStats(Bool s);
 
     // terminate
     method ActionValue#(void) terminate;
@@ -157,6 +160,40 @@ module mkTerminate(Terminate);
     endinterface
 
     method terminate = toGet(terminateQ).get;
+endmodule
+
+// stats CSR: there is only one copy in the whole multiprocessor, so any write
+// to stats CSR will be broadcasted
+interface StatsCsr;
+    interface Reg#(Data) reg_ifc;
+    method Bool doPerfStats;
+    // send/recv updates on stats CSR globally
+    method ActionValue#(Bool) sendDoStats;
+    method Action recvDoStats(Bool s);
+endinterface
+
+module mkStatsCsr(StatsCsr);
+    Reg#(Bool) doStats <- mkConfigReg(False);
+
+    FIFO#(Bool) writeQ <- mkFIFO1;
+
+    interface Reg reg_ifc;
+        method Data _read = zeroExtend(pack(doStats));
+        method Action _write(Data x);
+            writeQ.enq(unpack(truncate(x)));
+        endmethod
+    endinterface
+
+    method Bool doPerfStats = doStats;
+
+    method ActionValue#(Bool) sendDoStats;
+        writeQ.deq;
+        return writeQ.first;
+    endmethod
+
+    method Action recvDoStats(Bool s);
+        doStats <= s;
+    endmethod
 endmodule
 
 // same as EHR except that read port 0 is not ordered with other methods. Read
@@ -444,9 +481,9 @@ module mkCsrFile#(Data hartid)(CsrFile);
     // terminate (non-standard)
     Terminate  terminate_module <- mkTerminate;
     Reg#(Data) terminate_csr = terminate_module.reg_ifc;
-    // whether performance stats is collected (0 is off, 1 is on)
-    Reg#(Bit#(1)) stats_reg <- mkCsrReg(0);
-    Reg#(Data) stats_csr = zeroExtendReg(stats_reg);
+    // whether performance stats is collected
+    StatsCsr stats_module <- mkStatsCsr;
+    Reg#(Data) stats_csr = stats_module.reg_ifc;
 
     rule incCycle;
         mcycle_ehr[1] <= mcycle_ehr[1] + 1;
@@ -692,7 +729,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     method terminate = terminate_module.terminate;
 
     // performance stats
-    method Bool doPerfStats;
-        return stats_reg == 1;
-    endmethod
+    method doPerfStats = stats_module.doPerfStats;
+    method sendDoStats = stats_module.sendDoStats;
+    method recvDoStats = stats_module.recvDoStats;
 endmodule

@@ -109,6 +109,9 @@ interface Core;
     interface TlbMemClient tlbToMem;
     // MMIO
     interface MMIOCoreToPlatform mmioToPlatform;
+    // stats enable
+    method ActionValue#(Bool) sendDoStats;
+    method Action recvDoStats(Bool x);
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
     interface CoreDeadlock deadlock;
     // debug rename
@@ -875,6 +878,9 @@ module mkCore#(CoreId coreId)(Core);
     interface tlbToMem = l2Tlb.toMem;
 
     interface mmioToPlatform = mmio.toP;
+
+    method sendDoStats = csrf.sendDoStats;
+    method recvDoStats = csrf.recvDoStats;
 
     // deadlock check
     interface CoreDeadlock deadlock;

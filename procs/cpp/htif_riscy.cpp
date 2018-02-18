@@ -151,7 +151,7 @@ static std::string dts_compile(const std::string& dts)
   }
 
   // Child process to output dtb
-  const char *DTC = "/usr/bin/dtc";
+  const char *DTC = "dtc";
   if (dtb_pid == 0) {
     dup2(dts_pipe[0], 0);
     dup2(dtb_pipe[1], 1);

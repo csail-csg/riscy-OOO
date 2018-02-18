@@ -111,6 +111,16 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
     end
     mkLLCDmaConnect(llc.dma, host.to_mem, tlbToMem);
 
+    // connect stats
+    for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
+        rule broadcastStats;
+            Bool doStats <- core[i].sendDoStats;
+            for(Integer j = 0; j < valueof(CoreNum); j = j+1) begin
+                core[j].recvDoStats(doStats);
+            end
+        endrule
+    end
+
     // deadlock methods cross clock domain
     Vector#(CoreNum, CoreDeadlock) dl = ?;
     for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
