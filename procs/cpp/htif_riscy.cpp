@@ -151,7 +151,7 @@ static std::string dts_compile(const std::string& dts)
   }
 
   // Child process to output dtb
-  const char *DTC = "dtc";
+  const char *dtc_bin = DTC_PATH;
   if (dtb_pid == 0) {
     dup2(dts_pipe[0], 0);
     dup2(dtb_pipe[1], 1);
@@ -159,8 +159,8 @@ static std::string dts_compile(const std::string& dts)
     close(dts_pipe[1]);
     close(dtb_pipe[0]);
     close(dtb_pipe[1]);
-    execl(DTC, DTC, "-O", "dtb", 0);
-    std::cerr << "Failed to run " << DTC << ": " << strerror(errno) << std::endl;
+    execl(dtc_bin, dtc_bin, "-O", "dtb", 0);
+    std::cerr << "Failed to run " << dtc_bin << ": " << strerror(errno) << std::endl;
     exit(1);
   }
 
