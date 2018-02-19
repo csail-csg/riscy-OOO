@@ -73,6 +73,7 @@ parser.add_argument('--cores', required = True,
                     metavar = 'CORE_NUM', dest = 'core_num')
 parser.add_argument('--outdir', required = False,
                     metavar = 'OUT_DIR', dest = 'out_dir', default = 'out')
+parser.add_argument('--log', action = 'store_true', dest =  'log')
 args = parser.parse_args()
 
 # set up the tests to run
@@ -100,10 +101,11 @@ os.chdir(out_dir)
 
 for t in tests:
     test_prog = os.path.join(test_dir, t)
-    test_log = 'log.txt'
+    test_log = 'log.txt' if args.log else '/dev/null'
     if not os.path.isfile(test_prog):
         print '[WARNING] {} does not exist'.format(test_prog)
     else:
         print 'Run ' + test_prog
         cmd = args.exe + test_arg + ' -- ' + test_prog + ' > ' + test_log
+        print 'Command ' + cmd
         subprocess.check_call(cmd, shell = True) # stop if fail a test

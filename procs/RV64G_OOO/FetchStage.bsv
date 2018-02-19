@@ -209,25 +209,22 @@ module mkFetchStage(FetchStage);
     endrule
 `endif
 
-    // We don't send req to TLB when waiting for redirect or TLB flush
-    // Since there is no FIFO between doFetch1 and TLB,
-    // when OOO commit stage wait TLB idle and change VM CSR / signal flush TLB,
-    // There is no wrong path request afterwards to race with the system code that manage paget table
+    // We don't send req to TLB when waiting for redirect or TLB flush. Since
+    // there is no FIFO between doFetch1 and TLB, when OOO commit stage wait
+    // TLB idle to change VM CSR / signal flush TLB, there is no wrong path
+    // request afterwards to race with the system code that manage paget table.
     rule doFetch1(started && !waitForRedirect && !waitForFlush);
         let pc = pc_reg[pc_fetch1_port];
 
         // Chain of prediction for the next instructions
         // We need a BTB with a register file with enough ports!
-        // TODO instead of cascading predictions, we can always feed pc+4*i
-        // into predictor, because we will break superscaler fetch if nextpc !=
-        // pc+4
-        Vector#(SupSize, Addr) pred_future_pc = newVector;
-        pred_future_pc[0] = nextAddrPred.predPc(pc);
-        for (Integer i = 1; i < valueof(SupSize); i = i+1) begin
-            pred_future_pc[i] = nextAddrPred.predPc(pred_future_pc[i-1]);
+        // Instead of cascading predictions, we can always feed pc+4*i into
+        // predictor, because we will break superscaler fetch if nextpc != pc+4
+        Vector#(SupSize, Addr) pred_future_pc;
+        for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
+            pred_future_pc[i] = nextAddrPred.predPc(pc + fromInteger(4 * i));
         end
-        let pred_next_pc = ?;
-        Integer posLastSup = ?;
+
         // Next pc is the first nextPc that breaks the chain of pc+4 or
         // that is at the end of a cacheline.
         Vector#(SupSize,Integer) indexes = genVector;
@@ -236,10 +233,10 @@ module mkFetchStage(FetchStage);
             Bool noJump = pred_future_pc[i] == pc + fromInteger(4*(i+1));
             return (!(notLastInst && noJump));
         endfunction
-
-        posLastSup = fromMaybe(fromInteger(valueof(SupSize) - 1), find(findNextPc(pc), indexes));
-        pred_next_pc = pred_future_pc[posLastSup];
+        Integer posLastSup = fromMaybe(valueof(SupSize) - 1, find(findNextPc(pc), indexes));
+        Addr pred_next_pc = pred_future_pc[posLastSup];
         pc_reg[pc_fetch1_port] <= pred_next_pc;
+
         // Send TLB request
         tlb_server.request.put(pc);
 
