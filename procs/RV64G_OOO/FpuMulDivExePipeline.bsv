@@ -94,6 +94,7 @@ interface FpuMulDivExeInput;
     // Phys reg file
     method Data rf_rd1(PhyRIndx rindx);
     method Data rf_rd2(PhyRIndx rindx);
+    method Data rf_rd3(PhyRIndx rindx);
     // CSR file
     method Data csrf_rd(CSR csr);
     // ROB

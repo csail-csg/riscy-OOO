@@ -75,8 +75,13 @@ CONNECTALFLAGS += --cflags=" -std=c++0x "
 CONNECTALFLAGS += --clibdir=$(RISCY_TOOLS)/lib --clib=riscv --clib=fesvr
 CONNECTALFLAGS += -I$(RISCY_TOOLS)/include/spike -I$(RISCY_TOOLS)/include
 
-# device tree compiler
-DTC_PATH = $(shell which dtc)
+# device tree compiler: on AWS build machine (C4, centos) there is no dtc in
+# $PATH, so we allow user to specify the location of dtc on run machine (F1,
+# ubuntu)
+DTC_PATH ?= $(shell which dtc)
+ifeq ($(DTC_PATH),)
+$(error dtc not found)
+endif
 CONNECTALFLAGS += --cflags=" -DDTC_PATH=\"$(DTC_PATH)\" "
 
 # core num

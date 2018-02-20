@@ -287,6 +287,7 @@ module mkCore#(CoreId coreId)(Core);
             method sbCons_lazyLookup = sbCons.lazyLookup[fpuMulDivRdPort].get;
             method rf_rd1 = rf.read[fpuMulDivRdPort].rd1;
             method rf_rd2 = rf.read[fpuMulDivRdPort].rd2;
+            method rf_rd3 = rf.read[fpuMulDivRdPort].rd3;
             method csrf_rd = csrf.rd;
             method rob_setExecuted = rob.setExecuted_doFinishFpuMulDiv;
             method Action writeRegFile(PhyRIndx dst, Data data);

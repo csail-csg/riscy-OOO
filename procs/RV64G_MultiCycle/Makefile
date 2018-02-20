@@ -30,7 +30,7 @@ PERF_COUNT := true
 # dram type in simulation: VC707 or AWSF1
 SIM_DRAM_TYPE := AWSF1
 # use Xilinx FPU IP cores
-USE_XILINX_FPU := true
+USE_XILINX_FPU ?= true
 
 # default 1 core
 CORE_NUM ?= 1

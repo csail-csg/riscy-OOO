@@ -483,7 +483,7 @@ module mkCore#(CoreId coreId)(Core);
             tagged Fpu .fpu: begin
                 Data rVal1 = fromMaybe(0, src1Val);
                 Data rVal2 = fromMaybe(0, src2Val);
-                Data rVal3 = 0; // FIXME FMA is not implemented
+                Data rVal3 = fromMaybe(0, src3Val);
                 fpuExec.exec(updateRoundingMode(fpu, csrf.decodeInfo),
                              rVal1, rVal2, rVal3);
                 stage <= ExeFpu;
