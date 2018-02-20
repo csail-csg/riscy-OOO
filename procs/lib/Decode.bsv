@@ -598,32 +598,35 @@ function DecodeResult decode(Instruction inst);
             end
         end
         Fmadd, Fmsub, Fnmsub, Fnmadd: begin
-            // FMA is overrated
-            illegalInst = True;
-            /*
             // check if instruction is supported
-            if ((fmt == fmtS && !isa.f) || (fmt == fmtD && !isa.d) || (fmt != fmtS && fmt != fmtD))
-            begin
-              dInst.iType = Unsupported;
-              illegalInst = True;
+            if ((fmt == fmtS && !isa.f) ||
+                (fmt == fmtD && !isa.d) ||
+                (fmt != fmtS && fmt != fmtD)) begin
+                dInst.iType = Unsupported;
+                illegalInst = True;
             end else begin
-              // Instruction is supported
-              dInst.iType = (fmt == fmtS) ? FpS : FpD;
-              dInst.execFunc = tagged Fpu (case (opcode)
-                  Fmadd:  FMAdd;
-                  Fmsub:  FMSub;
-                  Fnmsub: FNMSub;
-                  Fnmadd: FNMAdd;
-                  default: ?;
-                endcase);
-              regs.src1 = Valid(tagged Fpu rs1);
-              regs.src2 = Valid(tagged Fpu rs2);
-              regs.src3 = Valid(rs3);
-              regs.dst = Valid(tagged Fpu rd);
-              dInst.csr = Invalid;
-              dInst.imm = Invalid;
+                // Instruction is supported
+                dInst.iType = Fpu;
+                FpuFunc func = ?;
+                case (opcode)
+                    Fmadd:  func = FMAdd;
+                    Fmsub:  func = FMSub;
+                    Fnmsub: func = FNMSub;
+                    Fnmadd: func = FNMAdd;
+                    default: illegalInst = True;
+                endcase
+                dInst.execFunc = tagged Fpu (FpuInst {
+                    func: func,
+                    rm: unpack(funct3),
+                    precision: fmt == fmtS ? Single : Double
+                });
+                regs.src1 = Valid(tagged Fpu rs1);
+                regs.src2 = Valid(tagged Fpu rs2);
+                regs.src3 = Valid(rs3);
+                regs.dst = Valid(tagged Fpu rd);
+                dInst.csr = Invalid;
+                dInst.imm = Invalid;
             end
-            */
         end
 
         MiscMem: begin

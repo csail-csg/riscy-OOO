@@ -431,10 +431,9 @@ module mkRegRenamingTable(RegRenamingTable) provisos (
                 if (r.src2 matches tagged Valid .valid_src2) begin
                     phy_regs.src2 = Valid (get_src_renaming(i, valid_src2));
                 end
-                // XXX I assume src3 is always invalid since FMA is not in use
-                //if (r.src3 matches tagged Valid .valid_src3) begin
-                //    phy_regs.src3 = tagged Valid (get_src_renaming(i, tagged Fpu valid_src3));
-                //end
+                if (r.src3 matches tagged Valid .valid_src3) begin
+                    phy_regs.src3 = tagged Valid (get_src_renaming(i, tagged Fpu valid_src3));
+                end
                 if (r.dst matches tagged Valid .valid_dst) begin
                     phy_regs.dst = Valid (PhyDst {
                         indx: claim_phy_reg,
@@ -448,8 +447,6 @@ module mkRegRenamingTable(RegRenamingTable) provisos (
             endmethod
 
             method Action claimRename(ArchRegs r, SpecBits sb) if(guard);
-                // check src3 is invalid
-                doAssert(r.src3 == Invalid, "src3 is always invalid");
                 // record the claim
                 claimEn[i][0] <= Valid (RenameClaim {
                     arch: r.dst,

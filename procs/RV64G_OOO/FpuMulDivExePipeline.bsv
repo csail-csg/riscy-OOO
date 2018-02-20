@@ -56,6 +56,7 @@ typedef struct {
     // src reg vals
     Data rVal1;
     Data rVal2;
+    Data rVal3;
 } FpuMulDivRegReadToExe deriving(Bits, Eq, FShow);
 
 typedef struct {
@@ -177,6 +178,12 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
             rVal2 <- readRFBypass(src2, regsReady.src2, inIfc.rf_rd2(src2), bypassWire);
         end
 
+        // get rVal3 (check bypass)
+        Data rVal3 = ?;
+        if(x.regs.src3 matches tagged Valid .src3) begin
+            rVal3 <- readRFBypass(src3, regsReady.src3, inIfc.rf_rd3(src3), bypassWire);
+        end
+
         // go to next stage
         regToExeQ.enq(ToSpecFifo {
             data: FpuMulDivRegReadToExe {
@@ -184,7 +191,8 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
                 dst: x.regs.dst,
                 tag: x.tag,
                 rVal1: rVal1,
-                rVal2: rVal2
+                rVal2: rVal2,
+                rVal3: rVal3
             },
             spec_bits: dispToReg.spec_bits
         });
@@ -199,7 +207,7 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         // send to exe unit
         Data rVal1 = x.rVal1;
         Data rVal2 = x.rVal2;
-        Data rVal3 = 0;
+        Data rVal3 = x.rVal3;
         case (x.execFunc) matches
             tagged Fpu    .fpu_inst:    fpuExec.exec(fpu_inst, rVal1, rVal2, rVal3);
             tagged MulDiv .muldiv_inst: mulDivExec.exec(muldiv_inst, rVal1, rVal2);

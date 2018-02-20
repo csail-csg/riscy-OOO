@@ -42,6 +42,7 @@ endinterface
 interface RFileRd;
     method Data rd1( PhyRIndx rindx );
     method Data rd2( PhyRIndx rindx );
+    method Data rd3( PhyRIndx rindx );
 endinterface
 
 interface RFile#(numeric type wrNum, numeric type rdNum);
@@ -101,6 +102,7 @@ module mkRFile#(Bool lazy)( RFile#(wrNum, rdNum) ) provisos (
         rdIfc[i] = (interface RFileRd;
             method Data rd1( PhyRIndx rindx ) = getRead(rindx);
             method Data rd2( PhyRIndx rindx ) = getRead(rindx);
+            method Data rd3( PhyRIndx rindx ) = getRead(rindx);
         endinterface);
     end
 

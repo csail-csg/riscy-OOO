@@ -113,6 +113,7 @@ module mkDoubleSqrt(Server#(Tuple2#(Double, FpuRoundMode), Tuple2#(Double, FpuEx
     return fpu;
 endmodule
 
+// Bluespec FMA is a + b * c, and we have wrap Xilinx FMA also into this form
 (* synthesize *)
 module mkDoubleFMA(Server#(Tuple4#(Maybe#(Double), Double, Double, FpuRoundMode), Tuple2#(Double, FpuException)));
 `ifdef USE_XILINX_FPU
@@ -930,6 +931,8 @@ module mkFpuExecPipeline(FpuExec);
                 FMul:   float_mult.request.put(tuple3(in1, in2, fpu_rm));
                 FDiv:   float_div.request.put(tuple3(in1, in2, fpu_rm));
                 FSqrt:  float_sqrt.request.put(tuple2(in1, fpu_rm));
+                // Bluespec FMA(a, b, c) is a + b * c, RISC-V ISA needs in1 *
+                // in2 + in3, so we need to shuffle the inputs
                 FMAdd:  float_fma.request.put(tuple4(tagged Valid in3, in1, in2, fpu_rm));
                 FMSub:  float_fma.request.put(tuple4(tagged Valid (-in3), in1, in2, fpu_rm));
                 FNMSub: float_fma.request.put(tuple4(tagged Valid (-in3), in1, in2, fpu_rm));
