@@ -194,7 +194,7 @@ module mkCore#(CoreId coreId)(Core);
     mkTlbConnect(iTlb.toParent, dTlb.toParent, l2Tlb.toChildren);
 
     // exe units
-    MulDivExec mulDivExec <- mkBoothRoughMulDivExec;
+    SeqMulDivExec mulDivExec <- mkSeqMulDivExec;
     FpuExec fpuExec <- mkFpuExecPipeline;
     StoreBuffer stb <- mkStoreBufferEhr;
 

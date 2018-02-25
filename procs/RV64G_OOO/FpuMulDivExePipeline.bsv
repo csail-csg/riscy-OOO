@@ -129,15 +129,8 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
     Vector#(TMul#(2, AluExeNum), RWire#(Tuple2#(PhyRIndx, Data))) bypassWire <- replicateM(mkRWire);
 
     // mul div fpu func units
-    RiscVISASubset isa = defaultValue;
-    MulDivExec mulDivExec <- (isa.m) ? mkBoothRoughMulDivExec : mkMulDivExecDummy;
-`ifdef USE_DUMMY_FPU
-    // [sizhuo] if set isa.f = isa.d = False, then need to recompile gcc/pk/bbl/linux without FPU
-    // probably linux booting doesn't really use FPU
-    FpuExec fpuExec       <- mkFpuExecDummy;
-`else
-    FpuExec fpuExec       <- (isa.f || isa.d) ? mkFpuExecPipeline : mkFpuExecDummy;
-`endif
+    SeqMulDivExec mulDivExec <- mkSeqMulDivExec;
+    FpuExec fpuExec <- mkFpuExecPipeline;
 
     rule doDispatchFpuMulDiv;
         rsFpuMulDiv.doDispatch;
