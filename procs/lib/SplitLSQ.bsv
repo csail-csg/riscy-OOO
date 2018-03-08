@@ -148,8 +148,11 @@ typedef struct {
     Maybe#(LdQTag)   depLdEx;
     // Ld stalled by St/Sc/Amo in SQ to same addr, wait for it to deq
     Maybe#(StQTag)   depStQDeq;
-    // Ld stalled by store buffer entry, should wait it to write cache
+`ifndef TSO_MM
+    // WEAK model only: Ld stalled by store buffer entry, should wait it to
+    // write cache
     Maybe#(SBIndex)  depSBDeq;
+`endif
 
     // ===================
     // Speculation related.
@@ -177,6 +180,8 @@ typedef struct {
     Bool             acq; // acquire ordering
     Bool             rel; // release ordering
     Maybe#(PhyDst)   dst;
+    // keep full addr, because  we use addr[2] to determine upper or lower
+    // 32-bit AMO in cache, and we use lower bits of addr to shift load resp.
     Addr             paddr;
     // whether paddr is mmio addr; MMIO access is handled at deq time
     // non-speculatively
@@ -290,26 +295,23 @@ interface SplitLSQ;
     // Retrieve information when we want to wakeup RS early in case
     // Ld/Lr/Sc/Amo hits in cache
     method ActionValue#(LSQHitInfo) getHit(LdStQTag t);
-    // update data and shifted BE
-    method Action updateShiftedDataBE(
-        LdStQTag t, Data shiftedData, ByteEn shiftedBE
-    );
+    // update store data (shifted for St and Sc, unshifted for AMO)
+    method Action updateData(StQTag t, Data d);
     // Update addr after address translation, and set the spec tag if it is a
     // load or MMIO. Also search for the (oldest) younger load to kill. Return
     // if the entry is waiting for wrong path resp.
-    method ActionValue#(LSQUpdateAddrResult) update(
-        LdStQTag lsqTag, Addr paddr, Bool isMMIO, Maybe#(SpecTag) specTag
+    method ActionValue#(LSQUpdateAddrResult) updateAddr(
+        LdStQTag lsqTag, Addr paddr, Bool isMMIO,
+        ByteEn shiftedBE, Maybe#(SpecTag) specTag
     );
     // Issue a load, and remove dependence on this load issue.
-    method ActionValue#(LSQIssueResult) issue(
+    method ActionValue#(LSQIssueResult) issueLd(
         LdStQTag lsqTag, Addr paddr, ByteEn shiftedBE, SBSearchRes sbRes
     );
     // Get the load to issue
-    method ActionValue#(LSQIssueInfo) getIssueLd;
+    method ActionValue#(LSQIssueLdInfo) getIssueLd;
     // Get the load killed by ld/st ordering
     method ActionValue#(LSQKillLdInfo) getLdKilledByLdSt;
-    // Get the load killed by cache eviction (TSO only)
-    method ActionValue#(LSQKillLdInfo) getLdKilledByCache;
     // Get load resp
     method ActionValue#(LSQRespLdResult) respLd(LdStQTag t, Data alignedData);
     // Deq LQ entry, and wakeup stalled loads. The guard only checks that entry
@@ -329,10 +331,15 @@ interface SplitLSQ;
     // olderSt fields of loads.
     method StQDeqEntry firstSt;
     method Action deqSt;
-    // Wake up younger loads when SB deq (only WEAK model has SB)
-    method Action wakeupLdStalledBySB(SBIndex sbIdx);
+`ifdef TSO_MM
     // Kill loads when a cache line is evicted (TSO only)
     method Action cacheEvict(LineAddr a);
+    // Get the load killed by cache eviction (TSO only)
+    method ActionValue#(LSQKillLdInfo) getLdKilledByCache;
+`else
+    // Wake up younger loads when SB deq (only WEAK model has SB)
+    method Action wakeupLdStalledBySB(SBIndex sbIdx);
+`endif
     // Speculation
     interface SpeculationUpdate specUpdate;
 endinterface
@@ -345,9 +352,21 @@ typedef Bit#(TLog#(TMul#(2, StQSize))) StQVirTag;
 typedef Bit#(TSub#(AddrSz, TLog#(NumBytes))) DataAlignedAddr;
 function DataAlignedAddr getDataAlignedAddr(Addr a) = truncateLSB(a);
 
-// whether two memory access are to the same dword
+// whether two memory accesses are to the same dword
 function Bool sameAlignedAddr(Addr a, Addr b);
     return getDataAlignedAddr(a) == getDataAlignedAddr(b);
+endfunction
+
+// whether two memory accesses overlap
+function Bool overlapAddr(Addr addr_1, ByteEn shift_be_1,
+                          Addr addr_2, ByteEn shift_be_2);
+    Bool be_overlap = (pack(shift_be_1) & pack(shift_be_2)) != 0;
+    return be_overlap && sameAlignedAddr(addr_1, addr_2);
+endfunction
+
+// check shiftBE1 covers shiftBE2
+function Bool be1CoverBe2(ByteEn shift_be_1, ByteEn shift_be_2);
+    return (pack(shift_be_1) & pack(shift_be_2)) == pack(shift_be_2);
 endfunction
 
 // check whether mem op addr is aligned w.r.t data size
@@ -423,10 +442,10 @@ endmodule
 // --- end of auxiliary types and functions ---
 
 (* synthesize *)
-module mkSplitLSQ#(Bool tso)(SplitLSQ);
+module mkSplitLSQ(SplitLSQ);
     // ordering
     // getHit, getKillLd, findIssue <
-    // deqLd, validateSt (TSO only) <
+    // (deqLd C verifySt (TSO only)) <
     // cacheEvict <
     // updateAddr <
     // issueLd, getIssueLd <
@@ -434,30 +453,54 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
     // wakeupLdStalledBySB (Weak only) <
     // deqSt <
     // respLd <
-    // updateDataBE <
+    // updateData <
     // enq <
     // correctSpec
 
     // Scheduling notes:
-    // 1. getKilled, deqLd, validateSt are almost readonly, so put them at
+    // - getKilled, deqLd, validateSt are almost readonly, so put them at
     // beginning.
-    // 2. A load can first updateAddr and then issue in one cycle (in two
-    // rules), so updateAddr < issueLd.
-    // 3. cacheEvict and updateAddr needs the readFrom fields in LQ, issueLd
-    // needs the olderSt field and SQ. Since deqSt changeds SQ and readFrom and
-    // olderSt fields of LQ, we put cacheEvict, updateAddr, issueLd < deqSt
-    // 4. There should not be requirement between cachEvict and updateAddr,
+    // - A load can first updateAddr and then issue in one cycle (in two
+    // rules), so updateAddr < issueLd. Also, issueLd writes readFrom which is
+    // used in the associative search in updateAddr.
+    // - cacheEvict and updateAddr needs the readFrom fields in LQ. Since deqSt
+    // changes readFrom, we put cacheEvict, updateAddr < deqSt.
+    // - issueLd needs the olderSt field and SQ. Since deqSt changeds SQ and
+    // readFrom and olderSt fields of LQ, we put issueLd < deqSt. However,
+    // since issueLd sets readFrom and depStQDeq, this creates a bypassing path
+    // from issueLd to deqSt.
+    // - In WEAK model, issueLd will search store buffer. Since
+    // wakeupLdStalledBySB happens in the same rule as store buffer deq, we put
+    // wakeupLdStalledBySB < issueLd. However, since issueLd sets depSBDeq,
+    // this creates a bypassing path from issueLd to wakeupLdStalledBySB. This
+    // is pretty much aligned with the case of deqSt.
+    // - There should not be requirement between cachEvict and updateAddr,
     // just choose arbitrarily.
-    // 5. Since load resp may be enq into a bypass fifo after coming out of the
+    // - Since load resp may be enq into a bypass fifo after coming out of the
     // cache, respLd should not precede the cache rule that sends resp. We just
     // put the cache resp rule < respLd. Since cache resp rule calls deqSt
     // (TSO) or wakeupLdStalledBySB (WEAK), we have deqSt < respLd and
     // wakeupLdStalledBySB < respLd.
-    // 6. Since respLd needs shiftedBE, we put respLd < updateDataBE.
-    // 7. There is a bypassing path from updateAddr to deqSt. This path does
-    // not seem to be a problem.
-    // 8. To cut off bypassing from stb.enq to stb.deq, we put wakeupStallBySB
+    // - Since respLd needs shiftedBE, we put respLd < updateData.
+    // - There is a bypassing path from updateAddr to deqSt. This path should
+    // not be activated in reality, because the updated StQ entry cannot be
+    // validated in the same cycle. TODO? If we really want, we can make a
+    // bypass wire to read paddr[0] in deqSt.
+    // - To cut off bypassing from stb.enq to stb.deq, we put wakeupStallBySB
     // < deqSt.
+    // - There is a bypassing path from updateAddr to respLd, though it should
+    // never be activated in reality. Another (non-important) reason to put
+    // updateAddr < respLd is that respLd set done bit, which are used by
+    // updateAddr in associative search. TODO We can make a bypass wire to read
+    // paddr[0] in respLd method.
+    // - There is a bypassing path from validatedSt to deqSt, i.e., a store
+    // can be validated and issued to memory at the same cycle. This is
+    // probably a desirable behavior.
+    // - We put findIssue < updateAddr to prevent findIssue insert a newly
+    // updated LQ entry into issueQ; this can create problem because the new
+    // updated load may be immediately issued to execution in the same cycle
+    // later.
+    // - Only one of deqLd and verifySt can fire at one cycle.
 
     // W.r.t wrongSpec:
     // getKillLd < wrongSpec (they fire in same rule)
@@ -586,7 +629,9 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
     Vector#(LdQSize, Ehr#(3, Maybe#(LdStQTag))) ld_depLdQDeq  <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(3, Maybe#(LdStQTag))) ld_depLdEx    <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(3, Maybe#(SBIndex)))  ld_depStQDeq  <- replicateM(mkEhr(?));
+`ifndef TSO_MM
     Vector#(LdQSize, Ehr#(3, Maybe#(SBIndex)))  ld_depSBDeq   <- replicateM(mkEhr(?));
+`endif
     Vector#(LdQSize, Ehr#(3, Maybe#(SpecTag)))  ld_specTag    <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(3, SpecBits))         ld_specBits   <- replicateM(mkEhr(?));
     // wrong-path load filter (must init to all False)
@@ -609,32 +654,50 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
 
     // SQ
     // entry valid bits
-    Vector#(LdQSize, Ehr#(3, Bool))            st_valid      <- replicateM(mkEhr(False));
+    Vector#(LdQSize, Ehr#(3, Bool))            st_valid     <- replicateM(mkEhr(False));
     // entry contents
-    Vector#(LdQSize, Reg#(InstTag))            st_instTag    <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(StQMemFunc))         st_memFunc    <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(ByteEn))             st_byteEn     <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Bool))               st_acq        <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Bool))               st_rel        <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Maybe#(PhyDst)))     st_dst        <- replicateM(mkRegU);
-    Vector#(LdQSize, Ehr#(3, Addr))            st_paddr      <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))            st_isMMIO     <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, ByteEn))          st_shiftedBE  <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Data))            st_stData     <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))            st_computed   <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))            st_inIssueQ   <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Maybe#(SpecTag))) st_specTag    <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, SpecBits))        st_specBits   <- replicateM(mkEhr(?));
-    // enq/commit/deq ptr
+    Vector#(LdQSize, Reg#(InstTag))            st_instTag   <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(StQMemFunc))         st_memFunc   <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(ByteEn))             st_byteEn    <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Bool))               st_acq       <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Bool))               st_rel       <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Maybe#(PhyDst)))     st_dst       <- replicateM(mkRegU);
+    Vector#(LdQSize, Ehr#(3, Addr))            st_paddr     <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))            st_isMMIO    <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, ByteEn))          st_shiftedBE <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Data))            st_stData    <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))            st_computed  <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(SpecTag))) st_specTag   <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, SpecBits))        st_specBits  <- replicateM(mkEhr(?));
+    // enq/deq ptr
     Reg#(StQTag)    st_enqP <- mkReg(0);
-    Ehr#(2, StQTag) st_comP <- mkEhr(0);
     Ehr#(2, StQTag) st_deqP <- mkEhr(0);
+`ifdef TSO_MM
+    // For TSO only: store-verify-pointer. To make our OOO execution conform to
+    // TSO, we need to verify each load and store sequentially to mimic TSO I2E
+    // operational model. Besides sequential ordering of verification, a Ld can
+    // be verified when it has its result, a St can be verified when it has
+    // addr and data computed, an Lr/Sc/Amo can be verified when it has
+    // completed memory access, and a fence can be verified when all older mem
+    // accesses have been dequeued from LSQ. A Ld or Lr is verified by
+    // dequeuing it from LQ, so there is no verify-pointer in LQ. A
+    // Sc/Amo/Fence is also verfied by dequeuing it from SQ. The only reason
+    // for needing this verify-pointer in SQ is that a verified St can still
+    // live in SQ. All stores within [deqP, verify-pointer) are Sts that have
+    // been verfied, and verify-pointer points to the next store to be verfied.
+    // This pointer helps enforcing the sequential verification ordering:
+    // - The LQ head can be dequeued when its olderSt is invalid or older than
+    // SQ verify pointer.
+    // - The SQ entry at verify pointer can be verified when the LQ head's
+    // olderSt is younger than or equal to this SQ entry.
+    Ehr#(2, StQTag) st_verifyP <- mkEhr(0);
+`endif
 
     // FIFO of LSQ tags that try to issue, there should be no replication in it
     LSQIssueLdQ issueLdQ <- mkLSQIssueLdQ;
-    // XXX We split the search for ready to issue entry into two phases: Phase
+    // XXX We split the search for ready to issue entry into two phases. Phase
     // 1: rule findIssue: find a ready-to-issue entry at the beginning of the
-    // cycle Phase 2: rule enqIssueQ: enq the one found in findIssue into
+    // cycle. Phase 2: rule enqIssueQ: enq the one found in findIssue into
     // issueQ and set ldInIssueQ We do the split because enq to issueQ must be
     // ordered after getIssueLd method which deq issueQ.  This split is fine
     // because at phase 2, the entry found in phase one should not be changed
@@ -642,14 +705,16 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
     // enqIssueQ, i.e. update and issue will not affect the entry found in
     // findIssue We use a wire to pass phase 1 result to phase 2.  It is fine
     // that phase 2 dose not fire when phase 1 has fired, next cycle phase 1
-    // will redo the work
+    // will redo the work.
     RWire#(LSQIssueLdInfo) issueLdInfo <- mkRWire;
 
     // FIFO of LSQ tags that should be killed. Replicated tags may exist, but
     // replications will all be killed when the first is processed due to spec
     // bits.
     LSQKillLdQ killByLdStQ <- mkLSQKillLdQ;
+`ifdef TSO_MM
     LSQKillLdQ killByCacheQ <- mkLSQKillLdQ;
+`endif
 
     // make wrongSpec conflict with all others (but not correctSpec method and
     // findIssue)
@@ -675,8 +740,9 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
     // LQ/SQ index to virtual tags using enqP as pivot.
     // The mapping is as follow:
     // - valid entry i --> i < enqP ? i + QSize : i
-    // XXX This mapping is only for comparing valid entries, so we must check
-    // entry valid before using virtual tags.
+    // XXX This mapping is only for comparing valid entries (e.g., it may not
+    // work properly for enqP), so we must check entry valid before using
+    // virtual tags or do special calculation.
     function LdQVirTag getLdVirTag(LdQTag i);
         return i < ld_enqP ? zeroExtend(i) + fromInteger(valueof(LdQSize))
                            : zeroExtend(i);
@@ -685,11 +751,14 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
         return i < st_enqP ? zeroExtend(i) + fromInteger(valueof(StQSize))
                            : zeroExtend(i);
     endfunction
-    // virtual tags to be reused in all associative searches
+    // virtual tags for LQ/SQ indices to be reused in all associative searches
     Vector#(LdQSize, LdQVirTag) ldVirTags = map(getLdVirTag,
                                                 genWith(fromInteger));
     Vector#(StQSize, StQVirTag) stVirTags = map(getStVirTag,
                                                 genWith(fromInteger));
+    // virtual tag for st verify ptr. XXX NOTE that this ptr may point to
+    // invalid entry, so need to check entry valid first.
+    StQVirTag stVerifyVirTag = getStVirTag(st_verifyP);
 
     // find oldest LQ entry that satisfy a constraint (i.e. smallest tag)
     function Maybe#(LdQTag) findOldestLd(Vector#(LdQSize, Bool) pred);
@@ -783,7 +852,7 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
     // when it may do nothing
     rule findIssue;
         // find all can issue loads 
-        function Bool canIssue(Integer i);
+        function Bool canIssue(LdQTag i);
             return (
                 ld_valid_findIss[i] && ld_memFunc[i] == Ld && // (1) valid load
                 ld_computed_findIss[i] && // (2) computed
@@ -791,13 +860,16 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
                 !ld_executing_findIss[i] && // (4) not executing (or done)
                 !isValid(ld_depLdQDeq_findIss[i]) &&
                 !isValid(ld_depLdEx_findIss[i]) &&
-                !isValid(ld_depStQDeq_findIss[i]) &&
-                !isValid(ld_deqSBDeq_findIss[i]) && // (5) no dependency
+`ifndef TSO_MM
+                !isValid(ld_depSBDeq_findIss[i]) &&
+`endif
+                !isValid(ld_depStQDeq_findIss[i]) && // (5) no dependency
                 !waitWPResp[i] && // (6) not wating wrong path resp
                 !ld_isMMIO_findIss[i] // (7) not MMIO
             );
         endfunction
-        Vector#(LdQSize, Bool) ableToIssue = map(canIssue, genVector);
+        Vector#(LdQSize, Bool) ableToIssue = map(canIssue,
+                                                 genWith(fromInteger));
 
         // find the oldest load to issue (note that we search for valid entry),
         // and record it in wire
@@ -832,15 +904,17 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
                  "enq issueQ entry cannot be MMIO");
         doAssert(!isValid(ld_depLdQDeq_enqIss[info.tag]) &&
                  !isValid(ld_depLdEx_enqIss[info.tag]) &&
-                 !isValid(ld_depStQDeq_enqIss[info.tag]) &&
-                 !isValid(ld_deqSBDeq_enqIss[info.tag]),
+`ifndef TSO_MM
+                 !isValid(ld_depSBDeq_enqIss[info.tag]) &&
+`endif
+                 !isValid(ld_depStQDeq_enqIss[info.tag]),
                  "enq issueQ entry cannot have dependency");
         doAssert(info.shiftedBE == ld_shiftedBE_enqIss[info.tag],
                  "BE should match");
         doAssert(info.paddr == ld_paddr_enqIss[info.tag],
                  "paddr should match");
         // enq to issueQ & change state (prevent enq this tag again)
-        issueQ.enq(ToSpecFifo {
+        issueLdQ.enq(ToSpecFifo {
             data: info,
             spec_bits: ld_specBits_enqIss[info.tag]
         });
@@ -853,33 +927,33 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
     // Sanity check in simulation. All valid entry are consective within deqP
     // and enqP, outsiders are invalid entries
     (* fire_when_enabled, no_implicit_conditions *)
-    rule checkLdQ;
+    rule checkLdQValid;
         Bool allEmpty = all( \== (False),  readVEhr(0, ld_valid) );
-        function Bool in_range(LdQTag i);
-            // if i is within deqP and enqP, i.e. should be valid entry
-            if(allEmpty) begin
-                return False;
-            end
-            else begin
+        if(allEmpty) begin
+            doAssert(ld_enqP == ld_deqP[0], "empty queue have enqP = deqP");
+        end
+        else begin
+            // not empty queue, check valid entries with [deqP, enqP)
+            function Bool in_range(LdQTag i);
                 if(ld_deqP[0] < ld_enqP) begin
                     return ld_deqP[0] <= i && i < ld_enqP;
                 end
                 else begin
                     return ld_deqP[0] <= i || i < ld_enqP;
                 end
+            endfunction
+            for(Integer i = 0; i < valueof(LdQSize); i = i+1) begin
+                doAssert(in_range(fromInteger(i)) == ld_valid[i][0],
+                        "valid entries must be within deqP and enqP");
             end
-        endfunction
-        for(Integer i = 0; i < valueof(LdQSize); i = i+1) begin
-            doAssert(in_range(fromInteger(i)) == ld_valid[i][0],
-                    "valid entries must be within deqP and enqP");
         end
     endrule
 
     (* fire_when_enabled, no_implicit_conditions *)
-    rule checkStQ;
-        Bool allEmpty = all( \== (False),  readVEhr(0, valid) );
+    rule checkStQValid;
+        Bool allEmpty = all( \== (False), readVEhr(0, st_valid) ),
         function Bool in_range(StQTag i);
-            // if i is within deqP and enqP, i.e. should be valid entry
+            // if i is within deqP and enqP, it should be valid
             if(allEmpty) begin
                 return False;
             end
@@ -894,7 +968,7 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
         endfunction
         for(Integer i = 0; i < valueof(StQSize); i = i+1) begin
             doAssert(in_range(fromInteger(i)) == st_valid[i][0],
-                    "valid entries must be within deqP and enqP");
+                     "valid entries must be within deqP and enqP");
         end
     endrule
 `endif
@@ -918,16 +992,23 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
 
     method ActionValue#(LSQHitInfo) getHit(LdStQTag t);
         wrongSpec_hit_conflict.wset(?); // TODO remove, seems useless
-        return LSQHitInfo {
-            waitWPResp: ld_waitWPResp[t],
-            dst: ld_dst[t]
-        };
+        return (case(t) matches
+            tagged Ld .tag: (LSQHitInfo {
+                waitWPResp: ld_waitWPResp[tag],
+                dst: ld_dst[tag]
+            });
+            tagged St .tag: (LSQHitInfo {
+                waitWPResp: False,
+                dst: st_dst[tag]
+            });
+            default: ?;
+        endcase);
     endmethod
 
     method Maybe#(LdStQTag) enqTag(MemFunc f);
         return (case(f)
-            Ld, Lr:  (ld_can_enq_wire ? Valid (ld_enqP) : Invalid);
-            default: (st_can_enq_wire ? Valid (st_enqP) : Invalid);
+            Ld, Lr:  (ld_can_enq_wire ? Valid (Ld (ld_enqP)) : Invalid);
+            default: (st_can_enq_wire ? Valid (St (st_enqP)) : Invalid);
         endcase);
     endmethod
 
@@ -959,7 +1040,9 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
         ld_depLdQDeq_enq[ld_enqP] <= Invalid;
         ld_depLdEx_enq[ld_enqP] <= Invalid;
         ld_deqStQDeq_enq[ld_enqP] <= Invalid;
+`ifndef TSO_MM
         ld_depSBDeq_enq[ld_enqP] <= Invalid;
+`endif
         ld_specTag_enq[ld_enqP] <= Invalid;
         ld_specBits_enq[ld_enqP] <= spec_bits;
         // don't touch wait wrong resp
@@ -967,8 +1050,8 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
         // otherwise, we may record a valid olderSt and never get it reset.
         StQTag olderSt = st_enqP == 0 ? fromInteger(valueof(StQSize) - 1)
                                       : (st_enqP - 1);
-        ld_olderSt[ld_enqP] = st_valid_enq[olderSt] ? Valid (olderSt)
-                                                    : Invalid;
+        ld_olderSt_enq[ld_enqP] = st_valid_enq[olderSt] ? Valid (olderSt)
+                                                        : Invalid;
         // make conflict with incorrect spec
         wrongSpec_enq_conflict.wset(?);
     endmethod
@@ -992,261 +1075,456 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
         st_rel[st_enqP] <= mem_inst.rl;
         st_dst[st_enqP] <= dst;
         st_computed_enq[st_enqP] <= False;
+        st_validated_enq[st_enqP] <= False;
         st_specTag_enq[st_enqP] <= Invalid;
         st_specBits_enq[st_enqP] <= spec_bits;
         // make conflict with incorrect spec
         wrongSpec_enq_conflict.wset(?);
     endmethod
 
-    method ActionValue#(LSQUpdateResult) update(
-        LdStQTag lsqTag, Addr pa, Bool mmio, ByteEn shift_be, Data shift_data, Maybe#(SpecTag) spec_tag
-    );
-        // sanity check
-        doAssert(valid[lsqTag][valid_update_port], "updating entry must be valid");
-        doAssert(state[lsqTag][state_update_port] == Idle && !computed[lsqTag][comp_update_port],
-            "updating entry should be in Idle state and not computed yet"
-        );
-        doAssert(!computed[lsqTag][comp_update_port], "updating entry cannot be computed");
-        doAssert(isValid(spec_tag) == (mmio || memInst[lsqTag].mem_func == Ld),
-            "only Ld or MMIO needs to set spec tag"
-        );
-        case(memInst[lsqTag].mem_func)
-            Ld, St, Lr, Sc, Amo: noAction;
-            default: doAssert(False, "updating entry cannot be fence");
-        endcase
+    method Action updateData(StQTag t, Data d);
+        doAssert(st_valid_updData[t], "entry must be valid");
+        doAssert(!st_computed_updData[t], "entry cannot be computed");
+        doAssert(!st_validated_updData[t], "entry cannot be validated");
+        st_stData[t] <= d;
+    endmethod
 
-        // write computed, paddr, shift be, shift data, specTag
-        computed[lsqTag][comp_update_port] <= True;
-        paddr[lsqTag][paddr_update_port] <= pa;
-        isMMIO[lsqTag][mmio_update_port] <= mmio;
-        shiftedBE[lsqTag][shBE_update_port] <= shift_be;
-        shiftedData[lsqTag][shData_update_port] <= shift_data; // data has been shifted for non-AMO
-        specTag[lsqTag][specTag_update_port] <= spec_tag;
-
+    method ActionValue#(LSQUpdateResult) updateAddr(LdStQTag lsqTag,
+                                                    Addr pa,
+                                                    Bool mmio,
+                                                    ByteEn shift_be,
+                                                    Maybe#(SpecTag) spec_tag);
         // index vec for vector functions
         Vector#(LdStQSize, LdStQTag) idxVec = genWith(fromInteger);
 
-        // kill younger & eager load
-        // We search from lsqTag to the youngest entry
-        // Find the first valid and computed entry for the same aligned addr (XXX fence cannot be computed)
-        // We kill this entry if it is an executing or done Ld.
-        // No need to check further entries, because if the found entry is not killed,
-        // then further entries must have been killed or stalled by the found entry
-        function Bool checkEntry(LdStQTag i);
-            return valid[i][valid_update_port] && computed[i][comp_update_port] &&
-                   sameAlignedAddr(pa, paddr[i][paddr_update_port]);
-        endfunction
-        Vector#(LdStQSize, Bool) needCheck = map(checkEntry, idxVec);
-        // find the entry to check
-        Maybe#(LdStQTag) checkTag = Invalid;
-`ifdef LSQ_VTAG
-        // use virtual tag: only consider entries younger than lsqTag (i.e. larger virtual tag)
-        // note that LSQ must be non-empty, and we search for valid entry
-        LSQVTag virtualLsqTag = virtualTags[lsqTag];
-        function Bool checkYoungerEntry(LdStQTag i);
-            return needCheck[i] && virtualTags[i] > virtualLsqTag;
-        endfunction
-        // get the oldest one
-        checkTag = findOldest(map(checkYoungerEntry, idxVec));
-`else
-        // normal search: two cases (LSQ must be non-empty)
-        if(lsqTag < enqP) begin
-            // younger entries are in (lsqTag, enqP), search from small tag to large
-            function Bool checkYoungerEntry(LdStQTag i);
-                return i > lsqTag && i < enqP && needCheck[i];
+        // We need to kill younger loads if lsqTag is a SQ entry, or we are
+        // having a WEAK model. To reduce logic, we try to share the kill
+        // search logic. But still need some logic specific to whether lsqTag
+        // is an LQ or SQ entry.
+        // Whether kill younger load or not
+        Bool doKill = False;
+        // Vector mask to indicate younger loads to check for kill
+        Vector#(LdQSize, Bool) youngerLds = replicate(False);
+        // The store virtual tag that will be compared with readFrom to
+        // determine if a executing/done load has read a stale store. If a
+        // load's readFrom is older than or *equal to* curSt, then the load
+        // reads a stale value and should be killed. If curSt is invalid, then
+        // the load should not be killed as long as readFrom is valid.  curSt
+        // is in maybe type because of Ld killing Ld (in that case, curSt is
+        // the olderSt field of the olde Ld). "equal to" is also needed because
+        // of Ld killing Ld.
+        Maybe#(StQVirTag) curSt = Invalid;
+
+        // update LQ/SQ entry and prepare for killing loads
+        if(lsqTag matches tagged Ld .tag) begin
+            // sanity check
+            doAssert(ld_valid_updAddr[tag],
+                     "updating entry must be valid");
+            doAssert(!ld_computed_updAddr[tag] &&
+                     !ld_inIssueQ_updAddr[tag] &&
+                     !ld_executing_updAddr[tag] &&
+                     !ld_done_updAddr[tag] &&
+                     !ld_killed_updAddr[tag],
+                     "updating entry should not be " +
+                     "computed or issuing or executed or done or killed");
+            doAssert(isValid(spec_tag) == (mmio || ld_memFunc[tag] == Ld),
+                     "only Ld or MMIO needs to set spec tag");
+
+            // write computed, paddr, shift be, specTag
+            ld_computed_updAddr[tag] <= True;
+            ld_paddr_updAddr[tag] <= pa;
+            ld_isMMIO_updAddr[tag] <= mmio;
+            ld_shiftedBE_updAddr[tag] <= shift_be;
+            ld_specTag_updAddr[tag] <= spec_tag;
+
+`ifndef TSO_MM
+            // for WEAK model, kill younger load
+            doKill = True;
+            curSt = olderStVirTags[tag];
+            LdQVirTag virTag = ldVirTags[tag];
+            function Bool isYounger(LdQTag i);
+                return ldVirTags[i] > virTag;
             endfunction
-            checkTag = find(checkYoungerEntry, idxVec);
+            youngerLds = map(isYounger, idxVec);
+`endif
+        end
+        else if(lsqTag matches tagged St .tag) begin
+            // sanity check
+            doAssert(st_valid_updAddr[tag],
+                     "updating entry must be valid");
+            doAssert(!st_computed_updAddr[tag] && !st_validated_updAddr[tag],
+                     "updating entry should not be computed or validated");
+            doAssert(isValid(spec_tag) == mmio,
+                     "only MMIO needs to set spec tag");
+
+            // write computed, paddr, shift be, specTag
+            st_computed_updAddr[tag] <= True;
+            st_paddr_updAddr[tag] <= pa;
+            st_isMMIO_updAddr[tag] <= mmio;
+            st_shiftedBE_updAddr[tag] <= shift_be;
+            st_specTag_updAddr[tag] <= spec_tag;
+
+            // A store always try to kill younger loads
+            doKill = True;
+            StQVirTag virTag = stVirTags[tag];
+            curSt = Valid (virTag);
+            function Bool isYounger(LdQTag i);
+                if(olderStVirTags[i] matches tagged Valid .t) begin
+                    // load's immediate older store is younger than or equal to
+                    // this updating entry, so load is younger
+                    return t >= virTag;
+                end
+                else begin
+                    // load has no older store, so load is older
+                    return False;
+                end
+            endfunction
+            youngerLds = map(isYounger, idxVec);
         end
         else begin
-            // younger entries are in (lsqTag, LdStQSize) + [0, enqP)
-            // first search from small tag to large within (lsqTag, LdStQSize)
-            function Bool checkEntryFirst(LdStQTag i);
-                return i > lsqTag && needCheck[i];
-            endfunction
-            Maybe#(LdStQTag) firstTag = find(checkEntryFirst, idxVec);
-            // next search from small tag t olarge within [0, enqP)
-            function Bool checkEntryNext(LdStQTag i);
-                return i < enqP && needCheck[i];
-            endfunction
-            Maybe#(LdStQTag) nextTag = find(checkEntryNext, idxVec);
-            // merge
-            checkTag = isValid(firstTag) ? firstTag : nextTag;
+            doAssert(False, "unknown lsq tag");
         end
-`endif
-        // check for killing Ld (executing/done): mark it as killed & enq killQ
-        if(checkTag matches tagged Valid .tag &&& memInst[tag].mem_func == Ld &&& state[tag][state_update_port] != Idle) begin
-            ldKilled[tag][killed_update_port] <= True;
-            killQ.enq(ToSpecFifo {
-                data: tag,
-                spec_bits: specBits[tag][sb_update_port]
-            });
-            doAssert(!isMMIO[tag][mmio_update_port], "cannot kill MMIO Ld");
-            // when the Ld called incorrectSpeculation, it will kill itself
-            // and set waitWPResp if it is still executing at that time
-            Maybe#(SpecTag) st = specTag[tag][specTag_update_port];
-            doAssert(isValid(st), "killed Ld must have spec tag");
-            doAssert(specBits[tag][sb_update_port][validValue(st)] == 1, "sb of killed Ld has itself's spec tag");
+
+        // kill younger loads
+        if(doKill) begin
+            // Kill the youngested load which satisifies all the following
+            // conditions:
+            // (1) valid
+            // (2) computed
+            // (3) younger
+            // (4) paddr & BE overlap with the updating Ld/Lr
+            // (5) has read or is reading a stale value
+            function Bool needKill(LdQTag i);
+                Bool valid = ld_valid_updAddr[i];
+                Bool computed = ld_computed_updAddr[i];
+                Bool younger = youngerLds[i];
+                Bool overlap = overlapAddr(pa, shift_be,
+                                           ld_paddr_updAddr[i],
+                                           ld_shiftedBE_updAddr[i]);
+                // figure out if the load reads a stale value
+                Bool read_stale;
+                if(ld_done_updAddr[i] || ld_executing_updAddr[i]) begin
+                    if(readFromVirTags[i] matches tagged Valid .rf) begin
+                        // younger load bypass from a store
+                        if(curSt matches tagged Valid .st) begin
+                            // if the forwarding store is not younger than the
+                            // current store, then should kill
+                            read_stale = rf <= st;
+                        end
+                        else begin
+                            // this is the case of Ld killing Ld, the older Ld
+                            // has no older store, so younger load is always
+                            // safe
+                            read_stale = False;
+                        end
+                    end
+                    else begin
+                        // This younger load reads memory, must be stale
+                        read_stale = True;
+                    end
+                end
+                else begin
+                    // load is not done or executing, so cannot get stale value
+                    read_stale = False;
+                end
+                // combine everything together
+                return valid && computed && younger && overlap && read_stale;
+            endfunction
+            Vector#(LdQSize, Bool) killLds = map(needKill, idxVec);
+            if(findOldestLd(killLds) matches tagged Valid .killTag) begin
+                ld_killed_updAddr[killTag] <= True;
+                killByLdStQ.enq(ToSpecFifo {
+                    data: killTag,
+                    spec_bits: ld_specBits_updAddr[killTag]
+                });
+                // checks
+                doAssert(!ld_isMMIO_updAddr[killTag], "cannot kill MMIO");
+                doAssert(ld_memFunc[killTag] == Ld, "can only kill Ld");
+                Maybe#(SpecTag) specTag = ld_specTag_updAddr[killTag];
+                SpecBits specBits = ld_specBits_updAddr[killTag];
+                doAssert(isValid(specTag), "killed Ld must have spec tag");
+                doAssert(specBits[validValue(specTag)] == 1,
+                         "sb of killed Ld has itself's spec tag");
+                // when the Ld called incorrectSpeculation, it will kill
+                // itself, and set waitWPResp if it is still executing at
+                // that time
+            end
         end
 
         // make conflict with incorrect spec
         wrongSpec_update_conflict.wset(?);
 
-        // return waiting for wp resp bit: for deciding whether the updating Ld can be issued
+        // return waiting for wp resp bit: for deciding whether the updating Ld
+        // can be issued
         return LSQUpdateResult {
-            waitWPResp: waitWPResp[lsqTag]
+            waitWPResp: (case(lsqTag) matches
+                tagged Ld .tag: (ld_waitWPResp[tag]);
+                default: False;
+            endcase);
         };
     endmethod
 
-    method ActionValue#(LSQIssueResult) issue(LdStQTag lsqTag, Addr pa, ByteEn shift_be, SBSearchRes sbRes);
-        doAssert(pa == paddr[lsqTag][paddr_issue_port], "Ld paddr incorrect");
-        doAssert(shift_be == shiftedBE[lsqTag][shBE_issue_port], "Ld BE incorrect");
-        doAssert(valid[lsqTag][valid_issue_port], "issuing Ld must be valid");
-        doAssert(computed[lsqTag][comp_issue_port], "issuing Ld must be computed");
-        doAssert(memInst[lsqTag].mem_func == Ld, "only issue Ld");
-        doAssert(state[lsqTag][state_issue_port] == Idle, "issuing Ld must be idle");
+    method ActionValue#(LSQIssueResult) issueLd(LdQTag tag,
+                                                Addr pa,
+                                                ByteEn shift_be,
+                                                SBSearchRes sbRes);
+        doAssert(pa == ld_paddr_issue[tag], "Ld paddr incorrect");
+        doAssert(shift_be == ld_shiftedBE_issue[tag], "Ld BE incorrect");
+        doAssert(ld_valid_issue[tag], "issuing Ld must be valid");
+        doAssert(ld_computed_issue[tag], "issuing Ld must be computed");
+        doAssert(!ld_executing_issue[tag], "issuing Ld must not be executing");
+        doAssert(!ld_done_issue[tag], "issuing Ld must not be done");
+        doAssert(!ld_killed_issue[tag], "issuing Ld must not be killed");
+        doAssert(ld_memFunc[tag] == Ld, "only issue Ld");
+        doAssert(!ld_isMMIO_issue[tag], "issuing Ld cannot be MMIO");
         doAssert(
-            !isValid(ldDepLSQDeq[lsqTag][depLSQDeq_issue_port]) &&
-            !isValid(ldDepLdEx[lsqTag][depLdEx_issue_port]) &&
-            !isValid(ldDepSB[lsqTag][depSB_issue_port]),
+            !isValid(ld_depLdQDeq_issue[tag]) &&
+            !isValid(ld_depLdEx_issue[tag]) &&
+`ifndef TSO_MM
+            !isValid(ld_depSBDeq_issue[tag]) &&
+`endif
+            !isValid(ld_depStQDeq_issue[tag]),
             "issuing entry should not have dependence"
         );
-        doAssert(!waitWPResp[lsqTag], "issuing Ld cannot wait for WP resp");
-        doAssert(!ldKilled[lsqTag][killed_issue_port], "issuing Ld cannot be killed");
-        doAssert(!isMMIO[lsqTag][mmio_issue_port], "issuing Ld cannot be MMIO");
+        doAssert(!ld_waitWPResp[tag], "issuing Ld cannot wait for WP resp");
 
-        // current deq ptr
-        LdStQTag curDeqP = deqP[deqP_issue_port];
-
-        // index vec for vector functions
-        Vector#(LdStQSize, LdStQTag) idxVec = genWith(fromInteger);
-
-        // search for (youngest) older access such that
-        // (1) the entry is valid
-        // (2) entry is in either case
-        //     a. Reconcile
-        //     b. computed and same aligned addr mem inst: Lr,Sc,Amo,St and Idle Ld
-        // XXX The load must stall on unissued access for the same aligned addr
-        // otherwise the previous killing scheme will go wrong
-        function Bool matchEntry(LdStQTag i);
-            return valid[i][valid_issue_port] && ( // valid entry
-                hasReconcile(i) || // reconcile: 
-                computed[i][comp_issue_port] && // computed: must be Ld/Lr/St/Sc/Amo, XXX cannot be fence
-                sameAlignedAddr(pa, paddr[i][paddr_issue_port]) && // same aligned addr
-                (memInst[i].mem_func != Ld || state[i][state_issue_port] == Idle) // Idle load or St/Lr/Sc/Amo
-            );
-        endfunction
-        Vector#(LdStQSize, Bool) isMatch = map(matchEntry, idxVec);
-
-        // search for matching entry
-        Maybe#(LdStQTag) matchTag = Invalid;
-`ifdef LSQ_VTAG
-        // use virtual tag: consider entries older than lsqTag (i.e. smaller tag)
-        // note that LSQ must be non-empty, and we search for valid entry
-        LSQVTag virtualLsqTag = virtualTags[lsqTag];
-        function Bool matchOlderEntry(LdStQTag i);
-            return isMatch[i] && virtualTags[i] < virtualLsqTag;
-        endfunction
-        // get the youngest
-        matchTag = findYoungest(map(matchOlderEntry, idxVec));
-`else
-        // normal search: two cases (LSQ must be non-empty)
-        if(lsqTag >= curDeqP) begin
-            // older entries are within [deqP, lsqTag), find the largest tag
-            function Bool matchOlderEntry(LdStQTag i);
-                return i < lsqTag && i >= curDeqP && isMatch[i];
-            endfunction
-            // since we find the largest tag, we search reversely
-            matchTag = find(matchOlderEntry, reverse(idxVec));
-        end
-        else begin
-            // older entries are within [deqP, LdStQSize) + [0, issueTag)
-            // first find the largest tag within [0, issueTag)
-            function Bool matchEntryFirst(LdStQTag i);
-                return i < lsqTag && isMatch[i];
-            endfunction
-            Maybe#(LdStQTag) firstTag = find(matchEntryFirst, reverse(idxVec));
-            // next find the largest tag within [deqP, LdStQSize)
-            function Bool matchEntryNext(LdStQTag i);
-                return i >= curDeqP && isMatch[i];
-            endfunction
-            Maybe#(LdStQTag) nextTag = find(matchEntryNext, reverse(idxVec));
-            // merge the results
-            matchTag = isValid(firstTag) ? firstTag : nextTag;
-        end
-`endif
-
-        // update state and ldDep & get issue result
+        // issue result
         LSQIssueResult issRes = Stall;
-        if(matchTag matches tagged Valid .t) begin
-            if(hasReconcile(t)) begin
-                // wait for reconcile to deq from LSQ
-                issRes = Stall;
-                ldDepLSQDeq[lsqTag][depLSQDeq_issue_port] <= Valid (t);
+
+        // common thing for TSO and WEAK: valid SQ entry older than the load
+        Maybe#(StQVirTag) precedingSt = olderStVirTags[tag];
+        function Bool isValidOlderSt(StQTag i);
+            Bool valid = st_valid_issue[i];
+            Bool older;
+            if(precedingSt matches tagged Valid .st) begin
+                older = stVirTags[i] <= st;
             end
             else begin
-                case(memInst[t].mem_func)
-                    Ld: begin
-                        // wait for Ld to issue
-                        issRes = Stall;
-                        ldDepLdEx[lsqTag][depLdEx_issue_port] <= Valid (t);
+                // load has no older store
+                older = False;
+            end
+            return valid && older;
+        endfunction
+        Vector#(StQSize, Bool) validOlderSts = map(isValidOlderSt,
+                                                   genWith(fromInteger));
+
+`ifdef TSO_MM
+        // TSO does not need to stall a load on fence or AMO. This is because
+        // verfication of fence or AMO will be stalled until their fencing
+        // effects are taken. And this will stall the verfication of younger
+        // loads. The .rl->.aq ordering is also enforced by executing Lr/Sc/Amo
+        // at sequential verification time (in RISC-V .aq and .rl can only be
+        // found in Lr/Sc/Amo). TODO maybe it is better to use .aq as a hint
+        // to throttle speculative load execution.
+
+        // We only search for older overlapping SQ entries for bypass:
+        // (1) valid older SQ entry
+        // (2) computed
+        // (3) overlap addr
+        function Bool isOverlapSt(StQTag i);
+            Bool valid_older = validOlderSts[i];
+            Bool computed = st_computed_issue[i];
+            Bool overlap = overlapAddr(pa, shift_be,
+                                       st_paddr_issue[i],
+                                       st_shiftedBE_issue[i]);
+            return valid_older && computed && overlap;
+        endfunction
+        Vector#(StQSize, Bool) overlapSts = map(isOverlapSt,
+                                                genWith(fromInteger));
+        // search the youngest store, and derive issue result
+        if(findYoungestSt(overlapSts) matches tagged Valid .stTag) begin
+            // find an overlaping SQ entry, check its type
+            case(st_memFunc[stTag])
+                Sc, Amo: begin
+                    // cannot forward, stall the load
+                    issRes = Stall;
+                    ld_depStQDeq_issue[tag] <= Valid (stTag);
+                end
+                St: begin
+                    // check if forwarding is possible
+                    if(be1CoverBe2(st_shiftedBE_issue[stTag], shifted_be)) begin
+                        // store covers the issuing load, forward
+                        issRes = Forward (LSQForwardResult {
+                            dst: ld_dst[tag],
+                            data: st_stData_issue[stTag]
+                        });
+                        // set executing and record readFrom
+                        ld_executing_issue[tag] <= True;
+                        ld_readFrom_issue[tag] <= Valid (stTag);
                     end
-                    Lr, Sc, Amo: begin
-                        // wait for Lr/Sc/Amo to deq from LSQ
+                    else begin
+                        // cannot forward, stall
                         issRes = Stall;
-                        ldDepLSQDeq[lsqTag][depLSQDeq_issue_port] <= Valid (t);
+                        ld_depStQDeq_issue[tag] <= Valid (stTag);
+                    end
+                end
+                default: begin
+                    doAssert(False, "unknown st mem func");
+                end
+            endcase
+        end
+        else begin
+            // no overlaping SQ entry is found, send to mem
+            issRes = ToCache;
+            // set executing and record readFrom
+            ld_executing_issue[tag] <= True;
+            ld_readFrom_issue[tag] <= Invalid;
+            // check no SB in TSO
+            doAssert(!isValid(sbRes.matchIdx) && !isValid(sbRes.forwardData),
+                     "no SB in TSO");
+        end
+
+`else
+
+        // WEAK model needs to do two searches (1) Overlaping unissued Ld/Lr or
+        // fence in LQ (e.g., .aq in Lr) (2) Overlaping St/Sc/Amo or fence in
+        // SQ (e.g., .aq in Amo) XXX Strictly speaking, we should stall the
+        // load as long as there is a fence. However, since we keep
+        // fence/Ld->St ordering, we can allow a store younger than the fence
+        // to forward data to the load.
+
+        // We need to check LQ entry which satisfies:
+        // (1) valid
+        // (2) older
+        // (3) has acquire, or is computed but unissued and has overlap addr
+        LdQVirTag issueVTag = ldVirTags[tag];
+        function Bool isLdNeedCheck(LdQTag i);
+            Bool valid = ld_valid_issue[i];
+            Bool older = ldVirTags[i] < issueVTag;
+            Bool acquire = ld_acq[i];
+            Bool computed = ld_computed_issue[i];
+            Bool unissued = !ld_executing_issue[i];
+            Bool overlap = overlapAddr(pa, shift_be,
+                                       ld_paddr_issue[i],
+                                       ld_shiftedBE_issue[i]);
+            return valid && older &&
+                   (acquire || computed && unissued && overlap);
+        endfunction
+        Vector#(LdQSize, Bool) checkLds = map(isLdNeedCheck,
+                                              genWith(fromInteger));
+        Maybe#(LdQTag) matchLdTag = findYoungestLd(checkLds);
+
+        // We need to check SQ entry which satisfies:
+        // (1) valid and older
+        // (2) has acquire, or is computed and has overlap addr
+        function Bool isStNeedCheck(StQTag i);
+            Bool valid_older = validOlderSts[i];
+            Bool acquire = st_acq[i];
+            Bool computed = st_computed_issue[i];
+            Bool overlap = overlapAddr(pa, shift_be,
+                                       st_paddr_issue[i],
+                                       st_shiftedBE_issue[i]);
+            return valid_older && (acquire || computed && overlap);
+        endfunction
+        Vector#(StQSize, Bool) checkSts = map(isStNeedCheck,
+                                              genWith(fromInteger));
+        Maybe#(StQTag) matchStTag = findYoungestSt(checkSts);
+
+        // select the younger one from LQ and SQ search results
+        LdQTag ldTag = validValue(matchLdTag);
+        Maybe#(StQVirTag) ldTagOlderSt = olderStVirTags[ldTag];
+        StQTag stTag = validValue(matchStTag);
+        StQVirTag stVTag = stVirTags[stTag];
+        if(isValid(matchLdTag) && (!isValid(matchStTag) ||
+                                   (isValid(ldTagOlderSt) && 
+                                   validValue(ldTagOlderSt) >= stVTag))) begin
+            // stalled by Ld, Lr or acquire fence in LQ
+            issRes = Stall;
+            if(ld_acq[ldTag]) begin
+                ld_depLdQDeq_issue[tag] <= matchLdTag;
+            end
+            else begin
+                case(ld_memFunc[ldTag])
+                    Ld: ld_depLdEx_issue[tag] <= matchLdTag;
+                    Lr: ld_depLdQDeq_issue[tag] <= matchLdTag;
+                    default: doAssert(False, "unknown ld func");
+                endcase
+            end
+        end
+        else if(isValid(matchStTag) && 
+                (!isValid(matchLdTag) ||
+                 !isValid(ldTagOlderSt) ||
+                 validValue(ldTagOlderSt) < stVTag)) begin
+            // bypass or stall by SQ
+            if(st_acq[stTag]) begin
+                // stall by acquire fence in SQ
+                issRes = Stall;
+                ld_depStQDeq_issue[tag] <= matchStTag;
+            end
+            else begin
+                // match overlap Sc/Amo/St, check if forward is possible
+                case(st_memFunc[validValue[stTag]])
+                    Sc, Amo: begin
+                        // cannot forward, stall
+                        issRes = Stall;
+                        ld_depStQDeq_issue[tag] <= matchStTag;
                     end
                     St: begin
-                        // matches a St, check whether we can bypass data
-                        if((pack(shiftedBE[t][shBE_issue_port]) & pack(shift_be)) == pack(shift_be)) begin
-                            // matching store covers the issuing load, could forward
+                        // check if forwarding is possible
+                        if(be1CoverBe2(st_shiftedBE_issue[stTag],
+                                       shifted_be)) begin
+                            // store covers the issuing load, forward
                             issRes = Forward (LSQForwardResult {
-                                dst: dst[lsqTag],
-                                data: shiftedData[t][shData_issue_port]
+                                dst: ld_dst[tag],
+                                data: st_stData_issue[stTag]
                             });
-                            state[lsqTag][state_issue_port] <= Executing;
+                            // set executing and record readFrom
+                            ld_executing_issue[tag] <= True;
+                            ld_readFrom_issue[tag] <= matchStTag;
                         end
                         else begin
-                            // cannot cover, wait for store deq from LSQ
+                            // cannot forward, stall
                             issRes = Stall;
-                            ldDepLSQDeq[lsqTag][depLSQDeq_issue_port] <= Valid (t);
+                            ld_depStQDeq_issue[tag] <= matchStTag;
                         end
                     end
-                    default: doAssert(False, "cannot be fence");
+                    default: begin
+                        doAssert(False, "unknown st mem func");
+                    end
                 endcase
             end
         end
         else begin
-            // not matching entry, check SB search result
+            // nothing found in LQ or SQ, check SB search result
             if(sbRes.forwardData matches tagged Valid .d) begin
                 // get forward from SB
                 issRes = Forward (LSQForwardResult {
-                    dst: dst[lsqTag],
+                    dst: ld_dst[tag],
                     data: d
                 });
-                state[lsqTag][state_issue_port] <= Executing;
+                // set executing and record readFrom. We view forwarding from
+                // SB as reading memory, because the value is not in SQ
+                ld_executing_issue[tag] <= True;
+                ld_readFrom_issue[tag] <= Invalid;
             end
             else if(sbRes.matchIdx matches tagged Valid .idx) begin
-                // SB has matching entry, but cannot fully forward, wait for SB deq
+                // SB has matching entry, but cannot fully forward, wait for SB
+                // deq
                 issRes = Stall;
-                ldDepSB[lsqTag][depSB_issue_port] <= Valid (idx);
+                ld_depSBDeq_issue[tag] <= Valid (idx);
             end
             else begin
                 // send to cache
                 issRes = ToCache;
-                state[lsqTag][state_issue_port] <= Executing;
+                // set executing and record readFrom
+                ld_executing_issue[tag] <= True;
+                ld_readFrom_issue[tag] <= Invalid;
             end
         end
+`endif
 
         // if the Ld is issued, remove dependences on this issue
         if(issRes != Stall) begin
-            function Action setReady(LdStQTag i);
+            function Action setReady(LdQTag i);
             action
-                // no need to check valid here, we can write anything to invalid entry
-                if(ldDepLdEx[i][depLdEx_issue_port] == Valid (lsqTag)) begin
-                    ldDepLdEx[i][depLdEx_issue_port] <= Invalid;
+                // no need to check valid here, we can write anything to
+                // invalid entry
+                if(ld_depLdEx_issue[i] == Valid (tag)) begin
+                    ld_depLdEx_issue[i] <= Invalid;
                 end
             endaction
             endfunction
+            Vector#(LdQSize, LdQTag) idxVec = genWith(fromInteger);
             joinActions(map(setReady, idxVec));
         end
 
@@ -1256,16 +1534,17 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
         return issRes;
     endmethod
 
-    method ActionValue#(LSQIssueInfo) getIssueLd;
-        issueQ.deq;
-        // reset ldInIssueQ
-        let tag = issueQ.first.data.tag;
-        ldInIssueQ[tag][inIssQ_issue_port] <= False;
-        doAssert(ldInIssueQ[tag][inIssQ_issue_port], "Ld should be in issueQ");
+    method ActionValue#(LSQIssueLdInfo) getIssueLd;
+        issueLdQ.deq;
+        // reset inIssueQ
+        let tag = issueLdQ.first.data.tag;
+        ld_inIssueQ_issue[tag] <= False;
+        doAssert(ld_inIssueQ_issue[tag], "Ld should be in issueQ");
+        doAssert(ld_memFunc[tag] == Ld, "must be Ld");
         return issueQ.first.data;
     endmethod
 
-    method ActionValue#(LSQKillInfo) getKillLd;
+    method ActionValue#(LSQKillLdInfo) getKillLd;
         killQ.deq;
         let lsqTag = killQ.first.data;
         doAssert(
@@ -1276,9 +1555,8 @@ module mkSplitLSQ#(Bool tso)(SplitLSQ);
             "killed load must be valid load in Done/Executing with ldKilled set"
         );
         return LSQKillInfo {
-            pc: pc[lsqTag],
-            inst_tag: instTag[lsqTag],
-            specTag: specTag[lsqTag][specTag_getKill_port]
+            instTag: ld_instTag[lsqTag],
+            specTag: ld_specTag_kill[lsqTag]
         };
     endmethod
 
