@@ -82,6 +82,38 @@ export mkSpecLSQ;
 // TODO Fence is currently not inserted into LSQ. we need to set its aq/rl
 // bits in future and put it into LSQ
 
+// For TSO, to make our OOO execution conform to TSO, we need to *verify* each
+// load and store sequentially to mimic TSO I2E operational model. Besides the
+// sequential ordering of verification, a Ld can be verified when it has its
+// result, a St can be verified when it has addr and data computed, an
+// Lr/Sc/Amo can be verified when it has completed memory access, and a fence
+// can be verified when all older mem accesses have been dequeued from LSQ. A
+// Ld/Lr/MMIO is verified by dequeuing it from LQ, so there is no
+// verify-pointer in LQ. A Sc/Amo/Fence/MMIO is also verfied by dequeuing it
+// from SQ. The only reason for needing a verify-pointer in SQ is that a
+// verified St can still live in SQ. All stores within [deqP, verify-pointer)
+// are Sts that have been verfied, and verify-pointer points to the next store
+// to be verfied.  This pointer helps enforcing the sequential verification
+// ordering:
+// - The LQ head can be dequeued when its olderSt is invalid or older than
+// SQ verify pointer.
+// - The SQ entry at verify pointer can be verified when the LQ head's
+// olderSt is younger than or equal to this SQ entry.
+// Because of the pathological case that verify-ptr = deq ptr = enq ptr (when
+// SQ is full), we need to add a verified bit to SQ to distinguish the case of
+// everything verified from the case of nothing verified.
+
+// For WEAK, we also need verified bits and verify-ptr for SQ. These are for
+// dequeuing LQ. An LQ entry cannot be dequeud until all older SQ entries have
+// computed their addresses (pure fences can be verified as long as they are
+// valid). Note that fences do not prevent normal Ld from being dequeued, but
+// prevent normal Ld from executing. For Lr, things are trickier. Lr is issued
+// at deq time. To avoid doing a search for fences, we can just issue Lr when
+// all older SQ entries are dequeued. Same thing applies to MMIO. We add these
+// to guards of deqLd. The requirement for verification is slightly different
+// from TSO, i.e., an Sc/Amo can be verified by just computing the addr; it
+// needs not to be dequeued from SQ.
+
 typedef enum {Ld, Lr} LdQMemFunc deriving(Bits, Eq, FShow);
 
 // LQ holds Ld and Lr. This type is for documentation purpose, it is not really
@@ -118,7 +150,7 @@ typedef struct {
     Bool             inIssueQ;
     // Ld is executing (either issued to cache or forwarding is on its way).
     Bool             executing;
-    // Ld has got its result
+    // Ld has got its result (executing must be true)
     Bool             done;
     // Ld is killed by older inst (failed speculation), can be true only when
     // executing or done is true
@@ -132,6 +164,11 @@ typedef struct {
     // for searching older stores for bypass or stall. If the SQ entry is not
     // valid, then the search is not needed. 
     Maybe#(StQTag)   olderSt;
+    // We can deq a LQ entry when older SQ entries have been dequeued or
+    // verified. The olderSt field can indication if the immeidate older SQ
+    // entry have been dequeued, this field indicates whether it is
+    // verified. This is only meaningful when olderSt is valid.
+    Bool             olderStVerified;
     // The store that the Ld reads from. If invalid, then the load reads from
     // memory. This only meaning when done = True.
     Maybe#(StQTag)   readFrom;
@@ -200,6 +237,8 @@ typedef struct {
 
     // paddr/isMMIO/data have been computed
     Bool             computed;
+    // entry is verified, see comments above
+    Bool             verified;
 
     // ===================
     // Ld/St ordering.
@@ -256,21 +295,30 @@ typedef struct {
 } LSQHitInfo deriving(Bits, Eq, FShow);
 
 typedef struct {
-    LdStQTag        ldstq_tag;
-    InstTag         inst_tag;
-    MemInst         mem_inst;
+    InstTag         instTag;
+    LdQMemFunc      memFunc;
+    Bool            rel;
     Maybe#(PhyDst)  dst;
     Addr            paddr;
     Bool            isMMIO;
     ByteEn          shiftedBE;
-    Data            shiftedData;
-    LSQState        state;
-    Bool            computed;
-    Bool            ldKilled;
     Maybe#(SpecTag) specTag;
-    SpecBits        spec_bits;
+    SpecBits        specBits;
     Bool            waitWPResp;
-} LSQDeqEntry deriving (Bits, Eq, FShow);
+} LdQDeqEntry deriving (Bits, Eq, FShow);
+
+typedef struct {
+    InstTag         instTag;
+    StQMemFunc      memFunc;
+    Bool            rel;
+    Maybe#(PhyDst)  dst;
+    Addr            paddr;
+    Bool            isMMIO;
+    ByteEn          shiftedBE;
+    Data            stData;
+    Maybe#(SpecTag) specTag;
+    SpecBits        specBits;
+} StQDeqEntry deriving (Bits, Eq, FShow);
 
 typedef union tagged {
     LdQTag Ld;
@@ -314,21 +362,46 @@ interface SplitLSQ;
     method ActionValue#(LSQKillLdInfo) getLdKilledByLdSt;
     // Get load resp
     method ActionValue#(LSQRespLdResult) respLd(LdStQTag t, Data alignedData);
-    // Deq LQ entry, and wakeup stalled loads. The guard only checks that entry
-    // is valid and all older stores have got their addrs. Outside world should
-    // do the following:
-    // (1) sends Lr or MMIO to cache only at deq port
-    // (2) check specBits & waitWPResp before issue Lr or MMIO
-    // (3) check specBits & status bits before deq
-    // (4) check killed before (if killed, cannot deq and then commit ROB)
-    // (5) set ROB entry of deq mem inst to Executed (so that ROB can commit)
-    // (6) when deq Ld, clear spectag of Ld globally
+    // Deq LQ entry, and wakeup stalled loads. The guard checks the following:
+    // (1) valid
+    // (2) not killed (we cannot deq a killed Ld and then commit it in ROB)
+    // (3) for non-MMIO Ld, it is done and all older SQ entries have been
+    // dequeued or verified
+    // (4) for Lr or MMIO, it is computed and there is no older SQ entry (this
+    // also handles the .rl associated with Lr)
+    // (5) there is no pure fence in LQ right now
+    // Outside world should do the following:
+    // (1) issue Lr or MMIO to memory system only at deq port
+    // (2) check specBits and waitWPResp before issuing Lr or MMIO
+    // (3) For WEAK model, check .rl associated with Lr and SB empty before
+    // issuing Lr
+    // (4) set ROB entry of deq mem inst to Executed (so that ROB can commit)
+    // (5) when deq Ld or MMIO, clear spectag globally
     method LdQDeqEntry firstLd;
     method Action deqLd;
-    // Validate SQ entry sequentially to be non-speculative (TSO only)
-    method Action validateSt;
+    // Verify SQ entry sequentially
+    // - TSO verify requires:
+    // (1) for normal non-MMIO St, addr and data are computed
+    // (2) for Sc/Amo/MMIO, it is dequeued (by completing memory access)
+    // WEAK verify only requires that addr is computed
+    method Action verifySt;
     // Deq SQ entry, and wakeup stalled loads. Also change the readFrom and
-    // olderSt fields of loads.
+    // olderSt fields of loads. The guard only checks the following:
+    // (1) valid
+    // (2) for St/Sc/Amo/MMIO, it is computed and all older LQ entries have
+    // been dequeued
+    // (3) there is no pure fence in SQ right now
+    // (4) .rl associated with Sc/Amo is automatically handled
+    // Outside world should do the following:
+    // (1) issue Sc/Amo/MMIO to memory system at deq port
+    // (2) for WEAK model, issue normal St to SB
+    // (3) for TSO, issue normal St to memory
+    // (4) check specBits before issuing to memory or SB
+    // (5) For WEAK model, check .rl associated with Sc/Amo and SB empty before
+    // issuing Sc/Amo
+    // (6) set ROB entry of dequeued Sc/Amo/MMIO to Executed (normal St should
+    // have been set as Executed when addr and data are computed)
+    // (7) when deq MMIO, clear spectag globally
     method StQDeqEntry firstSt;
     method Action deqSt;
 `ifdef TSO_MM
@@ -489,9 +562,7 @@ module mkSplitLSQ(SplitLSQ);
     // - To cut off bypassing from stb.enq to stb.deq, we put wakeupStallBySB
     // < deqSt.
     // - There is a bypassing path from updateAddr to respLd, though it should
-    // never be activated in reality. Another (non-important) reason to put
-    // updateAddr < respLd is that respLd set done bit, which are used by
-    // updateAddr in associative search. TODO We can make a bypass wire to read
+    // never be activated in reality. TODO We can make a bypass wire to read
     // paddr[0] in respLd method.
     // - There is a bypassing path from validatedSt to deqSt, i.e., a store
     // can be validated and issued to memory at the same cycle. This is
@@ -500,7 +571,8 @@ module mkSplitLSQ(SplitLSQ);
     // updated LQ entry into issueQ; this can create problem because the new
     // updated load may be immediately issued to execution in the same cycle
     // later.
-    // - Only one of deqLd and verifySt can fire at one cycle.
+    // - Only one of deqLd and verifySt can fire at one cycle, because of
+    // sequential verification requirement.
 
     // W.r.t wrongSpec:
     // getKillLd < wrongSpec (they fire in same rule)
@@ -607,35 +679,36 @@ module mkSplitLSQ(SplitLSQ);
 
     // LQ
     // entry valid bits
-    Vector#(LdQSize, Ehr#(3, Bool))             ld_valid      <- replicateM(mkEhr(False));
+    Vector#(LdQSize, Ehr#(3, Bool))             ld_valid           <- replicateM(mkEhr(False));
     // entry contents
-    Vector#(LdQSize, Reg#(InstTag))             ld_instTag    <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(LdQMemFunc))          ld_memFunc    <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Bool))                ld_unsigned   <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(ByteEn))              ld_byteEn     <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Bool))                ld_acq        <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Bool))                ld_rel        <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Maybe#(PhyDst)))      ld_dst        <- replicateM(mkRegU);
-    Vector#(LdQSize, Ehr#(3, Addr))             ld_paddr      <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))             ld_isMMIO     <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, ByteEn))           ld_shiftedBE  <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))             ld_computed   <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))             ld_inIssueQ   <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))             ld_executing  <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))             ld_done       <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))             ld_killed     <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Maybe#(StQTag)))   ld_olderSt    <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Maybe#(StQTag)))   ld_readFrom   <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Maybe#(LdStQTag))) ld_depLdQDeq  <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Maybe#(LdStQTag))) ld_depLdEx    <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Maybe#(SBIndex)))  ld_depStQDeq  <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Reg#(InstTag))             ld_instTag         <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(LdQMemFunc))          ld_memFunc         <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Bool))                ld_unsigned        <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(ByteEn))              ld_byteEn          <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Bool))                ld_acq             <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Bool))                ld_rel             <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Maybe#(PhyDst)))      ld_dst             <- replicateM(mkRegU);
+    Vector#(LdQSize, Ehr#(3, Addr))             ld_paddr           <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))             ld_isMMIO          <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, ByteEn))           ld_shiftedBE       <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))             ld_computed        <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))             ld_inIssueQ        <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))             ld_executing       <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))             ld_done            <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))             ld_killed          <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(StQTag)))   ld_olderSt         <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))             ld_olderStVerified <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(StQTag)))   ld_readFrom        <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(LdStQTag))) ld_depLdQDeq       <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(LdStQTag))) ld_depLdEx         <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(SBIndex)))  ld_depStQDeq       <- replicateM(mkEhr(?));
 `ifndef TSO_MM
-    Vector#(LdQSize, Ehr#(3, Maybe#(SBIndex)))  ld_depSBDeq   <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(SBIndex)))  ld_depSBDeq        <- replicateM(mkEhr(?));
 `endif
-    Vector#(LdQSize, Ehr#(3, Maybe#(SpecTag)))  ld_specTag    <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, SpecBits))         ld_specBits   <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(SpecTag)))  ld_specTag         <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, SpecBits))         ld_specBits        <- replicateM(mkEhr(?));
     // wrong-path load filter (must init to all False)
-    Vector#(LdStQSize, Reg#(Bool))              ld_waitWPResp <- replicateM(mkReg(False));
+    Vector#(LdStQSize, Reg#(Bool))              ld_waitWPResp      <- replicateM(mkReg(False));
     // enq/deq ptr
     Reg#(LdQTag)    ld_enqP <- mkReg(0);
     Ehr#(2, LdQTag) ld_deqP <- mkEhr(0);
@@ -667,31 +740,13 @@ module mkSplitLSQ(SplitLSQ);
     Vector#(LdQSize, Ehr#(3, ByteEn))          st_shiftedBE <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(3, Data))            st_stData    <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(3, Bool))            st_computed  <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))            st_verified  <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(3, Maybe#(SpecTag))) st_specTag   <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(3, SpecBits))        st_specBits  <- replicateM(mkEhr(?));
     // enq/deq ptr
     Reg#(StQTag)    st_enqP <- mkReg(0);
     Ehr#(2, StQTag) st_deqP <- mkEhr(0);
-`ifdef TSO_MM
-    // For TSO only: store-verify-pointer. To make our OOO execution conform to
-    // TSO, we need to verify each load and store sequentially to mimic TSO I2E
-    // operational model. Besides sequential ordering of verification, a Ld can
-    // be verified when it has its result, a St can be verified when it has
-    // addr and data computed, an Lr/Sc/Amo can be verified when it has
-    // completed memory access, and a fence can be verified when all older mem
-    // accesses have been dequeued from LSQ. A Ld or Lr is verified by
-    // dequeuing it from LQ, so there is no verify-pointer in LQ. A
-    // Sc/Amo/Fence is also verfied by dequeuing it from SQ. The only reason
-    // for needing this verify-pointer in SQ is that a verified St can still
-    // live in SQ. All stores within [deqP, verify-pointer) are Sts that have
-    // been verfied, and verify-pointer points to the next store to be verfied.
-    // This pointer helps enforcing the sequential verification ordering:
-    // - The LQ head can be dequeued when its olderSt is invalid or older than
-    // SQ verify pointer.
-    // - The SQ entry at verify pointer can be verified when the LQ head's
-    // olderSt is younger than or equal to this SQ entry.
     Ehr#(2, StQTag) st_verifyP <- mkEhr(0);
-`endif
 
     // FIFO of LSQ tags that try to issue, there should be no replication in it
     LSQIssueLdQ issueLdQ <- mkLSQIssueLdQ;
@@ -756,9 +811,6 @@ module mkSplitLSQ(SplitLSQ);
                                                 genWith(fromInteger));
     Vector#(StQSize, StQVirTag) stVirTags = map(getStVirTag,
                                                 genWith(fromInteger));
-    // virtual tag for st verify ptr. XXX NOTE that this ptr may point to
-    // invalid entry, so need to check entry valid first.
-    StQVirTag stVerifyVirTag = getStVirTag(st_verifyP);
 
     // find oldest LQ entry that satisfy a constraint (i.e. smallest tag)
     function Maybe#(LdQTag) findOldestLd(Vector#(LdQSize, Bool) pred);
@@ -982,6 +1034,34 @@ module mkSplitLSQ(SplitLSQ);
         st_can_enq_wire <= !st_valid[st_enqP][0];
     endrule
 
+    // deqLd guard (see comments at the method declaration)
+    function Bool deqLdGuard;
+        LdQTag deqP = ld_deqP_deq;
+        Bool valid_not_killed = ld_valid_deq[deqP] && !ld_killed_deq[deqP];
+        // Now figure out access type specific requirement
+        Bool no_older_st = !isValid(ld_olderSt_deq[deqP];
+        if(ld_memFunc[deqP] == Ld && !ld_isMMIO_deq[deqP]) begin
+            // normal non-MMIO Ld (cannot have .rl)
+            return valid_not_killed && ld_done_deq[deqP] &&
+                   (no_older_st || ld_olderStVerfied_deq[deqP]);
+        end
+        else begin
+            // Lr or MMIO
+            return valid_not_killed && ld_computed_deq[deqP] && no_older_st;
+        end
+    endfunction
+
+    // deqSt guard (see comments at the method declaration)
+    function Bool deqStGuard;
+        StQTag deqP = st_deqP_deq;
+        Bool valid = st_valid_deq[deqP];
+        Bool computed = st_computed_deq[deqP];
+        LdQTag ldDeqP = ld_deqP_deq;
+        Bool no_older_ld = !ld_valid_deq[ldDeqP] ||
+                           isValid(ld_olderSt_deq[ldDeqP]);
+        return valid && computed && no_older_ld;
+    endfunction
+
     method ByteEn getOrigBE(LdStQTag t);
         return (case(t) matches
             tagged Ld .tag: (ld_byteEn[tag]);
@@ -994,7 +1074,7 @@ module mkSplitLSQ(SplitLSQ);
         wrongSpec_hit_conflict.wset(?); // TODO remove, seems useless
         return (case(t) matches
             tagged Ld .tag: (LSQHitInfo {
-                waitWPResp: ld_waitWPResp[tag],
+                waitWPResp: ld_waitWPResp_hit[tag],
                 dst: ld_dst[tag]
             });
             tagged St .tag: (LSQHitInfo {
@@ -1050,8 +1130,14 @@ module mkSplitLSQ(SplitLSQ);
         // otherwise, we may record a valid olderSt and never get it reset.
         StQTag olderSt = st_enqP == 0 ? fromInteger(valueof(StQSize) - 1)
                                       : (st_enqP - 1);
-        ld_olderSt_enq[ld_enqP] = st_valid_enq[olderSt] ? Valid (olderSt)
-                                                        : Invalid;
+        if(st_valid_enq[olderSt]) begin
+            ld_olderSt_enq[ld_enqP] <= Valid (olderSt);
+            ld_olderVerified_enq[ld_enqP] <= st_verified_enq[olderSt];
+        end
+        else begin
+            ld_olderSt_enq[ld_enqP] <= Invalid;
+            ld_olderVerified_enq[ld_enqP] <= False
+        end
         // make conflict with incorrect spec
         wrongSpec_enq_conflict.wset(?);
     endmethod
@@ -1075,7 +1161,7 @@ module mkSplitLSQ(SplitLSQ);
         st_rel[st_enqP] <= mem_inst.rl;
         st_dst[st_enqP] <= dst;
         st_computed_enq[st_enqP] <= False;
-        st_validated_enq[st_enqP] <= False;
+        st_verified_enq[st_enqP] <= False;
         st_specTag_enq[st_enqP] <= Invalid;
         st_specBits_enq[st_enqP] <= spec_bits;
         // make conflict with incorrect spec
@@ -1089,11 +1175,10 @@ module mkSplitLSQ(SplitLSQ);
         st_stData[t] <= d;
     endmethod
 
-    method ActionValue#(LSQUpdateResult) updateAddr(LdStQTag lsqTag,
-                                                    Addr pa,
-                                                    Bool mmio,
-                                                    ByteEn shift_be,
-                                                    Maybe#(SpecTag) spec_tag);
+    method ActionValue#(LSQUpdateAddrResult) updateAddr(
+        LdStQTag lsqTag, Addr pa, Bool mmio,
+        ByteEn shift_be, Maybe#(SpecTag) spec_tag
+    );
         // index vec for vector functions
         Vector#(LdStQSize, LdStQTag) idxVec = genWith(fromInteger);
 
@@ -1138,7 +1223,7 @@ module mkSplitLSQ(SplitLSQ);
             ld_specTag_updAddr[tag] <= spec_tag;
 
 `ifndef TSO_MM
-            // for WEAK model, kill younger load
+            // for WEAK model, try to kill younger load
             doKill = True;
             curSt = olderStVirTags[tag];
             LdQVirTag virTag = ldVirTags[tag];
@@ -1201,9 +1286,11 @@ module mkSplitLSQ(SplitLSQ);
                 Bool overlap = overlapAddr(pa, shift_be,
                                            ld_paddr_updAddr[i],
                                            ld_shiftedBE_updAddr[i]);
-                // figure out if the load reads a stale value
+                // figure out if the load reads a stale value. Note that
+                // checking executing bit is enough: every done load must also
+                // have executing bit set.
                 Bool read_stale;
-                if(ld_done_updAddr[i] || ld_executing_updAddr[i]) begin
+                if(ld_executing_updAddr[i]) begin
                     if(readFromVirTags[i] matches tagged Valid .rf) begin
                         // younger load bypass from a store
                         if(curSt matches tagged Valid .st) begin
@@ -1256,9 +1343,9 @@ module mkSplitLSQ(SplitLSQ);
 
         // return waiting for wp resp bit: for deciding whether the updating Ld
         // can be issued
-        return LSQUpdateResult {
+        return LSQUpdateAddrResult {
             waitWPResp: (case(lsqTag) matches
-                tagged Ld .tag: (ld_waitWPResp[tag]);
+                tagged Ld .tag: (ld_waitWPResp_updAddr[tag]);
                 default: False;
             endcase);
         };
@@ -1286,7 +1373,7 @@ module mkSplitLSQ(SplitLSQ);
             !isValid(ld_depStQDeq_issue[tag]),
             "issuing entry should not have dependence"
         );
-        doAssert(!ld_waitWPResp[tag], "issuing Ld cannot wait for WP resp");
+        doAssert(!ld_waitWPResp_issue[tag], "issuing Ld cannot wait for WP resp");
 
         // issue result
         LSQIssueResult issRes = Stall;
@@ -1376,12 +1463,12 @@ module mkSplitLSQ(SplitLSQ);
 
 `else
 
-        // WEAK model needs to do two searches (1) Overlaping unissued Ld/Lr or
-        // fence in LQ (e.g., .aq in Lr) (2) Overlaping St/Sc/Amo or fence in
-        // SQ (e.g., .aq in Amo) XXX Strictly speaking, we should stall the
-        // load as long as there is a fence. However, since we keep
-        // fence/Ld->St ordering, we can allow a store younger than the fence
-        // to forward data to the load.
+        // WEAK model needs to do two searches
+        // (1) Overlaping unissued Ld/Lr or fence in LQ (e.g., .aq in Lr)
+        // (2) Overlaping St/Sc/Amo or fence in SQ (e.g., .aq in Amo)
+        // XXX Strictly speaking, we should stall the load as long as there is
+        // a fence. However, since we keep fence/Ld->St ordering, we can allow
+        // a store younger than the fence to forward data to the load.
 
         // We need to check LQ entry which satisfies:
         // (1) valid
@@ -1544,45 +1631,49 @@ module mkSplitLSQ(SplitLSQ);
         return issueQ.first.data;
     endmethod
 
-    method ActionValue#(LSQKillLdInfo) getKillLd;
-        killQ.deq;
-        let lsqTag = killQ.first.data;
+    method ActionValue#(LSQKillLdInfo) getLdKilledByLdSt;
+        killByLdStQ.deq;
+        let tag = killByLdStQ.first.data;
         doAssert(
-            valid[lsqTag][valid_getKill_port] &&
-            state[lsqTag][state_getKill_port] != Idle &&
-            ldKilled[lsqTag][killed_getKill_port] &&
-            memInst[lsqTag].mem_func == Ld,
-            "killed load must be valid load in Done/Executing with ldKilled set"
+            ld_valid_getKill[tag] &&
+            ld_computed_getKill[tag] &&
+            ld_killed_getKill[tag] &&
+            (ld_executing_getKill[tag] || ld_done_getKill[tag]) &&
+            ld_memFunc[tag] == Ld,
+            "killed load must be valid, computed, killed and done/executing"
         );
-        return LSQKillInfo {
-            instTag: ld_instTag[lsqTag],
-            specTag: ld_specTag_kill[lsqTag]
+        return LSQKillLdInfo {
+            instTag: ld_instTag[tag],
+            specTag: ld_specTag_getKill[tag]
         };
     endmethod
 
-    method ActionValue#(LSQRespLdResult) respLd(LdStQTag t, Data alignedData);
+    method ActionValue#(LSQRespLdResult) respLd(LdQTag t, Data alignedData);
         let res = LSQRespLdResult {
             wrongPath: False,
             dst: Invalid,
             data: ?
         };
-        if(waitWPResp[t]) begin
-            waitWPResp[t] <= False;
+        if(ld_waitWPResp_resp[t]) begin
+            ld_waitWPResp_resp[t] <= False;
             res.wrongPath = True;
             res.dst = Invalid; // drop wrong path resp
         end
         else begin
-            doAssert(valid[t][valid_respLd_port] && memInst[t].mem_func == Ld,
-                "valid resp must come for Ld"
-            );
-            doAssert(state[t][state_respLd_port] == Executing, "must be executing");
-            //doAssert(isValid(dst[t]), "load dst should be valid"); // we may load into x0 reg, then dst is Invalid
-            // record resp, load is done
-            state[t][state_respLd_port] <= Done;
+            doAssert(ld_valid_resp[t] && ld_memFunc[t] == Ld,
+                     "valid resp must come for Ld");
+            doAssert(ld_computed_resp[t] &&
+                     ld_executing_resp[t] &&
+                     !ld_done_resp[t],
+                     "must be computed, executing, not done");
+            // we may load into x0 reg, then dst is Invalid, so don't assert
+            // that dst is valid
+            // mark load as done, and shift resp
+            ld_done_resp[t] <= True;
             res.wrongPath = False;
             res.dst = dst[t];
-            res.data = gatherLoad(paddr[t][paddr_respLd_port], memInst[t].byteEn, memInst[t].unsignedLd, alignedData);
-            shiftedData[t][shData_respLd_port] <= res.data; // record for seting ROB entry for verification packet
+            res.data = gatherLoad(ld_paddr_resp[t], ld_byteEn[t],
+                                  ld_unsigned[t], alignedData);
         end
         // make conflict with incorrect spec
         wrongSpec_respLd_conflict.wset(?);
@@ -1590,81 +1681,166 @@ module mkSplitLSQ(SplitLSQ);
         return res;
     endmethod
 
-    method LSQDeqEntry first if(valid[deqP[deqP_deq_port]][valid_deq_port]);
-        LdStQTag curDeqP = deqP[deqP_deq_port];
-        return LSQDeqEntry {
-            ldstq_tag: deqP[deqP_deq_port],
-            inst_tag: instTag[curDeqP],
-            mem_inst: memInst[curDeqP],
-            dst: dst[curDeqP],
-            paddr: paddr[curDeqP][paddr_deq_port],
-            isMMIO: isMMIO[curDeqP][mmio_deq_port],
-            shiftedBE: shiftedBE[curDeqP][shBE_deq_port],
-            shiftedData: shiftedData[curDeqP][shData_deq_port],
-            state: state[curDeqP][state_deq_port],
-            computed: computed[curDeqP][comp_deq_port],
-            ldKilled: ldKilled[curDeqP][killed_deq_port],
-            specTag: specTag[curDeqP][specTag_deq_port],
-            spec_bits: specBits[curDeqP][sb_deq_port],
-            waitWPResp: waitWPResp[curDeqP]
+    method LdQDeqEntry firstLd if(deqLdGuard);
+        LdQTag deqP = ld_deqP_deqLd;
+        return LdQDeqEntry {
+            instTag: ld_instTag[deqP],
+            memFunc: ld_memFunc[deqP],
+            rel: ld_rel[deqP],
+            dst: ld_dst[deqP],
+            paddr: ld_paddr_deqLd[deqP],
+            isMMIO: ld_isMMIO_deqLd[deqP],
+            shiftedBE: ld_shiftedBE_deqLd[deqP],
+            specTag: ld_specTag_deqLd[deqP],
+            specBits: ld_specBits_deqLd[deqP],
+            waitWPResp: ld_waitWPResp_deqLd[deqP]
         };
     endmethod
 
-    method Action deq if(valid[deqP[deqP_deq_port]][valid_deq_port]);
-        Reg#(LdStQTag) curDeqP = deqP[deqP_deq_port];
+    method Action deqLd if(deqLdGuard);
+        LdQTag deqP = ld_deqP_deqLd;
+
         // sanity check
-        doAssert(checkAddrAlign(paddr[curDeqP][paddr_deq_port], memInst[curDeqP].byteEn),
-            "addr BE not naturally aligned"
-        );
-        if(memInst[curDeqP].mem_func == Ld || isMMIO[curDeqP][mmio_deq_port]) begin
-            doAssert(isValid(specTag[curDeqP][specTag_deq_port]), "Ld or MMIO must have spec tag");
-            doAssert(specBits[curDeqP][sb_deq_port] == (1 << validValue(specTag[curDeqP][specTag_deq_port])),
-                "Ld or MMIO must be spec under itself"
-            );
+        doAssert(checkAddrAlign(ld_paddr_deqLd[deqP], ld_byteEn[deqP]),
+                 "addr BE should be naturally aligned");
+        doAssert(!ld_waitWPResp_deqLd[deqP],
+                 "cannot wait for wrong path resp");
+        if(ld_memFunc[deqP] == Ld || ld_isMMIO_deqLd[deqP]) begin
+            doAssert(isValid(ld_specTag_deqLd[deqP]),
+                     "Ld or MMIO must have spec tag");
+            SpecTag specTag = validValue(ld_specTag_deqLd[deqP]);
+            if(ld_isMMIO_deqLd[deqP]) begin
+                doAssert(ld_specBits_deqLd[deqP] == (1 << specTag),
+                         "spec bits of MMIO must be just itself's spec tag");
+            end
+            else begin
+                doAssert(ld_specBits_deqLd[deqP][specTag] == 1,
+                         "spec bits of non-MMIO Ld must contain itself");
+            end
         end
         else begin
-            doAssert(!isValid(specTag[curDeqP][specTag_deq_port]), "non Ld cannot have spec tag");
-            doAssert(specBits[curDeqP][sb_deq_port] == 0, "non Ld cannot under speculation");
+            doAssert(!isValid(ld_specTag_deqLd[deqP]),
+                     "non-MMIO Lr cannot have spec tag");
+            doAssert(ld_specBits_deqLd[deqP] == 0,
+                     "non-MMIO Lr must have zero spec bits");
         end
-        case(memInst[curDeqP].mem_func)
-            Ld: begin
-                doAssert(!waitWPResp[curDeqP] && !ldKilled[curDeqP][killed_deq_port] &&
-                         state[curDeqP][state_deq_port] == (isMMIO[curDeqP][mmio_deq_port] ? Idle : Done),
-                         "Ld cannot wait for wrong path resp, cannot be killed; MMIO Ld is idle; non-MMIO Ld is done");
-            end
-            St: begin
-                doAssert(state[curDeqP][state_deq_port] == Idle && computed[curDeqP][comp_deq_port],
-                    "St must be Idle and computed"
-                );
-            end
-            Lr, Sc, Amo: begin
-                doAssert(state[curDeqP][state_deq_port] == Idle && computed[curDeqP][comp_deq_port] && !waitWPResp[curDeqP],
-                    "Lr/Sc/Amo is issued by outside after computing, but cannot wait for wong path resp"
-                );
-            end
-            //Fence: begin
-            //    doAssert(False, "Fence is not in LSQ for now");
-            //end
-            default: doAssert(False, "unknown mem_func");
-        endcase
+
         // remove the entry
-        valid[curDeqP][valid_deq_port] <= False;
-        curDeqP <= getNextPtr(curDeqP);
+        ld_valid_deqLd[deqP] <= False;
+        ld_deqP_deqLd <= getNextLdPtr(deqP);
+
         // wakeup loads stalled by this entry
         function Action setReady(Integer i);
         action
-            // no need to check valid here, we can write anything to invalid entry
-            if(ldDepLSQDeq[i][depLSQDeq_deq_port] == Valid (curDeqP)) begin
-                ldDepLSQDeq[i][depLSQDeq_deq_port] <= Invalid;
+            // no need to check valid, we can write anything to invalid entry
+            if(ld_depLdQDeq_deqLd[i] == Valid (deqP)) begin
+                ld_depLdQDeq_deqLd[i] <= Invalid;
             end
         endaction
         endfunction
-        Vector#(LdStQSize, Integer) idxVec = genVector;
+        Vector#(LdQSize, Integer) idxVec = genVector;
         joinActions(map(setReady, idxVec));
+
         // make conflict with incorrect spec
-        wrongSpec_deq_conflict.wset(?);
+        wrongSpec_deqLd_conflict.wset(?);
     endmethod
 
+    method Action verifySt if(st_valid_verify[st_verifyP_verify]);
+        StQTag verP = st_verifyP_verify;
+        doAssert(!st_verified_verify[verP], "cannot be verified");
+
+        // check if the entry can be verified
+`ifdef TSO_MM
+        // TSO only verifies non-MMIO St which has computed its addr and data;
+        // for Sc/Amo/MMIO, TSO waits for it to deq
+        when(st_memFunc_verify[verP] == St &&
+             !st_isMMIO_verify[verP] &&
+             st_computed_verify[verP], noAction);
+`else
+        // WEAK can verify as long as addr is computed
+        when(st_computed_verify[verP], noAction);
+`endif
+
+        // mark as verified and move verify ptr
+        st_verified_verify[verP] <= True;
+        st_verifyP_verify <= getNextStPtr(verP);
+
+        // tell LQ entries that this entry is verified; no need to check LQ
+        // entry valid
+        function Action setVerified(Integer i);
+        action
+            if(ld_olderSt_verify[i] == Valid (verP)) begin
+                ld_olderStVerified_verify[i] <= True;
+            end
+        endaction
+        endfunction
+        Vector#(LdQSize, Integer) idxVec = genVector;
+        joinActions(map(setVerified, idxVec));
+
+        // make conflict with incorrect spec
+        wrongSpec_verify_conflict.wset(?);
+    endmethod
+
+    method StQDeqEntry firstSt if(deqStGuard);
+        StQTag deqP = st_deqP_deqSt;
+        return StQDeqEntry {
+            instTag: st_instTag[deqP],
+            memFunc: st_memFunc[deqP],
+            rel: st_rel[deqP],
+            dst: st_dst[deqP],
+            paddr: st_paddr_deqSt[deqP],
+            isMMIO: st_isMMIO_deqSt[deqP],
+            shiftedBE: st_shiftedBE_deqSt[deqP],
+            stData: st_stData_deqSt[deqP],
+            specTag: st_specTag_deqSt[deqP],
+            specBits: st_specBits_deqSt[deqP]
+        };
+    endmethod
+
+    method Action deqSt if(deqStGuard);
+        StQTag deqP = st_deqP_deqSt;
+
+        // sanity check
+        doAssert(checkAddrAlign(st_paddr_deqSt[deqP], st_byteEn[deqP]),
+                 "addr BE should be naturally aligned");
+        if(st_isMMIO_deqSt[deqP]) begin
+            doAssert(isValid(st_specTag_deqSt[deqP]),
+                     "Ld or MMIO must have spec tag");
+            SpecTag specTag = validValue(st_specTag_deqSt[deqP]);
+            doAssert(st_specBits_deqSt[deqP] == (1 << specTag),
+                     "spec bits of MMIO must be just itself's spec tag");
+        end
+        else begin
+            doAssert(!isValid(st_specTag_deqSt[deqP]),
+                     "non-MMIO St/Sc/Amo cannot have spec tag");
+            doAssert(st_specBits_deqSt[deqP] == 0,
+                     "non-MMIO St/Sc/Amo must have zero spec bits");
+        end
+
+        // remove entry
+        st_valid_deqSt[deqP] <= False;
+        st_deqP_deqSt <= getNextStPtr(deqP);
+
+        // tell LQ entries that this SQ entry is removed; no need to check LQ
+        // entry valid
+        function Action resetOlderSt(Integer i);
+        action
+            if(ld_olderSt_deqSt == Valid (deqP)) begin
+                ld_olderSt_deqSt <= Invalid;
+                // no need to change ld_olderStVerified, it is only meaningful
+                // when ld_olderSt is valid
+            end
+        endaction
+        endfunction
+        Vector#(LdQSize, Integer) idxVec = genVector;
+        joinActions(map(resetOlderSt, idxVec));
+
+        // make conflict with incorrect spec
+        wrongSpec_deqLd_conflict.wset(?);
+    endmethod
+
+`ifdef TSO_MM
+`else
     method Action wakeupLdStalledBySB(SBIndex sbIdx);
         function Action setReady(Integer i);
         action
@@ -1679,6 +1855,7 @@ module mkSplitLSQ(SplitLSQ);
         // make conflict with incorrect spec
         wrongSpec_wakeBySB_conflict.wset(?);
     endmethod
+`endif
 
     interface SpeculationUpdate specUpdate;
         method Action correctSpeculation(SpecBits mask);
