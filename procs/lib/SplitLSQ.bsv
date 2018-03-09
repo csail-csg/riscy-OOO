@@ -848,6 +848,24 @@ module mkSplitLSQ(SplitLSQ);
         return pred[tag] ? Valid (tag) : Invalid;
     endfunction
 
+    // find oldest SQ entry that satisfy a constraint (i.e. smallest tag)
+    function Maybe#(StQTag) findOldestSt(Vector#(StQSize, Bool) pred);
+        function StQTag getOlder(StQTag a, StQTag b);
+            if(!pred[a]) begin
+                return b;
+            end
+            else if(!pred[b]) begin
+                return a;
+            end
+            else begin
+                return stVirTags[a] < stVirTags[b] ? a : b;
+            end
+        endfunction
+        Vector#(StQSize, StQTag) idxVec = genWith(fromInteger);
+        StQTag tag = fold(getOlder, idxVec);
+        return pred[tag] ? Valid (tag) : Invalid;
+    endfunction
+
     // find youngest SQ entry that satisfy a constraint (i.e. largest tag)
     function Maybe#(StQTag) findYoungestSt(Vector#(StQSize, Bool) pred);
         function StQTag getYounger(StQTag a, StQTag b);
@@ -1275,13 +1293,13 @@ module mkSplitLSQ(SplitLSQ);
             // Kill the youngested load which satisifies all the following
             // conditions:
             // (1) valid
-            // (2) computed
             // (3) younger
             // (4) paddr & BE overlap with the updating Ld/Lr
             // (5) has read or is reading a stale value
+            // We don't check computed or memFunc, because there is no pure fence
+            // in LQ, and they are implied by executing
             function Bool needKill(LdQTag i);
                 Bool valid = ld_valid_updAddr[i];
-                Bool computed = ld_computed_updAddr[i];
                 Bool younger = youngerLds[i];
                 Bool overlap = overlapAddr(pa, shift_be,
                                            ld_paddr_updAddr[i],
@@ -1315,7 +1333,7 @@ module mkSplitLSQ(SplitLSQ);
                     read_stale = False;
                 end
                 // combine everything together
-                return valid && computed && younger && overlap && read_stale;
+                return valid && younger && overlap && read_stale;
             endfunction
             Vector#(LdQSize, Bool) killLds = map(needKill, idxVec);
             if(findOldestLd(killLds) matches tagged Valid .killTag) begin
@@ -1325,6 +1343,7 @@ module mkSplitLSQ(SplitLSQ);
                     spec_bits: ld_specBits_updAddr[killTag]
                 });
                 // checks
+                doAssert(ld_computed_updAddr[killTag], "must be computed");
                 doAssert(!ld_isMMIO_updAddr[killTag], "cannot kill MMIO");
                 doAssert(ld_memFunc[killTag] == Ld, "can only kill Ld");
                 Maybe#(SpecTag) specTag = ld_specTag_updAddr[killTag];
@@ -1638,15 +1657,34 @@ module mkSplitLSQ(SplitLSQ);
             ld_valid_getKill[tag] &&
             ld_computed_getKill[tag] &&
             ld_killed_getKill[tag] &&
-            (ld_executing_getKill[tag] || ld_done_getKill[tag]) &&
+            ld_executing_getKill[tag] &&
             ld_memFunc[tag] == Ld,
-            "killed load must be valid, computed, killed and done/executing"
+            "killed load must be valid, computed, killed and executing/done"
         );
         return LSQKillLdInfo {
             instTag: ld_instTag[tag],
             specTag: ld_specTag_getKill[tag]
         };
     endmethod
+
+`ifdef TSO_MM
+    method ActionValue#(LSQKillLdInfo) getLdKilledByCache;
+        killByCacheQ.deq;
+        let tag = killByCacheQ.first.data;
+        doAssert(
+            ld_valid_getKill[tag] &&
+            ld_computed_getKill[tag] &&
+            ld_killed_getKill[tag] &&
+            ld_executing_getKill[tag] &&
+            ld_memFunc[tag] == Ld,
+            "killed load must be valid, computed, killed and executing/done"
+        );
+        return LSQKillLdInfo {
+            instTag: ld_instTag[tag],
+            specTag: ld_specTag_getKill[tag]
+        };
+    endmethod
+`endif
 
     method ActionValue#(LSQRespLdResult) respLd(LdQTag t, Data alignedData);
         let res = LSQRespLdResult {
@@ -1840,17 +1878,62 @@ module mkSplitLSQ(SplitLSQ);
     endmethod
 
 `ifdef TSO_MM
+    method Action cacheEvict(LineAddr lineAddr);
+        // kill a load if it satisfies the following conditions:
+        // (1) valid
+        // (2) executing and read from memory (just killing done loads is not
+        // enough, because there is a delay from getting value and marking
+        // done)
+        // (3) addr overlap
+        // We don't check computed or memFunc, because there is no pure fence
+        // in LQ, and they are implied by executing
+        function Bool needKill(LdQTag i);
+            Bool valid = ld_valid_evict[i];
+            Bool executing = ld_executing_evict[i];
+            Bool read_mem = !isValid(ld_readFrom_evict[i]);
+            Bool overlap = getLineAddr(ld_paddr_evict[i]) == lineAddr;
+            return valid && executing && read_mem && overlap;
+        endfunction
+
+        // kill the oldest load
+        Vector#(LdQSize, Bool) killLds = map(needKill, genWith(fromInteger));
+        if(findOldestLd(killLds) matches tagged Valid .killTag) begin
+            ld_killed_evict[killTag] <= True;
+            killByCacheQ.enq(ToSpecFifo {
+                data: killTag,
+                spec_bits: ld_specBits_evict[killTag]
+            });
+            // checks
+            doAssert(ld_computed_evict[killTag], "must be computed");
+            doAssert(!ld_isMMIO_evict[killTag], "cannot kill MMIO");
+            doAssert(ld_memFunc[killTag] == Ld, "can only kill Ld");
+            Maybe#(SpecTag) specTag = ld_specTag_evict[killTag];
+            SpecBits specBits = ld_specBits_evict[killTag];
+            doAssert(isValid(specTag), "killed Ld must have spec tag");
+            doAssert(specBits[validValue(specTag)] == 1,
+                     "sb of killed Ld has itself's spec tag");
+            // when the Ld called incorrectSpeculation, it will kill
+            // itself, and set waitWPResp if it is still executing at
+            // that time
+        end
+
+        // make conflict with incorrect spec
+        wrongSpec_cacheEvict_conflict.wset(?);
+    endmethod
+
 `else
+
     method Action wakeupLdStalledBySB(SBIndex sbIdx);
         function Action setReady(Integer i);
         action
-            // no need to check valid here, we can write anything to invalid entry
-            if(ldDepSB[i][depSB_wakeSB_port] == Valid (sbIdx)) begin
-                ldDepSB[i][depSB_wakeSB_port] <= Invalid;
+            // no need to check valid here, we can write anything to invalid
+            // entry
+            if(ld_depSBDeq_wakeSB[i] == Valid (sbIdx)) begin
+                ld_depSBDeq_wakeSB[i] <= Invalid;
             end
         endaction
         endfunction
-        Vector#(LdStQSize, Integer) idxVec = genVector;
+        Vector#(LdQSize, Integer) idxVec = genVector;
         joinActions(map(setReady, idxVec));
         // make conflict with incorrect spec
         wrongSpec_wakeBySB_conflict.wset(?);
@@ -1869,61 +1952,94 @@ module mkSplitLSQ(SplitLSQ);
             Vector#(LdStQSize, Integer) idxVec = genVector;
             joinActions(map(correctSpec, idxVec));
             // clear spec bits for issueQ and killQ
-            issueQ.specUpdate.correctSpeculation(mask);
-            killQ.specUpdate.correctSpeculation(mask);
+            issueLdQ.specUpdate.correctSpeculation(mask);
+            killByLdStQ.specUpdate.correctSpeculation(mask);
+`ifdef TSO_MM
+            killByCacheQ.specUpdate.correctSpeculation(mask);
+`endif
         endmethod
 
-        method Action incorrectSpeculation(SpecTag st);
+        method Action incorrectSpeculation(SpecTag specTag);
             // idx vec
-            Vector#(LdStQSize, LdStQTag) idxVec = genWith(fromInteger);
 
-            // clear wrong path LSQ entries & set wrong path load filter
-            function Action incorrectSpec(LdStQTag i);
+            // clear wrong path LQ entries & set wrong path load filter. NOTE
+            // that olderSt and olderStVerified fields are not affected by the
+            // kill
+            function Action killLdQ(LdQTag i);
             action
-                if(specBits[i][sb_wrongSpec_port][st] == 1) begin
-                    valid[i][valid_wrongSpec_port] <= False;
+                if(ld_specBits_wrongSpec[i][specTag] == 1) begin
+                    ld_valid_wrongSpec[i] <= False;
                     // set wrong path load resp filter
-                    if(valid[i][valid_wrongSpec_port] && state[i][state_wrongSpec_port] == Executing) begin
-                        waitWPResp[i] <= True;
-                        doAssert(memInst[i].mem_func == Ld, "only load resp can be wrong path");
+                    if (ld_valid_wrongSpec[i] &&
+                        ld_executing_wrongSpec[i] &&
+                        !ld_done_wrongSpec[i]) begin
+                        ld_waitWPResp_wrongSpec[i] <= True;
+                        doAssert(memInst[i].mem_func == Ld,
+                                 "only load resp can be wrong path");
                     end
                 end
             endaction
             endfunction
-            joinActions(map(incorrectSpec, idxVec));
+            Vector#(LdQSize, LdQTag) ldIdxVec = genWith(fromInteger);
+            joinActions(map(killLdQ, ldIdxVec));
+
+            // clear wrong path SQ entries
+            function Action killStQ(StQTag i);
+                if(st_specBits_wrongSpec[i][specTag] == 1) begin
+                    st_valid_wrongSpec[i] <= False;
+                end
+            endfunction
+            Vector#(StQSize, StQTag) stIdxVec = genWith(fromInteger);
+            joinActions(map(killStQ, stIdxVec));
 
             // kill entries in issueQ and killQ
-            issueQ.specUpdate.incorrectSpeculation(st);
-            killQ.specUpdate.incorrectSpeculation(st);
-
-            // change enqP: make valid entries always consecutive
-            // search for the oldest **VALID** entry being killed
-            function Bool killValid(LdStQTag i);
-                return valid[i][valid_wrongSpec_port] && specBits[i][sb_wrongSpec_port][st] == 1;
-            endfunction
-            Vector#(LdStQSize, Bool) isKillValid = map(killValid, idxVec);
-            // start finding the oldest valid entry being killed
-            Maybe#(LdStQTag) killTag; 
-`ifdef LSQ_VTAG
-            // use virtual tag: find the oldest (note that we search for valid entry)
-            killTag = findOldest(isKillValid);
-`else
-            // normal search, do two rounds
-            // first search smallest tag among entries >= deqP
-            LdStQTag curDeqP = deqP[deqP_wrongSpec_port];
-            function Bool killValidFirst(LdStQTag i);
-                return i >= curDeqP && isKillValid[i];
-            endfunction
-            Maybe#(LdStQTag) killFirst = find(killValidFirst, idxVec);
-            // next search smallest tag among all entries
-            function Bool killValidNext(LdStQTag i) = isKillValid[i];
-            Maybe#(LdStQTag) killNext = find(killValidNext, idxVec);
-            // merge
-            killTag = isValid(killFirst) ? killFirst : killNext;
+            issueLdQ.specUpdate.incorrectSpeculation(st);
+            killByLdStQ.specUpdate.incorrectSpeculation(st);
+`ifdef TSO_MM
+            killByCacheQ.specUpdate.incorrectSpeculation(st);
 `endif
-            // new enqP should be the oldest killing entry, otherwise remain the same (no entry killed)
-            if(killTag matches tagged Valid .t) begin
-                enqP <= t;
+
+            // change enqP: make valid entries always consecutive: new enqP is
+            // the oldest **VALID** entry that gets killed. If such entry does
+            // not exists, then enqP remains the same.
+            // LdQ enqP
+            function Bool isValidLdKilled(LdQTag i);
+                return ld_valid_wrongSpec[i] &&
+                       ld_specBits_wrongSpec[i][specTag] == 1;
+            endfunction
+            Vector#(LdQSize, Bool) killedValidLds = map(isValidLdKilled,
+                                                        ldIdxVec);
+            if(findOldestLd(killValidLds) matches tagged Valid .t) begin
+                ld_enqP <= t;
+            end
+            // StQ enqP
+            function Bool isValidStKilled(StQTag i);
+                return st_valid_wrongSpec[i] &&
+                       st_specBits_wrongSpec[i][specTag] == 1;
+            endfunction
+            Vector#(StQSize, Bool) killedValidSts = map(isValidStKilled,
+                                                        stIdxVec);
+            StQTag new_st_enqP = st_enqP;
+            if(findOldestSt(killValidSts) matches tagged Valid .t) begin
+                new_st_enqP = t;
+            end
+            st_enqP <= new_st_enqP;
+
+            // change SQ verifyP: new verifyP is the oldest entry that is
+            // neither killed nor verified. If such entry does not exists, then
+            // verifyP should be the same as new enqP.
+            function Bool unkilledUnverified(StQTag i);
+                return st_valid_wrongSpec[i] &&
+                       st_specBits_wrongSpec[i][specTag] != 1 &&
+                       !st_verified_wrongSpec[i];
+            endfunction
+            Vector#(StQSize, Bool) unverifiedSts = map(unkilledUnverified,
+                                                       stIdxVec);
+            if(findOldestSt(unverifiedSts) matches tagged Valid .t) begin
+                st_verifyP_wrongSpec <= t;
+            end
+            else begin
+                st_verifyP_wrongSpec <= new_st_enqP;
             end
 
             // make conflict with others
@@ -1933,7 +2049,10 @@ module mkSplitLSQ(SplitLSQ);
             wrongSpec_update_conflict.wset(?);
             wrongSpec_issue_conflict.wset(?);
             wrongSpec_respLd_conflict.wset(?);
-            wrongSpec_deq_conflict.wset(?);
+            wrongSpec_deqLd_conflict.wset(?);
+            wrongSpec_deqSt_conflict.wset(?);
+            wrongSpec_verify_conflict.wset(?);
+            wrongSpec_cacheEvict_conflict.wset(?);
             wrongSpec_wakeBySB_conflict.wset(?);
         endmethod
     endinterface
