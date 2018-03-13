@@ -853,12 +853,12 @@ module mkSplitLSQ(SplitLSQ);
     Vector#(StQSize, Reg#(Maybe#(PhyDst)))     st_dst       <- replicateM(mkRegU);
     Vector#(StQSize, Ehr#(2, Addr))            st_paddr     <- replicateM(mkEhr(?));
     Vector#(StQSize, Ehr#(2, Bool))            st_isMMIO    <- replicateM(mkEhr(?));
-    Vector#(StQSize, Ehr#(3, ByteEn))          st_shiftedBE <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(2, ByteEn))          st_shiftedBE <- replicateM(mkEhr(?));
     Vector#(StQSize, Ehr#(1, Data))            st_stData    <- replicateM(mkEhr(?));
     Vector#(StQSize, Ehr#(2, Bool))            st_computed  <- replicateM(mkEhr(?));
     Vector#(StQSize, Ehr#(2, Bool))            st_verified  <- replicateM(mkEhr(?));
-    Vector#(StQSize, Ehr#(3, Maybe#(SpecTag))) st_specTag   <- replicateM(mkEhr(?));
-    Vector#(StQSize, Ehr#(3, SpecBits))        st_specBits  <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(2, Maybe#(SpecTag))) st_specTag   <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(2, SpecBits))        st_specBits  <- replicateM(mkEhr(?));
     // enq/deq ptr
     Reg#(StQTag)    st_enqP <- mkReg(0);
     Ehr#(2, StQTag) st_deqP <- mkEhr(0);
