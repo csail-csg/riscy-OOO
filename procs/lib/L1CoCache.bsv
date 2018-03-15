@@ -80,7 +80,7 @@ typedef 2 DPRqNum;
 typedef Bit#(TLog#(DCRqNum)) DCRqMshrIdx;
 typedef Bit#(TLog#(DPRqNum)) DPRqMshrIdx;
 
-typedef Bit#(TMax#(SizeOf#(LdStQTag), SizeOf#(SBIndex))) DProcReqId;
+typedef Bit#(TMax#(SizeOf#(LdQTag), SizeOf#(SBIndex))) DProcReqId;
 
 (* synthesize *)
 module mkDCRqMshrWrapper(

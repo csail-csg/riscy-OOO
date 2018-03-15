@@ -217,6 +217,7 @@ typedef struct {
 
     InstTag          instTag;
     StQMemFunc       memFunc;
+    AmoFunc          amoFunc;
     Bool             byteEn; // unshifted BE
     Bool             acq; // acquire ordering
     Bool             rel; // release ordering
@@ -301,6 +302,7 @@ typedef struct {
 typedef struct {
     InstTag         instTag;
     LdQMemFunc      memFunc;
+    ByteEn          byteEn;
     Bool            rel;
     Maybe#(PhyDst)  dst;
     Addr            paddr;
@@ -314,6 +316,7 @@ typedef struct {
 typedef struct {
     InstTag         instTag;
     StQMemFunc      memFunc;
+    AmoFunc         amoFunc;
     Bool            rel;
     Maybe#(PhyDst)  dst;
     Addr            paddr;
@@ -376,6 +379,8 @@ interface SplitLSQ;
     // issuing Lr
     // (4) set ROB entry of deq mem inst to Executed (so that ROB can commit)
     // (5) when deq Ld or MMIO, clear spectag globally
+    // (6) Fore WEAK model, before issuing Lr, ensure SB does not contain
+    // overlapping address
     method LdQDeqEntry firstLd;
     method Action deqLd;
     // Deq SQ entry, and wakeup stalled loads. Also change the readFrom and
@@ -395,6 +400,8 @@ interface SplitLSQ;
     // (6) set ROB entry of dequeued Sc/Amo/MMIO to Executed (normal St should
     // have been set as Executed when addr and data are computed)
     // (7) when deq MMIO, clear spectag globally
+    // (8) Fore WEAK model, before issuing Sc/Amo, ensure SB does not contain
+    // overlapping address
     method StQDeqEntry firstSt;
     method Action deqSt;
 `ifdef TSO_MM
@@ -770,6 +777,7 @@ module mkSplitLSQ(SplitLSQ);
     // entry contents
     Vector#(StQSize, Reg#(InstTag))            st_instTag   <- replicateM(mkRegU);
     Vector#(StQSize, Reg#(StQMemFunc))         st_memFunc   <- replicateM(mkRegU);
+    Vector#(StQSize, Reg#(AmoFunc))            st_amoFunc   <- replicateM(mkRegU);
     Vector#(StQSize, Reg#(ByteEn))             st_byteEn    <- replicateM(mkRegU);
     Vector#(StQSize, Reg#(Bool))               st_acq       <- replicateM(mkRegU);
     Vector#(StQSize, Reg#(Bool))               st_rel       <- replicateM(mkRegU);
@@ -1321,6 +1329,7 @@ module mkSplitLSQ(SplitLSQ);
         // set up the entry
         st_instTag[st_enqP] <= inst_tag;
         st_memFunc[st_enqP] <= getStQMemFunc(mem_inst.mem_func);
+        st_amoFunc[st_enqP] <= mem_inst.amo_func;
         st_byteEn[st_enqP] <= mem_inst.byteEn;
         st_acq[st_enqP] <= mem_inst.aq;
         st_rel[st_enqP] <= mem_inst.rl;
@@ -1870,6 +1879,7 @@ module mkSplitLSQ(SplitLSQ);
         return LdQDeqEntry {
             instTag: ld_instTag[deqP],
             memFunc: ld_memFunc[deqP],
+            byteEn: ld_byteEn[deqP],
             rel: ld_rel[deqP],
             dst: ld_dst[deqP],
             paddr: ld_paddr_deqLd[deqP],
@@ -1934,6 +1944,7 @@ module mkSplitLSQ(SplitLSQ);
         return StQDeqEntry {
             instTag: st_instTag[deqP],
             memFunc: st_memFunc[deqP],
+            amoFunc: st_amoFunc[deqP],
             rel: st_rel[deqP],
             dst: st_dst[deqP],
             paddr: st_paddr_deqSt[deqP],
