@@ -516,8 +516,7 @@ module mkSplitLSQ(SplitLSQ);
     // updateAddr <
     // issueLd, getIssueLd <
     // enqIssueQ <
-    // wakeupLdStalledBySB (Weak only) <
-    // deqSt <
+    // (wakeupLdStalledBySB (Weak only) CF deqSt) <
     // respLd <
     // updateData <
     // (enqLd C enqSt) <
