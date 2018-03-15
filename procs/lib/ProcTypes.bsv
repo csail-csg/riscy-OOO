@@ -61,8 +61,19 @@ typedef struct {
 typedef `SB_SIZE SBSize;
 typedef Bit#(TLog#(SBSize)) SBIndex;
 
-typedef `LDSTQ_SIZE LdStQSize;
-typedef Bit#(TLog#(LdStQSize)) LdStQTag;
+//typedef `LDSTQ_SIZE LdStQSize;
+//typedef Bit#(TLog#(LdStQSize)) LdStQTag;
+
+typedef `LDQ_SIZE LdQSize;
+typedef Bit#(TLog#(LdQSize)) LdQTag;
+
+typedef `STQ_SIZE StQSize;
+typedef Bit#(TLog#(StQSize)) StQTag;
+
+typedef union tagged {
+    LdQTag Ld;
+    StQTag St;
+} LdStQTag deriving(Bits, Eq, FShow);
 
 typedef `DRAMLLC_MAX_READS DramLLCMaxReads;
 
