@@ -34,11 +34,18 @@ USE_XILINX_FPU ?= true
 
 # default 1 core
 CORE_NUM ?= 1
+# TSO or WEAK
+TSO_MM ?= false
 # default check cache deadlock
 CHECK_DEADLOCK ?= true
 
 # directories
 BUILD_DIR := $(RISCY_HOME)/procs/build/$(PROC).core_$(CORE_NUM)
+ifeq ($(TSO_MM),true)
+BUILD_DIR := $(BUILD_DIR).tso
+else
+BUILD_DIR := $(BUILD_DIR).weak
+endif
 ifeq ($(CHECK_DEADLOCK),true)
 BUILD_DIR := $(BUILD_DIR).check_deadlock
 endif

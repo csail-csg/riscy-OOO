@@ -46,7 +46,7 @@ import ReservationStationEhr::*;
 import ReservationStationAlu::*;
 import ReservationStationMem::*;
 import ReservationStationFpuMulDiv::*;
-import SpecLSQ::*;
+import SplitLSQ::*;
 
 typedef struct {
     FetchDebugState fetch;
@@ -67,7 +67,7 @@ interface RenameInput;
     interface Vector#(AluExeNum, ReservationStationAlu) rsAluIfc;
     interface ReservationStationFpuMulDiv rsFpuMulDivIfc;
     interface ReservationStationMem rsMemIfc;
-    interface SpecLSQ lsqIfc;
+    interface SplitLSQ lsqIfc;
     // pending MMIO req from platform
     method Bool pendingMMIOPRq;
     // record that a CSR inst or interrupt is sent to ROB
@@ -104,7 +104,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     end
     ReservationStationFpuMulDiv reservationStationFpuMulDiv = inIfc.rsFpuMulDivIfc;
     ReservationStationMem reservationStationMem = inIfc.rsMemIfc;
-    SpecLSQ lsq = inIfc.lsqIfc;
+    SplitLSQ lsq = inIfc.lsqIfc;
 
     // performance counter
 `ifdef PERF_COUNT
@@ -455,8 +455,10 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                     end
                     else if (to_mem) begin
                         if (dInst.execFunc matches tagged Mem .mem_inst) begin
+                            Bool isLdQ = isLdQMemFunc(mem_inst.mem_func);
+                            Maybe#(LdStQTag) lsqEnqTag = isLdQ ? lsq.enqLdTag : lsq.enqStTag;
                             if (!memExeUsed &&& reservationStationMem.canEnq &&&
-                                lsq.enqTag(mem_inst.mem_func) matches tagged Valid .lsqTag) begin
+                                lsqEnqTag matches tagged Valid .lsqTag) begin
                                 // can process, send to Mem rs and LSQ
                                 memExeUsed = True; // mark resource used
                                 reservationStationMem.enq(ToReservationStation {
@@ -481,11 +483,11 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 if (spec_tag matches tagged Valid .valid_spec_tag) begin
                                     ldstq_spec_bits = ldstq_spec_bits | (1 << valid_spec_tag);
                                 end
-                                if(lsqTag matches tagged Ld .t) begin
+                                if(isLdQ) begin
                                     lsq.enqLd(inst_tag, mem_inst, phy_regs.dst, ldstq_spec_bits);
                                 end
                                 else begin
-                                    lsq.enqLd(inst_tag, mem_inst, phy_regs.dst, ldstq_spec_bits);
+                                    lsq.enqSt(inst_tag, mem_inst, phy_regs.dst, ldstq_spec_bits);
                                 end
                             end
                             else begin

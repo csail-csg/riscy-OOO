@@ -71,9 +71,11 @@ interface StoreBuffer;
     method ActionValue#(SBEntry) deq(SBIndex idx);
     method ActionValue#(Tuple2#(SBIndex, SBEntry)) issue;
     method SBSearchRes search(Addr paddr, ByteEn be); // load bypass/stall or atomic inst stall
-    method Bool noMatch(Addr paddr, ByteEn be); // for AMO/Lr/Sc issue
+    // check no matching entry for AMO/Lr/Sc issue
     // XXX assume BE has been shifted approriately for paddr offset
     // (for load we need to do that before calling the methods)
+    method Bool noMatchLdQ(Addr paddr, ByteEn be); 
+    method Bool noMatchStQ(Addr paddr, ByteEn be); 
 endinterface
 
 /////////////////
@@ -125,6 +127,32 @@ module mkStoreBufferEhr(StoreBuffer);
             tagged Valid .idx: return Valid (pack(idx));
             default: return Invalid;
         endcase
+    endfunction
+
+    function Bool noMatch(Addr paddr, ByteEn be);
+        // input BE has been shifted, just pack it
+        Bit#(NumBytes) ldBE = pack(be);
+
+        // data offset within block
+        SBBlockDataSel sel = getSBBlockDataSel(paddr);
+
+        // helper to extract byteEn from entry
+        function Bit#(NumBytes) getEntryBE(SBIndex idx);
+            Vector#(SBBlockNumData, ByteEn) byteEn = unpack(pack(entry[idx][searchPort].byteEn));
+            return pack(byteEn[sel]);
+        endfunction
+        
+        // func to determine whether the load matches a store entry
+        function Bool matchEntry(Integer i);
+            // entry must be valid, addr should match, byte enable should overlap
+            Bool sameAddr = getSBBlockAddr(paddr) == entry[i][searchPort].addr;
+            Bool beOverlap = (ldBE & getEntryBE(fromInteger(i))) != 0;
+            return valid[i][searchPort] && sameAddr && beOverlap;
+        endfunction
+
+        // find match entry and determine return value
+        Vector#(SBSize, Integer) idxVec = genVector;
+        return !any(matchEntry, idxVec);
     endfunction
 
     method Bool isEmpty;
@@ -261,29 +289,6 @@ module mkStoreBufferEhr(StoreBuffer);
         end
     endmethod
 
-    method Bool noMatch(Addr paddr, ByteEn be);
-        // input BE has been shifted, just pack it
-        Bit#(NumBytes) ldBE = pack(be);
-
-        // data offset within block
-        SBBlockDataSel sel = getSBBlockDataSel(paddr);
-
-        // helper to extract byteEn from entry
-        function Bit#(NumBytes) getEntryBE(SBIndex idx);
-            Vector#(SBBlockNumData, ByteEn) byteEn = unpack(pack(entry[idx][searchPort].byteEn));
-            return pack(byteEn[sel]);
-        endfunction
-        
-        // func to determine whether the load matches a store entry
-        function Bool matchEntry(Integer i);
-            // entry must be valid, addr should match, byte enable should overlap
-            Bool sameAddr = getSBBlockAddr(paddr) == entry[i][searchPort].addr;
-            Bool beOverlap = (ldBE & getEntryBE(fromInteger(i))) != 0;
-            return valid[i][searchPort] && sameAddr && beOverlap;
-        endfunction
-
-        // find match entry and determine return value
-        Vector#(SBSize, Integer) idxVec = genVector;
-        return !any(matchEntry, idxVec);
-    endmethod
+    method noMatchLdQ = noMatch;
+    method noMatchStQ = noMatch;
 endmodule

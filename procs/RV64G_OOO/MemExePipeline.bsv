@@ -39,7 +39,7 @@ import ReservationStationMem::*;
 import ReorderBuffer::*;
 import TlbTypes::*;
 import DTlb::*;
-import SpecLSQ::*;
+import SplitLSQ::*;
 import StoreBuffer::*;
 import HasSpecBits::*;
 import SpecFifo::*;
@@ -136,6 +136,7 @@ interface MemExeInput;
     // CSR file
     method Data csrf_rd(CSR csr);
     // ROB
+    method Addr rob_getPC(InstTag t);
     method Action rob_setExecuted_doFinishMem(InstTag t, Data data, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
     method Action rob_setExecuted_deqLSQ(InstTag t, Data res, Maybe#(Exception) cause, RobInstState new_state);
     method Action rob_setLdSpecBit(InstTag t, SpecTag specTag);
@@ -154,7 +155,6 @@ interface MemExeInput;
     method Action setRegReadyAggr_forward(PhyRIndx dst);
     // write reg file & set conservative sb
     method Action writeRegFile(PhyRIndx dst, Data data);
-    //method Action writeRegFile_LrScAmoMMIO(PhyRIndx dst, Data data);
     // redirect
     method Action redirect_action(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag);
     // spec update
@@ -173,7 +173,7 @@ interface MemExePipeline;
     interface Vector#(TMul#(2, AluExeNum), RecvBypass) recvBypass;
     interface ReservationStationMem rsMemIfc;
     interface DTlb dTlbIfc;
-    interface SpecLSQ lsqIfc;
+    interface SplitLSQ lsqIfc;
     interface StoreBuffer stbIfc;
     interface DCoCache dMemIfc;
     interface SpeculationUpdate specUpdate;
@@ -202,7 +202,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     StoreBuffer stb <- mkStoreBufferEhr;
 `endif
     // LSQ
-    SpecLSQ lsq <- mkSpecLSQ;
+    SplitLSQ lsq <- mkSplitLSQ;
     // wire to issue Ld which just finish addr tranlation
     RWire#(LSQIssueLdInfo) issueLd <- mkRWire;
 
@@ -213,7 +213,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Reg#(Maybe#(WaitStResp)) waitStResp <- mkReg(Invalid);
 `endif
     // fifo for req mem
-    Fifo#(1, Tuple2#(LdStQTag, Addr)) reqLdQ <- mkBypassFifo;
+    Fifo#(1, Tuple2#(LdQTag, Addr)) reqLdQ <- mkBypassFifo;
     Fifo#(1, ProcRq#(DProcReqId)) reqLrScAmoQ <- mkBypassFifo;
 `ifdef TSO_MM
     Fifo#(1, Addr) reqStQ <- mkBypassFifo;
@@ -221,32 +221,24 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Fifo#(1, Tuple2#(SBIndex, Addr)) reqStQ <- mkBypassFifo;
 `endif
     // fifo for load result
-    Fifo#(2, Tuple2#(LdStQTag, MemResp)) forwardQ <- mkCFFifo;
-    Fifo#(2, Tuple2#(LdStQTag, MemResp)) memRespLdQ <- mkCFFifo;
+    Fifo#(2, Tuple2#(LdQTag, MemResp)) forwardQ <- mkCFFifo;
+    Fifo#(2, Tuple2#(LdQTag, MemResp)) memRespLdQ <- mkCFFifo;
     // fifo for Lr/Sc/Amo resp
     Fifo#(1, MemResp) respLrScAmoQ <- mkCFFifo;
     // resp ifc to D$
-    function Action setReadyAggr(LdStQTag t);
-    action
-        // Ld/Lr/Sc/Amo returns from cache, wakeup RS and set SB aggressively
-        // this is done only when the resp is not wrong path
-        LSQHitInfo info <- lsq.getHit(t);
-        if(info.dst matches tagged Valid .dst &&& !info.waitWPResp) begin
-            inIfc.setRegReadyAggr_mem(dst.indx);
-        end
-    endaction
-    endfunction
     L1ProcResp#(DProcReqId) procRespIfc = (interface L1ProcResp;
         method Action respLd(DProcReqId id, Data d);
             LdQTag tag = truncate(id);
             memRespLdQ.enq(tuple2(tag, d));
             // early wake up RS and set SB
-            setReadyAggr(tag);
+            // this is done only when the resp is not wrong path
+            LSQHitInfo info <- lsq.getHit(Ld (tag));
+            if(info.dst matches tagged Valid .dst &&& !info.waitWPResp) begin
+                inIfc.setRegReadyAggr_mem(dst.indx);
+            end
         endmethod
         method Action respLrScAmo(DProcReqId id, Data d);
             respLrScAmoQ.enq(d);
-            // early wake up RS and set SB
-            setReadyAggr(truncate(id));
         endmethod
 `ifdef TSO_MM
         method ActionValue#(Tuple2#(LineByteEn, Line)) respSt(DProcReqId id);
@@ -303,7 +295,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
         // check store not having dst reg: this is for setting store to be
         // executed after address transation
-        doAssert(!(x.data.mem_func == St && isValid(x.regs.dst),
+        doAssert(!(x.data.mem_func == St && isValid(x.regs.dst)),
                  "St cannot have dst reg");
 
         // go to next stage
@@ -485,8 +477,15 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
                     // so we try to eagerly issue it **ONLY** this cycle
                     // because this Ld cannot be enq into the issueQ of LSQ this cycle
                     // but it may get into issueQ in later cycles
+                    LdQTag ldTag = ?;
+                    if(x.ldstq_tag matches tagged Ld .t) begin
+                        ldTag = t;
+                    end
+                    else begin
+                        doAssert(False, "must be in LdQ");
+                    end
                     issueLd.wset(LSQIssueLdInfo {
-                        tag: x.ldstq_tag,
+                        tag: ldTag,
                         paddr: paddr,
                         shiftedBE: x.shiftedBE
                     });
@@ -535,8 +534,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // kill load
     function Action killLd(LSQKillLdInfo en, String rule_name);
     action
-        inIfc.redirect_action(en.pc, en.specTag, en.inst_tag);
-        if(verbose) $display(rule_name, " ", fshow(en));
+        let pc = inIfc.rob_getPC(en.instTag);
+        inIfc.redirect_action(pc, en.specTag, en.instTag);
+        if(verbose) $display(rule_name, " ", fshow(en), "; ", fshow(pc));
         // check specTag valid
         doAssert(isValid(en.specTag), "killed Ld must have spec tag");
 `ifdef PERF_COUNT
@@ -550,15 +550,17 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         
     rule doKillLdByLdSt;
         // get load to kill from LSQ
-        LSQKillInfo en <- lsq.getLdKilledByLdSt;
+        LSQKillLdInfo en <- lsq.getLdKilledByLdSt;
         killLd(en, "[doKillLdByLdSt]");
     endrule
 
-    rule doKillLdByLdSt;
+`ifdef TSO_MM
+    rule doKillLdByCache;
         // get load to kill from LSQ
-        LSQKillInfo en <- lsq.getLdKilledByLdSt;
-        killLd(en, "[doKillLdByLdSt]");
+        LSQKillLdInfo en <- lsq.getLdKilledByCache;
+        killLd(en, "[doKillLdByCache]");
     endrule
+`endif
 
     // send Ld to forward or memory
     function Action doIssueLd(LSQIssueLdInfo info, Bool fromIssueQ);
@@ -573,7 +575,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         SBSearchRes sbRes = stb.search(info.paddr, info.shiftedBE);
 `endif
         // search LSQ
-        LSQIssueResult issRes <- lsq.issue(info.tag, info.paddr, info.shiftedBE, sbRes);
+        LSQIssueLdResult issRes <- lsq.issueLd(info.tag, info.paddr, info.shiftedBE, sbRes);
         if(verbose) begin
             $display("[doIssueLd] fromIssueQ: ", fshow(fromIssueQ), " ; ",
                      fshow(info), " ; ", fshow(sbRes), " ; ", fshow(issRes));
@@ -631,11 +633,14 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         end
     endrule
 
-    // deq LdQ
+    RWire#(void) conflict_Lr_ScAmo <- mkRWire;
+
+    // deqStQ
     LdQDeqEntry lsqDeqLd = lsq.firstLd;
+    StQDeqEntry lsqDeqSt = lsq.firstSt;
 
     // deq non-MMIO Ld
-    rule doDeqLdQ_Ld_Mem(lsqDeqLd.mem_func == Ld && !lsqDeqLd.isMMIO);
+    rule doDeqLdQ_Ld_Mem(lsqDeqLd.memFunc == Ld && !lsqDeqLd.isMMIO);
         lsq.deqLd;
         if(verbose) $display("[doDeqLdQ_Ld] ", fshow(lsqDeqLd));
         // normal load should not have .rl, so no need to check SB empty
@@ -657,10 +662,10 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         lsqDeqLd.memFunc == Lr
         && !lsqDeqLd.isMMIO
         && waitLrScAmoMMIOResp == Invalid
-        && !lsqDeqLd.waitWRResp
+        && !lsqDeqLd.waitWPResp
         && lsqDeqLd.specBits == 0
 `ifndef TSO_MM
-        && stb.noMatch(lsqDeqLd.paddr, lsqDeqLd.shiftedBE)
+        && stb.noMatchLdQ(lsqDeqLd.paddr, lsqDeqLd.shiftedBE)
         && (!lsqDeqLd.rel || stb.isEmpty)
 `endif
     );
@@ -677,6 +682,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             amoInst: ?
         };
         reqLrScAmoQ.enq(req);
+        // conflict with Sc/Amo issue
+        conflict_Lr_ScAmo.wset(?);
         if(verbose) $display("[doDeqLdQ_Lr_issue] ", fshow(lsqDeqLd), "; ", fshow(req));
         // LR should not lead to kill now, no spec tag
         doAssert(!isValid(lsqDeqLd.specTag), "cannot have spec tag");
@@ -688,13 +695,14 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         waitLrScAmoMMIOResp <= Invalid;
         // get resp data (need shifting)
         let d <- toGet(respLrScAmoQ).get;
-        Data resp = gatherLoad(lsqDeqLd.paddr, lsqDeqLd.byteEn, lsqDeqEn.unsignedLd, d); 
-        // write reg file & set ROB as Executed
+        Data resp = gatherLoad(lsqDeqLd.paddr, lsqDeqLd.byteEn, lsqDeqLd.unsignedLd, d); 
+        // write reg file & set ROB as Executed & wakeup rs
         if(lsqDeqLd.dst matches tagged Valid .dst) begin
             inIfc.writeRegFile(dst.indx, resp);
+            inIfc.setRegReadyAggr_mem(dst.indx);
         end
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, ?, Invalid, Executed);
-        if(verbose) $display("[doDeqLdQ_Lr_deq] ", fshow(lsqDeqEn), "; ", fshow(d), "; ", fshow(resp));
+        if(verbose) $display("[doDeqLdQ_Lr_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
         doAssert(lsqDeqLd.memFunc == Lr && !lsqDeqLd.isMMIO, "must be non-MMIO Lr");
     endrule
@@ -727,10 +735,10 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             data: ?
         };
         inIfc.mmioReq(req);
-        if(verbose) $display("[doDeqLSQ_MMIO_issue] ", fshow(lsqDeqEn), "; ", fshow(req));
+        if(verbose) $display("[doDeqLdQ_MMIO_issue] ", fshow(lsqDeqLd), "; ", fshow(req));
         // check: MMIO may cause exception (has spec tag), and is only for Ld
         doAssert(isValid(lsqDeqLd.specTag), "must have spec tag");
-        doAssert(lsqDeqEn.memFunc == Ld, "LdQ MMIO is only Ld");
+        doAssert(lsqDeqLd.memFunc == Ld, "LdQ MMIO is only Ld");
     endrule
 
     rule doDeqLdQ_MMIO_deq(
@@ -778,7 +786,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endrule
 
     // deq StQ
-    StQDeqEntry lsqDeqSt = lsq.firstSt;
 
 `ifdef TSO_MM
     // TSO: issue non-MMIO St to memory when
@@ -812,11 +819,11 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     rule doDeqStQ_St_Mem(
         lsqDeqSt.memFunc == St &&& !lsqDeqSt.isMMIO &&&
         lsqDeqSt.specBits == 0 &&&
-        stb.getEnqIndex(lsqDeqLd.paddr) matches tagged Valid .sbIdx
+        stb.getEnqIndex(lsqDeqSt.paddr) matches tagged Valid .sbIdx
     );
-        lsq.deq;
+        lsq.deqSt;
         // send to SB
-        stb.enq(sbIdx, lsqDeqSt.paddr, lsqDeqSt.shiftedBE, lsqDeSt.stData);
+        stb.enq(sbIdx, lsqDeqSt.paddr, lsqDeqSt.shiftedBE, lsqDeqSt.stData);
         // ROB should have already been set to executed
         if(verbose) $display("[doDeqStQ_St] ", fshow(lsqDeqSt));
         // this store should not cause exception, so no spec tag
@@ -843,7 +850,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         && waitLrScAmoMMIOResp == Invalid
         && lsqDeqSt.specBits == 0
 `ifndef TSO_MM
-        && stb.noMatch(lsqDeqSt.paddr, lsqDeqSt.shiftedBE)
+        && stb.noMatchStQ(lsqDeqSt.paddr, lsqDeqSt.shiftedBE)
         && (!lsqDeqSt.rel || stb.isEmpty)
 `endif
     );
@@ -862,30 +869,33 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             data: lsqDeqSt.stData,
             amoInst: AmoInst {
                 func: lsqDeqSt.amoFunc,
-                doubleWord: lsqDeqSt.byteEn == replicate(True),
+                doubleWord: lsqDeqSt.shiftedBE == replicate(True),
                 aq: lsqDeqSt.acq,
                 rl: lsqDeqSt.rel
             }
         };
         reqLrScAmoQ.enq(req);
-        if(verbose) $display("[doDeqLSQ_ScAmo_issue] ", fshow(lsqDeqSt), "; ", fshow(req));
+        // conflict with Lr issue
+        conflict_Lr_ScAmo.wset(?);
+        if(verbose) $display("[doDeqStQ_ScAmo_issue] ", fshow(lsqDeqSt), "; ", fshow(req));
         // non-MMIO Sc/Amo cannot raise exception, so no spec tag
-        doAssert(!isValid(lsqDeqEn.specTag), "cannot have spec tag");
+        doAssert(!isValid(lsqDeqSt.specTag), "cannot have spec tag");
     endrule
 
     // deq non-MMIO Sc/Amo from LSQ when resp comes
     rule doDeqStQ_ScAmo_deq(waitLrScAmoMMIOResp == ScAmo);
         // deq LSQ & reset wait bit
-        lsq.deq;
+        lsq.deqSt;
         waitLrScAmoMMIOResp <= Invalid;
         // get resp data (no need to shift for Sc and Amo)
         Data resp <- toGet(respLrScAmoQ).get;
-        // write reg file & set ROB as Executed
-        if(lsqDeqEn.dst matches tagged Valid .dst) begin
+        // write reg file & set ROB as Executed & waek up rs
+        if(lsqDeqSt.dst matches tagged Valid .dst) begin
             inIfc.writeRegFile(dst.indx, resp);
+            inIfc.setRegReadyAggr_mem(dst.indx);
         end
         inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, ?, Invalid, Executed);
-        if(verbose) $display("[doDeqLSQ_ScAmo_deq] ", fshow(lsqDeqSt), "; ", fshow(resp));
+        if(verbose) $display("[doDeqStQ_ScAmo_deq] ", fshow(lsqDeqSt), "; ", fshow(resp));
         // check
         doAssert((lsqDeqSt.memFunc == Sc || lsqDeqSt.memFunc == Amo) &&
                  !lsqDeqSt.isMMIO, "must be non-MMIO Sc/Amo");
@@ -929,7 +939,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
     // deq MMIO from StQ when valid resp comes
     rule doDeqStQ_MMIO_deq(
-        waitLrScAmoMMIOResp matches tagged .waitMMIO &&&
+        waitLrScAmoMMIOResp matches tagged MMIO .waitMMIO &&&
         !waitMMIO.isLd &&&
         inIfc.mmioRespVal.valid
     );
@@ -942,7 +952,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // get resp (no need to shift for AMO)
         Data resp = inIfc.mmioRespVal.data;
         // write reg file & wakeup rs (this wakeup is late but MMIO is rare) & set ROB as Executed
-        if(lsqDeqEn.dst matches tagged Valid .dst) begin
+        if(lsqDeqSt.dst matches tagged Valid .dst) begin
             inIfc.writeRegFile(dst.indx, resp);
             inIfc.setRegReadyAggr_mem(dst.indx);
         end
@@ -954,7 +964,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endrule
 
     rule doDeqStQ_MMIO_fault(
-        waitLrScAmoMMIOResp matches tagged .waitMMIO &&&
+        waitLrScAmoMMIOResp matches tagged MMIO .waitMMIO &&&
         !waitMMIO.isLd &&&
         !inIfc.mmioRespVal.valid
     );
@@ -962,13 +972,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // reset wait bit
         waitLrScAmoMMIOResp <= Invalid;
         // raise access fault
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, 0, Valid (StoreAccessFault), Executed);
+        inIfc.rob_setExecuted_deqLSQ(waitMMIO.instTag, 0, Valid (StoreAccessFault), Executed);
         // Use spec bits to kill other entries, but wait until ROB commit to
         // resolve exception. This will also kill this LSQ entry, so we should
         // not deq LSQ here.
         inIfc.incorrectSpec(waitMMIO.specTag, waitMMIO.instTag);
         inIfc.incrementEpochWithoutRedirect;
-        // we try to avoid using lsq.firstLd here, so don't print or assert
+        // we try to avoid using lsq.firstSt here, so don't print or assert
     endrule
 
     // send req to D$

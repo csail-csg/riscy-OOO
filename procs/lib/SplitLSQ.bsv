@@ -48,6 +48,8 @@ export LSQRespLdResult(..);
 export LSQHitInfo(..);
 export SplitLSQ(..);
 export mkSplitLSQ;
+export isLdQMemFunc;
+export isStQMemFunc;
 
 // state transition
 // Ld: enq and Idle -> set computed |-> issue and Executing |-> resp and Done |-> Deq
@@ -303,6 +305,7 @@ typedef struct {
     InstTag         instTag;
     LdQMemFunc      memFunc;
     ByteEn          byteEn;
+    Bool            unsignedLd;
     Bool            rel;
     Maybe#(PhyDst)  dst;
     Addr            paddr;
@@ -317,6 +320,7 @@ typedef struct {
     InstTag         instTag;
     StQMemFunc      memFunc;
     AmoFunc         amoFunc;
+    Bool            acq;
     Bool            rel;
     Maybe#(PhyDst)  dst;
     Addr            paddr;
@@ -331,7 +335,8 @@ interface SplitLSQ;
     // Enq at renaming. We split to 2 enq methods to enable synthesize
     // boundary. If we merge into 1 enq method, the guard will depend on the
     // type of mem inst, so cannot be synthesized.
-    method Maybe#(LdStQTag) enqTag(MemFunc f);
+    method Maybe#(LdStQTag) enqLdTag;
+    method Maybe#(LdStQTag) enqStTag;
     method Action enqLd(InstTag inst_tag,
                         MemInst mem_inst,
                         Maybe#(PhyDst) dst,
@@ -1101,7 +1106,9 @@ module mkSplitLSQ(SplitLSQ);
         StQTag verP = st_verifyP_verify;
         doAssert(!st_verified_verify[verP], "cannot be verified");
 
-        // check if the entry can be verified
+        // check if the entry can be verified. We should not fire this rule if
+        // entry cannot be verified, because this may block conflicting
+        // rules/methods forever.
 `ifdef TSO_MM
         // TSO: need to figure out if older LQ entry exists
         LdQTag ldDeqP = ld_deqP_verify;
@@ -1258,11 +1265,11 @@ module mkSplitLSQ(SplitLSQ);
         endcase);
     endmethod
 
-    method Maybe#(LdStQTag) enqTag(MemFunc f);
-        return (case(f)
-            Ld, Lr:  (ld_can_enq_wire ? Valid (Ld (ld_enqP)) : Invalid);
-            default: (st_can_enq_wire ? Valid (St (st_enqP)) : Invalid);
-        endcase);
+    method Maybe#(LdStQTag) enqLdTag;
+        return ld_can_enq_wire ? Valid (Ld (ld_enqP)) : Invalid;
+    endmethod
+    method Maybe#(LdStQTag) enqStTag;
+        return st_can_enq_wire ? Valid (St (st_enqP)) : Invalid;
     endmethod
 
     method Action enqLd(InstTag inst_tag,
@@ -1880,6 +1887,7 @@ module mkSplitLSQ(SplitLSQ);
             instTag: ld_instTag[deqP],
             memFunc: ld_memFunc[deqP],
             byteEn: ld_byteEn[deqP],
+            unsignedLd: ld_unsigned[deqP],
             rel: ld_rel[deqP],
             dst: ld_dst[deqP],
             paddr: ld_paddr_deqLd[deqP],
@@ -1945,6 +1953,7 @@ module mkSplitLSQ(SplitLSQ);
             instTag: st_instTag[deqP],
             memFunc: st_memFunc[deqP],
             amoFunc: st_amoFunc[deqP],
+            acq: st_acq[deqP],
             rel: st_rel[deqP],
             dst: st_dst[deqP],
             paddr: st_paddr_deqSt[deqP],

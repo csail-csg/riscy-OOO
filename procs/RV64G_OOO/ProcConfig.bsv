@@ -50,8 +50,8 @@
 `define TLB_SIZE 32
 
 // LSQ
-`define LSQ_VTAG
-`define LDSTQ_SIZE 16 // match BOOM
+`define LDQ_SIZE 16
+`define STQ_SIZE 8
 `define SB_SIZE 4 // [sizhuo] make SB smaller, probably easier for synth
 
 // D$

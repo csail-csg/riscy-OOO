@@ -28,6 +28,7 @@
 # SIM_DRAM_TYPE: AWSF1 or VC707
 # USE_XILINX_FPU: true or false
 # CORE_NUM
+# TSO_MM: true or false
 # CHECK_DEADLOCK: true or false
 # BUILD_DIR
 
@@ -86,6 +87,11 @@ CONNECTALFLAGS += --cflags=" -DDTC_PATH=\"$(DTC_PATH)\" "
 
 # core num
 CONNECTALFLAGS += --bscflags=" -D NUM_CORES=$(CORE_NUM) "
+
+# mem model
+ifeq ($(TSO_MM),true)
+CONNECTALFLAGS += --bscflags=" -D TSO_MM "
+endif
 
 # perf counter
 ifeq ($(PERF_COUNT),true)

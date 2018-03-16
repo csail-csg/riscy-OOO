@@ -354,7 +354,7 @@ interface SupReorderBuffer#(numeric type aluExeNum);
     method Action setLdSpecBit(InstTag x, SpecTag ldSpecTag);
 
     // get original PC/PPC before execution, EHR port 0 will suffice
-    interface Vector#(aluExeNum, ROB_getOrigPC) getOrigPC;
+    interface Vector#(TAdd#(1, aluExeNum), ROB_getOrigPC) getOrigPC;
     interface Vector#(aluExeNum, ROB_getOrigPredPC) getOrigPredPC;
     // get renaming tag for fast kill in renaming table
     //method Maybe#(RenamingTag) getRenameTag(InstTag x);
@@ -833,13 +833,15 @@ module mkSupReorderBuffer#(
         endinterface);
     end
 
-    // get pc/ppc ifc used by alu exe
-    Vector#(aluExeNum, ROB_getOrigPC) getOrigPCIfc;
+    // get pc/ppc ifc used by alu exe (also one pc for mem exe)
+    Vector#(TAdd#(1, aluExeNum), ROB_getOrigPC) getOrigPCIfc;
     Vector#(aluExeNum, ROB_getOrigPredPC) getOrigPredPCIfc;
-    for(Integer i = 0; i < valueof(aluExeNum); i = i+1) begin
+    for(Integer i = 0; i < valueof(aluExeNum) + 1; i = i+1) begin
         getOrigPCIfc[i] = (interface ROB_getOrigPC;
             method Addr get(InstTag x) = row[x.way][x.ptr].getOrigPC;
         endinterface);
+    end
+    for(Integer i = 0; i < valueof(aluExeNum); i = i+1) begin
         getOrigPredPCIfc[i] = (interface ROB_getOrigPredPC;
             method Addr get(InstTag x) = row[x.way][x.ptr].getOrigPredPC;
         endinterface);
