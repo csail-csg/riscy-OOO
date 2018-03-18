@@ -197,8 +197,10 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // TLB
     DTlb dTlb <- mkDTlb;
 
-`ifndef TSO_MM
-    // store buffer only in WEAK model
+    // store buffer only used in WEAK model
+`ifdef TSO_MM
+    StoreBuffer stb <- mkDummyStoreBuffer;
+`else
     StoreBuffer stb <- mkStoreBufferEhr;
 `endif
     // LSQ
@@ -252,10 +254,10 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             doAssert(isValid(waitStResp), "must be waiting for st resp");
             let waitSt = validValue(waitStResp);
             Vector#(LineSzData, ByteEn) be = replicate(replicate(False));
-            Vector#(LineSzData, Data) data = 0;
+            Line data = replicate(0);
             be[waitSt.offset] = waitSt.shiftedBE;
             data[waitSt.offset] = waitSt.shiftedData;
-            return tuple2(unpack(pack(be)), pack(data));
+            return tuple2(unpack(pack(be)), data);
         endmethod
 `else
         method ActionValue#(Tuple2#(LineByteEn, Line)) respSt(DProcReqId id);
@@ -906,11 +908,11 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // (2) spec bit just contain itself's spec tag
     // (3) WEAK: if .rl bit is set, SB is empty
     rule doDeqStQ_MMIO_issue(
-        lsqDeqSt.isMMIO &&
-        waitLrScAmoMMIOResp == Invalid &&
-        lsqDeqSt.specBits == (1 << validValue(lsqDeqSt.specTag)) &&
+        lsqDeqSt.isMMIO
+        && waitLrScAmoMMIOResp == Invalid
+        && lsqDeqSt.specBits == (1 << validValue(lsqDeqSt.specTag))
 `ifndef TSO_MM
-        (!lsqDeqSt.rel || stb.isEmpty)
+        && (!lsqDeqSt.rel || stb.isEmpty)
 `endif
     );
         // set wait bit

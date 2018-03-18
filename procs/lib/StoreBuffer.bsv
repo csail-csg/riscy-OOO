@@ -292,3 +292,23 @@ module mkStoreBufferEhr(StoreBuffer);
     method noMatchLdQ = noMatch;
     method noMatchStQ = noMatch;
 endmodule
+
+(* synthesize *)
+module mkDummyStoreBuffer(StoreBuffer);
+    method Bool isEmpty = True;
+    method Maybe#(SBIndex) getEnqIndex(Addr paddr) = Invalid;
+    method Action enq(SBIndex idx, Addr paddr, ByteEn be, Data data) if(False);
+        noAction;
+    endmethod
+    method ActionValue#(SBEntry) deq(SBIndex idx) if(False);
+        return ?;
+    endmethod
+    method ActionValue#(Tuple2#(SBIndex, SBEntry)) issue if(False);
+        return ?;
+    endmethod
+    method SBSearchRes search(Addr paddr, ByteEn be);
+        return SBSearchRes {matchIdx: Invalid, forwardData: Invalid};
+    endmethod
+    method Bool noMatchLdQ(Addr paddr, ByteEn be) = False; 
+    method Bool noMatchStQ(Addr paddr, ByteEn be) = False; 
+endmodule

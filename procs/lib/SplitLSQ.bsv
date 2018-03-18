@@ -313,7 +313,7 @@ typedef struct {
     ByteEn          shiftedBE;
     Maybe#(SpecTag) specTag;
     SpecBits        specBits;
-    Bool            waitWPResp;
+    Bool            waitWPResp; // TODO actually not needed
 } LdQDeqEntry deriving (Bits, Eq, FShow);
 
 typedef struct {
@@ -350,7 +350,8 @@ interface SplitLSQ;
     // Retrieve information when we want to wakeup RS early in case
     // Ld/Lr/Sc/Amo hits in cache
     method ActionValue#(LSQHitInfo) getHit(LdStQTag t);
-    // update store data (shifted for St and Sc, unshifted for AMO)
+    // update store data (shifted for St and Sc, unshifted for AMO). XXX we
+    // assume data is updated before addr is updated
     method Action updateData(StQTag t, Data d);
     // Update addr after address translation, and set the spec tag if it is a
     // load or MMIO. Also search for the (oldest) younger load to kill. Return
@@ -376,16 +377,17 @@ interface SplitLSQ;
     // dequeued or verified
     // (4) for Lr or MMIO, it is computed and there is no older SQ entry (this
     // also handles the .rl associated with Lr)
-    // (5) there is no pure fence in LQ right now
+    // NOTE: there is no pure fence in LQ right now
     // Outside world should do the following:
     // (1) issue Lr or MMIO to memory system only at deq port
-    // (2) check specBits and waitWPResp before issuing Lr or MMIO
+    // (2) check specBits (and waitWPResp TODO maybe not needed) before issuing
+    // Lr or MMIO
     // (3) For WEAK model, check .rl associated with Lr and SB empty before
     // issuing Lr
     // (4) set ROB entry of deq mem inst to Executed (so that ROB can commit)
     // (5) when deq Ld or MMIO, clear spectag globally
-    // (6) Fore WEAK model, before issuing Lr, ensure SB does not contain
-    // overlapping address
+    // (6) Fore WEAK model, before issuing (non-MMIO) Lr, ensure SB does not
+    // contain overlapping address
     method LdQDeqEntry firstLd;
     method Action deqLd;
     // Deq SQ entry, and wakeup stalled loads. Also change the readFrom and
@@ -393,8 +395,8 @@ interface SplitLSQ;
     // (1) valid
     // (2) for St/Sc/Amo/MMIO, it is computed and all older LQ entries have
     // been dequeued
-    // (3) there is no pure fence in SQ right now
-    // (4) .rl associated with Sc/Amo is automatically handled
+    // NOTE: .rl associated with Sc/Amo is automatically handled, and there is
+    // no pure fence in SQ right now.
     // Outside world should do the following:
     // (1) issue Sc/Amo/MMIO to memory system at deq port
     // (2) for WEAK model, issue normal St to SB
@@ -405,8 +407,8 @@ interface SplitLSQ;
     // (6) set ROB entry of dequeued Sc/Amo/MMIO to Executed (normal St should
     // have been set as Executed when addr and data are computed)
     // (7) when deq MMIO, clear spectag globally
-    // (8) Fore WEAK model, before issuing Sc/Amo, ensure SB does not contain
-    // overlapping address
+    // (8) Fore WEAK model, before issuing non-MMIO Sc/Amo, ensure SB does not
+    // contain overlapping address
     method StQDeqEntry firstSt;
     method Action deqSt;
 `ifdef TSO_MM
@@ -715,9 +717,9 @@ module mkSplitLSQ(SplitLSQ);
     let ld_olderSt_deqSt  = getVEhrPort(ld_olderSt, 0); // write
     let ld_olderSt_enq    = getVEhrPort(ld_olderSt, 1); // write
 
-    let ld_olderStVerified_deqLd = getVEhrPort(ld_olderStVerified, 0);
+    let ld_olderStVerified_deqLd  = getVEhrPort(ld_olderStVerified, 0);
     let ld_olderStVerified_verify = getVEhrPort(ld_olderStVerified, 0); // write
-    let ld_olderStVerified_enq = getVEhrPort(ld_olderStVerified, 1); // write
+    let ld_olderStVerified_enq    = getVEhrPort(ld_olderStVerified, 1); // write
 
     let ld_readFrom_evict = getVEhrPort(ld_readFrom, 0);
     let ld_readFrom_issue = getVEhrPort(ld_readFrom, 0); // write
@@ -987,7 +989,8 @@ module mkSplitLSQ(SplitLSQ);
         return pred[tag] ? Valid (tag) : Invalid;
     endfunction
 
-    // virtual tags for olderSt port 0
+    // virtual tags for olderSt port 0. NOTE: it should NOT be used after
+    // method deqSt which modifies olderSt
     function Maybe#(StQVirTag) getOlderStVirTag(LdQTag i);
         if(ld_olderSt[i][0] matches tagged Valid .stTag) begin
             return Valid (getStVirTag(stTag));
@@ -1000,7 +1003,8 @@ module mkSplitLSQ(SplitLSQ);
         getOlderStVirTag, genWith(fromInteger)
     );
 
-    // virtual tags for readFrom port 0
+    // virtual tags for readFrom port 0. NOTE: it should NOT be used after
+    // method issueLd which modifies readFrom.
     function Maybe#(StQVirTag) getReadFromVirTag(LdQTag i);
         if(ld_readFrom[i][0] matches tagged Valid .stTag) begin
             return Valid (getStVirTag(stTag));
@@ -1102,9 +1106,11 @@ module mkSplitLSQ(SplitLSQ);
     // (2) for normal non-MMIO St, addr and data are computed
     // (3) for Sc/Amo/MMIO, it is dequeued (by completing memory access)
     // WEAK verify only requires that addr is computed
-    rule verifySt(st_valid_verify[st_verifyP_verify]);
+    // NOTE that when SQ is full and all verified, verifyP will point to a
+    // valid and verified entry
+    rule verifySt(st_valid_verify[st_verifyP_verify] &&
+                  !st_verified_verify[st_verifyP_verify]);
         StQTag verP = st_verifyP_verify;
-        doAssert(!st_verified_verify[verP], "cannot be verified");
 
         // check if the entry can be verified. We should not fire this rule if
         // entry cannot be verified, because this may block conflicting
@@ -1161,8 +1167,7 @@ module mkSplitLSQ(SplitLSQ);
     // and enqP, outsiders are invalid entries
     (* fire_when_enabled, no_implicit_conditions *)
     rule checkLdQValid;
-        Bool allEmpty = all( \== (False),  readVEhr(0, ld_valid) );
-        if(allEmpty) begin
+        if(all(\== (False),  readVEhr(0, ld_valid))) begin
             doAssert(ld_enqP == ld_deqP[0], "empty queue have enqP = deqP");
         end
         else begin
@@ -1177,31 +1182,72 @@ module mkSplitLSQ(SplitLSQ);
             endfunction
             for(Integer i = 0; i < valueof(LdQSize); i = i+1) begin
                 doAssert(in_range(fromInteger(i)) == ld_valid[i][0],
-                        "valid entries must be within deqP and enqP");
+                        "valid entries must be within [deqP, enqP)");
             end
         end
     endrule
 
     (* fire_when_enabled, no_implicit_conditions *)
     rule checkStQValid;
-        Bool allEmpty = all( \== (False), readVEhr(0, st_valid) );
-        function Bool in_range(StQTag i);
-            // if i is within deqP and enqP, it should be valid
-            if(allEmpty) begin
-                return False;
-            end
-            else begin
+        if(all(\== (False), readVEhr(0, st_valid))) begin
+            doAssert(st_deqP == st_enqP, "empty queue have enqP = deqP");
+        end
+        else begin
+            // not empty queue, check valid entries with [deqP, enqP)
+            function Bool in_range(StQTag i);
                 if(st_deqP < st_enqP) begin
                     return st_deqP <= i && i < st_enqP;
                 end
                 else begin
                     return st_deqP <= i || i < st_enqP;
                 end
+            endfunction
+            for(Integer i = 0; i < valueof(StQSize); i = i+1) begin
+                doAssert(in_range(fromInteger(i)) == st_valid[i][0],
+                         "valid entries must be within [deqP, enqP)");
             end
-        endfunction
-        for(Integer i = 0; i < valueof(StQSize); i = i+1) begin
-            doAssert(in_range(fromInteger(i)) == st_valid[i][0],
-                     "valid entries must be within deqP and enqP");
+        end
+    endrule
+
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule checkStQVerified;
+        let valid_verified = zipWith(\&& ,
+                                     readVEhr(0, st_valid),
+                                     readVEhr(0, st_verified));
+        if(all(\== (False), valid_verified)) begin
+            // nothing is valid and verified
+            doAssert(st_verifyP == st_deqP,
+                     "nothing verified, so verifyP = deqP");
+        end
+        else begin
+            // SQ is not empty, and some valid entry is verified, verified
+            // entries should be in [deqP, verifyP)
+            function Bool in_range(StQTag i);
+                if(st_deqP < st_verifyP) begin
+                    return st_deqP <= i && i < st_verifyP;
+                end
+                else begin
+                    return st_deqP <= i || i < st_verifyP;
+                end
+            endfunction
+            for(Integer i = 0; i < valueof(StQSize); i = i+1) begin
+                if(st_valid[i][0]) begin
+                    doAssert(in_range(fromInteger(i)) == st_verified[i][0],
+                             "verified entries must be within [deqP, verifyP)");
+                end
+            end
+        end
+    endrule
+
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule checkLdQVerified;
+        for(Integer i = 0; i < valueof(LdQSize); i = i+1) begin
+            if (ld_valid[i][0] &&&
+                ld_olderSt[i][0] matches tagged Valid .stTag) begin
+                doAssert(st_valid[stTag][0], "older SQ entry must be valid");
+                doAssert(ld_olderStVerified[i][0] == st_verified[stTag][0],
+                         "LdQ olderStVerified does not match StQ verified");
+            end
         end
     endrule
 `endif
@@ -1376,8 +1422,8 @@ module mkSplitLSQ(SplitLSQ);
         // reads a stale value and should be killed. If curSt is invalid, then
         // the load should not be killed as long as readFrom is valid.  curSt
         // is in maybe type because of Ld killing Ld (in that case, curSt is
-        // the olderSt field of the olde Ld). "equal to" is also needed because
-        // of Ld killing Ld.
+        // the olderSt field of the older Ld). "equal to" is also needed
+        // because of Ld killing Ld.
         Maybe#(StQVirTag) curSt = Invalid;
 
         // update LQ/SQ entry and prepare for killing loads
@@ -1455,11 +1501,11 @@ module mkSplitLSQ(SplitLSQ);
             // Kill the youngested load which satisifies all the following
             // conditions:
             // (1) valid
-            // (3) younger
-            // (4) paddr & BE overlap with the updating Ld/Lr
-            // (5) has read or is reading a stale value
+            // (2) younger
+            // (3) paddr & BE overlap with the updating Ld/Lr
+            // (4) has read or is reading a stale value
             // We don't check computed or memFunc, because there is no pure fence
-            // in LQ, and they are implied by executing
+            // in LQ, and they are implied by executing bit
             function Bool needKill(LdQTag i);
                 Bool valid = ld_valid_updAddr[i];
                 Bool younger = youngerLds[i];
@@ -1695,7 +1741,7 @@ module mkSplitLSQ(SplitLSQ);
         StQVirTag stVTag = stVirTags[stTag];
         if(isValid(matchLdTag) && (!isValid(matchStTag) ||
                                    (isValid(ldTagOlderSt) && 
-                                   validValue(ldTagOlderSt) >= stVTag))) begin
+                                    validValue(ldTagOlderSt) >= stVTag))) begin
             // stalled by Ld, Lr or acquire fence in LQ
             issRes = Stall;
             if(ld_acq[ldTag]) begin
