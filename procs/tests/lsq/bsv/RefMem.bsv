@@ -1,63 +1,61 @@
-import CacheUtils::*;
 import Vector::*;
 import Types::*;
 import MemoryTypes::*;
 import TestTypes::*;
+import CCTypes::*;
 import RegFile::*;
 import Amo::*;
-import MsgFifo::*;
 import Assert::*;
 
 interface RefMem;
     method Action initData(Addr a, Data d);
-    method Action initCLine(Addr a, CacheLine d);
+    method Action initLine(Addr a, Line d);
     method Action initDone;
     method Data getData(Addr a);
-    method CacheLine getCLine(Addr a);
+    method Line getLine(Addr a);
     method ActionValue#(Data) procReq(MemReq r);
 endinterface
 
 (* synthesize *)
 module mkRefMem(RefMem) provisos (
-    NumAlias#(memAddrWidth, TSub#(LogMemNumBytes, LogCLineNumBytes)),
+    NumAlias#(memAddrWidth, TLog#(TestLineNum)),
     Alias#(memAddrT, Bit#(memAddrWidth)),
     Add#(memAddrWidth, a__, AddrSz)
 );
     function memAddrT getMemAddr(Addr a);
-        return truncate(a >> valueOf(LogCLineNumBytes));
+        return truncate(a >> valueOf(LgLineSzBytes));
     endfunction
 
     Reg#(Bool) inited <- mkReg(False);
-    RegFile#(memAddrT, CacheLine) mem <- mkRegFileFull;
+    RegFile#(memAddrT, Line) mem <- mkRegFileFull;
 
     method ActionValue#(Data) procReq(MemReq r) if(inited);
         let mAddr = getMemAddr(r.addr);
-        CLineDataSel sel = getCLineDataSel(r.addr);
-        Vector#(CLineNumData, Data) line = unpack(mem.sub(mAddr));
+        LineDataOffset sel = getLineDataOffset(r.addr);
+        Line line = mem.sub(mAddr);
         Data data = line[sel];
 
         Data resp = 0;
-
         if(r.op == Ld || r.op == Lr) begin
             resp = data;
         end
         else if(r.op == St || r.op == Sc) begin
-            Vector#(CLineNumData, Data) newLine = line; // new data to write
+            Line newLine = line; // new data to write
             Vector#(NumBytes, Bit#(8)) newData = unpack(data);
             Vector#(NumBytes, Bit#(8)) wrData = unpack(r.data);
             for(Integer i = 0; i < valueOf(NumBytes); i = i+1) begin
-                if(r.byteEn[i]) begin
+                if(r.wrBE[i]) begin
                     newData[i] = wrData[i];
                 end
             end
             newLine[sel] = pack(newData);
             // write to mem
-            mem.upd(mAddr, pack(newLine));
+            mem.upd(mAddr, newLine);
             // Sc always succeed, store doesn't need resp, so set to 0
             resp = 0;
         end
         else begin
-            dynamicAssert(False, "unsupport mem op");
+            doAssert(False, "unsupport mem op");
         end
 
         return resp;
@@ -65,13 +63,13 @@ module mkRefMem(RefMem) provisos (
 
     method Action initData(Addr a, Data d) if(!inited);
         let mAddr = getMemAddr(a);
-        let dataSel = getCLineDataSel(a);
-        Vector#(CLineNumData, Data) line = unpack(mem.sub(mAddr));
+        let dataSel = getLineDataOffset(a);
+        let line = mem.sub(mAddr);
         line[dataSel] = d;
-        mem.upd(mAddr, pack(line));
+        mem.upd(mAddr, line);
     endmethod
 
-    method Action initCLine(Addr a, CacheLine d) if(!inited);
+    method Action initLine(Addr a, Line d) if(!inited);
         let mAddr = getMemAddr(a);
         mem.upd(mAddr, d);
     endmethod
@@ -83,11 +81,11 @@ module mkRefMem(RefMem) provisos (
     method Data getData(Addr a);
         let mAddr = getMemAddr(a);
         let dataSel = getCLineDataSel(a);
-        Vector#(CLineNumData, Data) line = unpack(mem.sub(mAddr));
+        let line = mem.sub(mAddr);
         return line[dataSel];
     endmethod
 
-    method CacheLine getCLine(Addr a);
+    method Line getLine(Addr a);
         let mAddr = getMemAddr(a);
         return mem.sub(mAddr);
     endmethod

@@ -41,6 +41,12 @@ function Vector#(n, t) readVEhr(i ehr_index, Vector#(n, Ehr#(n2, t)) vec_ehr) pr
     return readVReg(map(get_ehr_index, vec_ehr));
 endfunction
 
+// extract vector ports from vector of EHRs
+function Vector#(n, Reg#(t)) getVEhrPort(Vector#(n, Ehr#(m, t)) ehrs, Integer p);
+    function Reg#(t) get(Ehr#(m, t) e) = e[p];
+    return map(get, ehrs);
+endfunction
+
 module mkEhr#(t init)(Ehr#(n, t)) provisos(Bits#(t, tSz));
   Vector#(n, RWire#(t)) lat <- replicateM(mkUnsafeRWire);
 

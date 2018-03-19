@@ -498,12 +498,6 @@ function Bool isStQMemFunc(MemFunc f);
     endcase);
 endfunction
 
-// extract vector ports from vector of EHRs
-function Vector#(n, Reg#(t)) getVEhrPort(Vector#(n, Ehr#(m, t)) ehrs, Integer p);
-    function Reg#(t) get(Ehr#(m, t) e) = e[p];
-    return map(get, ehrs);
-endfunction
-
 // issueQ of LSQ tags for issue
 typedef SpecFifo_SB_deq_enq_C_deq_enq#(2, LSQIssueLdInfo) LSQIssueLdQ;
 (* synthesize *)
@@ -1372,12 +1366,12 @@ module mkSplitLSQ(SplitLSQ);
                         MemInst mem_inst,
                         Maybe#(PhyDst) dst,
                         SpecBits spec_bits) if(st_can_enq_wire);
-        doAssert(!st_valid_enq[ld_enqP],
+        doAssert(!st_valid_enq[st_enqP],
                  "entry at enqP must be invalid");
         doAssert(isStQMemFunc(mem_inst.mem_func),
                  "must be StQ mem func");
         // set entry valid and move ptr
-        st_valid_enq[ld_enqP] <= True;
+        st_valid_enq[st_enqP] <= True;
         st_enqP <= getNextStPtr(st_enqP);
         // set up the entry
         st_instTag[st_enqP] <= inst_tag;

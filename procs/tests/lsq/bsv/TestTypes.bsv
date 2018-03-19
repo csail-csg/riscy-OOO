@@ -3,12 +3,20 @@ import Ehr::*;
 import Types::*;
 import MemoryTypes::*;
 import ProcTypes::*;
-import CacheUtils::*;
+import CCTypes::*;
+
+// mem req
+typedef struct {
+    MemOp op;
+    Addr addr;
+    ByteEn wrBE;
+    Data data;
+} MemReq deriving(Bits, Eq, FShow);
 
 // test info
 typedef `ROB_SIZE TestNum;
 typedef Bit#(TLog#(TAdd#(TestNum, 1))) TestCnt;
-typedef Bit#(TLog#(TestNum)) TestId; // this is also InstTag
+typedef Bit#(TLog#(TestNum)) TestId; // this is also used in InstTag
 
 // timeout
 typedef 10000 MaxTimeOut;
@@ -17,16 +25,16 @@ typedef Bit#(TLog#(TAdd#(MaxTimeOut, 1))) TimeOut;
 // CCM & TLB params
 typedef 16 CCMMaxReqNum;
 typedef 128 CCMMaxDelay;
-typedef Bit#(TMax#(SizeOf#(LdStQTag), SizeOf#(SBIndex))) CCMReqId;
+typedef Bit#(TMax#(SizeOf#(LdQTag), SizeOf#(SBIndex))) CCMReqId;
 
 typedef 16 TLBMaxReqNum;
 typedef 16 TLBMaxDelay;
 
 // test req generator
-typedef 4 CLineNum;
-typedef 2 DataSelNum;
+typedef 4 TestLineNum; // number of cache lines
+typedef 2 TestDataSelNum; // which data in a line
 
-typedef TAdd#(TLog#(CLineNum), LogCLineNumBytes) LogMemNumBytes;
+typedef TAdd#(TLog#(TestLineNum), LgLineSzBytes) LogMemSzBytes;
 
 // offset within data
 typedef Bit#(TLog#(NumBytes)) ByteOffset;
@@ -63,7 +71,7 @@ endfunction
 
 // generate test req
 function Tuple2#(Addr, MemInst) getAddrMemInst(
-    CLineAddr cAddr, CLineDataSel dataSel,
+    LineAddr lineAddr, LineDataOffset dataSel,
     ByteOffset off, AccessRange r, TestMemFunc func
 );
     Bit#(NumBytes) be = 0;
@@ -84,7 +92,7 @@ function Tuple2#(Addr, MemInst) getAddrMemInst(
             be = maxBound;
         end
     endcase
-    Addr a = {cAddr, dataSel, off};
+    Addr a = {lineAddr, dataSel, off};
     let mInst = MemInst {
         mem_func: toMemFunc(func),
         amo_func: ?, // AMO is not tested now

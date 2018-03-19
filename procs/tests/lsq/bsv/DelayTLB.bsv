@@ -38,18 +38,22 @@ module mkDelayTLB(DelayTLB) provisos(
     NumAlias#(maxDelay, TLBMaxDelay),
     Alias#(delayT, Bit#(TLog#(maxDelay)))
 );
-    // ordering: doResp < procReq
+    // ordering: doResp < dec delay < procReq
     
-    // EHR ports for valid & specBits
-    Integer respPort = 0;
-    Integer reqPort = 1;
-    Integer wrongSpecPort = 0;
-    Integer correctSpecPort = 2;
-
     Vector#(mshrSz, Ehr#(2, Bool)) valid <- replicateM(mkEhr(False));
+    let valid_resp      = getVEhrPort(valid, 0); // write
+    let valid_wrongSpec = getVEhrPort(valid, 0); // write
+    let valid_req       = getVEhrPort(valid, 1); // write
     Vector#(mshrSz, Reg#(DelayTLBReq)) req <- replicateM(mkRegU);
-    Vector#(mshrSz, Ehr#(3, SpecBits)) specBits <- replicateM(mkEhr(?));
-    Vector#(mshrSz, SatDownCounter#(delayT)) delay <- replicateM(mkSatDownCounter(0));
+    Vector#(mshrSz, Ehr#(2, SpecBits)) specBits <- replicateM(mkEhr(?));
+    let specBits_resp        = getVEhrPort(specBits, 0);
+    let specBits_wrongSpec   = getVEhrPort(specBits, 0);
+    let specBits_req         = getVEhrPort(specBits, 0); // write
+    let specBits_correctSpec = getVEhrPort(specBits, 1); // write
+    Vector#(mshrSz, Ehr#(2, delayT)) delay <- replicateM(mkEhr(0));
+    let delay_resp = getVEhrPort(delay, 0);
+    let delay_dec  = getVEhrPort(delay, 0); // write
+    let delay_req  = getVEhrPort(delay, 1); // write
 
     Randomize#(delayT) randDelay <- mkGenericRandomizer;
     Reg#(Bool) inited <- mkReg(False);
@@ -66,15 +70,15 @@ module mkDelayTLB(DelayTLB) provisos(
     endrule
 
     rule doResp;
-        function Bool canResp(Integer i);
-            return valid[i][respPort] && delay[i] == 0;
+        function Bool canResp(mshrIdxT i);
+            return valid_resp[i] && delay_resp[i] == 0;
         endfunction
-        Vector#(mshrSz, Integer) idxVec = genVector;
-        if(findIndex(canResp, idxVec) matches tagged Valid .idx) begin
-            valid[idx][respPort] <= False;
+        Vector#(mshrSz, mshrIdxT) idxVec = genWith(fromInteger);
+        if(find(canResp, idxVec) matches tagged Valid .idx) begin
+            valid_resp[idx] <= False;
             respQ.enq(ToSpecFifo {
                 data: req[idx],
-                spec_bits: specBits[idx][respPort]
+                spec_bits: specBits_resp[idx]
             });
         end
         else begin
@@ -86,29 +90,24 @@ module mkDelayTLB(DelayTLB) provisos(
 
     (* fire_when_enabled, no_implicit_conditions *)
     rule doDecrDelay;
-        function Action decrDelay(Integer i) = delay[i].dec;
+        function Action decrDelay(Integer i) = (action
+            if(delay_dec[i] > 0) begin
+                delay_dec[i] <= delay_dec[i] - 1;
+            end
+        endaction);
         Vector#(mshrSz, Integer) idxVec = genVector;
         joinActions(map(decrDelay, idxVec));
     endrule
 
-    // approximate the req entry using stale valid bits
-    Wire#(Maybe#(mshrIdxT)) reqIdx <- mkBypassWire;
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule findReqIdx;
-        if(findIndex( \== (False) , readVEhr(0, valid) ) matches tagged Valid .idx) begin
-            reqIdx <= Valid (pack(idx));
-        end
-        else begin
-            reqIdx <= Invalid;
-        end
-    endrule
-
-    method Action procReq(DelayTLBReq r, SpecBits sb) if(inited &&& reqIdx matches tagged Valid .idx);
-        valid[idx][reqPort] <= True;
+    method Action procReq(DelayTLBReq r, SpecBits sb) if(
+        inited &&&
+        findIndex(\== (False), readVReg(valid_req)) matches tagged Valid .idx
+    );
+        valid_req[idx] <= True;
         req[idx] <= r;
-        specBits[idx][reqPort] <= sb;
+        specBits_req[idx] <= sb;
         let lat <- randDelay.next;
-        delay[idx] <= lat;
+        delay_req[idx] <= lat;
         // make conflict with incorrect spec
         wrongSpec_req_conflict.wset(?);
     endmethod
@@ -121,8 +120,8 @@ module mkDelayTLB(DelayTLB) provisos(
             // clear spec bits for all entries
             function Action correctSpec(Integer i);
             action
-                SpecBits sb = specBits[i][correctSpecPort];
-                specBits[i][correctSpecPort] <= sb & mask;
+                SpecBits sb = specBits_correctSpec[i];
+                specBits_correctSpec[i] <= sb & mask;
             endaction
             endfunction
             Vector#(mshrSz, Integer) idxVec = genVector;
@@ -135,9 +134,9 @@ module mkDelayTLB(DelayTLB) provisos(
             // clear entries
             function Action incorrectSpec(Integer i);
             action
-                SpecBits sb = specBits[i][wrongSpecPort];
+                SpecBits sb = specBits_wrongSpec[i];
                 if(sb[specTag] == 1) begin
-                    valid[i][wrongSpecPort] <= False;
+                    valid_wrongSpec[i] <= False;
                 end
             endaction
             endfunction

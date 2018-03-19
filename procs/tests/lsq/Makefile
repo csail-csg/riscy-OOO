@@ -1,4 +1,5 @@
-EXTPATH = -p +:$(RISCY_HOME)/procs/lib \
+EXTPATH = -p +:./bsv \
+		  -p +:$(RISCY_HOME)/procs/lib \
 		  -p +:$(RISCY_HOME)/coherence/src
 TARGETS = TSO.Unit TSO.Integrate WEAK.Unit WEAK.Integrate
 BUILD_DIRS = buildTSODir buildWEAKDir
@@ -16,7 +17,7 @@ mkTb$(patsubst .%,%,$(suffix $(1)))
 endef
 
 define bsv_file
-Tb$(patsubst .%,%,$(suffix $(1))).bsv
+./bsv/Tb$(patsubst .%,%,$(suffix $(1))).bsv
 endef
 
 $(TARGETS): %:

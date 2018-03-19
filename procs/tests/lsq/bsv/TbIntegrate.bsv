@@ -4,7 +4,6 @@ import Fifo::*;
 import RegFile::*;
 import Vector::*;
 import BuildVector::*;
-import Assert::*;
 import FShow::*;
 import Randomizable::*;
 import ConfigReg::*;
@@ -12,14 +11,14 @@ import ConfigReg::*;
 import Types::*;
 import MemoryTypes::*;
 import ProcTypes::*;
+import CCTypes::*;
 import TestTypes::*;
 import Exec::*;
-import SpecLSQ::*;
+import SplitLSQ::*;
 import StoreBuffer::*;
 import RefMem::*;
 import CCM::*;
 import DelayTLB::*;
-import CacheUtils::*;
 import SpecTagManager::*;
 import HasSpecBits::*;
 import GSpecUpdate::*;
@@ -40,7 +39,7 @@ module mkTbLSQSB(Empty);
 
     // test state & counters
     Reg#(TestState) state <- mkReg(Init);
-    Reg#(CLineAddr) testCAddr <- mkReg(0);
+    Reg#(LineAddr) testLineAddr <- mkReg(0);
     Reg#(TestId) genPtr <- mkReg(0);
     Reg#(TestCnt) ldCnt <- mkReg(0);
     Reg#(TestCnt) stCnt <- mkReg(0);
@@ -62,8 +61,12 @@ module mkTbLSQSB(Empty);
     // DUT
     SpecTagManager stm <- mkSpecTagManager;
     DelayTLB tlb <- mkDelayTLB;
-    SpecLSQ lsq <- mkSpecLSQ;
+    SplitLSQ lsq <- mkSpecLSQ;
+`ifdef TSO_MM
+    StoreBuffer stb <- mkDummyStoreBuffer;
+`else
     StoreBuffer stb <- mkStoreBufferEhr;
+`endif
     Reg#(TestCnt) sendPtr <- mkReg(0); // req to send to LSQ
     Reg#(TestCnt) comPtr <- mkReg(0); // req to commit
 
@@ -71,19 +74,8 @@ module mkTbLSQSB(Empty);
 
     // FIFOs to hold load result
     Fifo#(2, Data) respLrScQ <- mkCFFifo;
-    Fifo#(1, Tuple2#(LdStQTag, Data)) forwardQ <- mkBypassFifo;
-    Fifo#(1, Tuple2#(LdStQTag, Data)) memRespLdQ <- mkBypassFifo;
-    Fifo#(2, Tuple2#(LdStQTag, Data)) respLdQ <- mkCFFifo;
-
-    rule connForward;
-        forwardQ.deq;
-        respLdQ.enq(forwardQ.first);
-    endrule
-
-    rule connMemResp;
-        memRespLdQ.deq;
-        respLdQ.enq(memRespLdQ.first);
-    endrule
+    Fifo#(2, Tuple2#(LdStQTag, Data)) forwardQ <- mkCFFifo;
+    Fifo#(2, Tuple2#(LdStQTag, Data)) memRespLdQ <- mkCFFifo;
 
     // memory
     CCMProcResp memRespIfc = (interface CCMProcResp;
