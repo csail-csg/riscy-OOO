@@ -1,7 +1,8 @@
-import CacheUtils::*;
 import Vector::*;
+import Fifo::*;
 import Types::*;
 import MemoryTypes::*;
+import CCTypes::*;
 import TestTypes::*;
 import RegFile::*;
 import Amo::*;
@@ -9,13 +10,12 @@ import MsgFifo::*;
 import Assert::*;
 import Ehr::*;
 import Randomizable::*;
-import SatDownCounter::*;
 
 interface CCM;
     method Action procReq(CCMReqId id, MemReq r);
     // init ifc
     method Action initData(Addr a, Data d);
-    method Action initCLine(Addr a, Line d);
+    method Action initLine(Addr a, Line d);
     method Action initDone;
     // debug ifc
     method Data getData(Addr a);
@@ -67,7 +67,7 @@ module mkCCM#(CCMProcResp respIfc)(CCM) provisos(
         function Bool canResp(mshrIdxT i);
             return valid_resp[i] && delay_resp[i] == 0;
         endfunction
-        Vector#(mshrSz, msrhIdxT) idxVec = genWith(fromInteger);
+        Vector#(mshrSz, mshrIdxT) idxVec = genWith(fromInteger);
         Maybe#(mshrIdxT) respIdx = find(canResp, idxVec);
         when(isValid(respIdx), noAction);
         mshrIdxT idx = validValue(respIdx);
@@ -93,7 +93,7 @@ module mkCCM#(CCMProcResp respIfc)(CCM) provisos(
             Vector#(NumBytes, Bit#(8)) curData = unpack(line[sel]);
             Vector#(NumBytes, Bit#(8)) wrData = unpack(r.data);
             function Bit#(8) getNewByte(Integer i);
-                return r.wrBE[i] ? wrData[i] : curData[i];
+                return r.byteEn[i] ? wrData[i] : curData[i];
             endfunction
             Vector#(NumBytes, Integer) byteVec = genVector;
             line[sel] = pack(map(getNewByte, byteVec));
@@ -144,7 +144,7 @@ module mkCCM#(CCMProcResp respIfc)(CCM) provisos(
         valid_req[idx] <= True;
         req[idx] <= r;
         rid[idx] <= id;
-        delay[idx] <= lat;
+        delay_req[idx] <= lat;
     endrule
 
     method Action procReq(reqIdT id, MemReq r) if(inited);
@@ -172,7 +172,7 @@ module mkCCM#(CCMProcResp respIfc)(CCM) provisos(
 
     method Data getData(Addr a);
         let mAddr = getMemAddr(a);
-        let dataSel = getLineDataSel(a);
+        let dataSel = getLineDataOffset(a);
         let line = mem.sub(mAddr);
         return line[dataSel];
     endmethod

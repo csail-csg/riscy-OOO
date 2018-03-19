@@ -1,21 +1,14 @@
 import Types::*;
 import ProcTypes::*;
 import TestTypes::*;
-import SatDownCounter::*;
 import Vector::*;
 import HasSpecBits::*;
 import SpecFifo::*;
 import Randomizable::*;
 import Ehr::*;
 
-// simply model the delay in an OOO TLB
-// but we need to kill wrong-path req
-
-typedef struct {
-    TestId testId;
-    LdStQTag lsqTag;
-    SpecTag specTag;
-} DelayTLBReq deriving(Bits, Eq, FShow);
+// simply model the delay in an OOO TLB, it doesn't really do any translation.
+// We need to kill wrong-path req
 
 interface DelayTLB;
     method Action procReq(DelayTLBReq r, SpecBits sb);

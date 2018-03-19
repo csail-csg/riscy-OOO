@@ -44,7 +44,7 @@ module mkRefMem(RefMem) provisos (
             Vector#(NumBytes, Bit#(8)) newData = unpack(data);
             Vector#(NumBytes, Bit#(8)) wrData = unpack(r.data);
             for(Integer i = 0; i < valueOf(NumBytes); i = i+1) begin
-                if(r.wrBE[i]) begin
+                if(r.byteEn[i]) begin
                     newData[i] = wrData[i];
                 end
             end
@@ -80,7 +80,7 @@ module mkRefMem(RefMem) provisos (
 
     method Data getData(Addr a);
         let mAddr = getMemAddr(a);
-        let dataSel = getCLineDataSel(a);
+        let dataSel = getLineDataOffset(a);
         let line = mem.sub(mAddr);
         return line[dataSel];
     endmethod

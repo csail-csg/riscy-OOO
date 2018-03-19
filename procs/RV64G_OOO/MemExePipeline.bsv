@@ -647,7 +647,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
     // deqStQ
     LdQDeqEntry lsqDeqLd = lsq.firstLd;
-    StQDeqEntry lsqDeqSt = lsq.firstSt;
 
     // deq non-MMIO Ld
     rule doDeqLdQ_Ld_Mem(lsqDeqLd.memFunc == Ld && !lsqDeqLd.isMMIO);
@@ -794,6 +793,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endrule
 
     // deq StQ
+    StQDeqEntry lsqDeqSt = lsq.firstSt;
 
 `ifdef TSO_MM
     // TSO: issue non-MMIO St to memory when no spec bit. Since waitStRespQ is

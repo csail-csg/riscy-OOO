@@ -9,7 +9,7 @@ import CCTypes::*;
 typedef struct {
     MemOp op;
     Addr addr;
-    ByteEn wrBE;
+    ByteEn byteEn;
     Data data;
 } MemReq deriving(Bits, Eq, FShow);
 
@@ -18,6 +18,13 @@ typedef `ROB_SIZE TestNum;
 typedef Bit#(TLog#(TAdd#(TestNum, 1))) TestCnt;
 typedef Bit#(TLog#(TestNum)) TestId; // this is also used in InstTag
 
+// convert test id to/from inst tag
+function InstTag toInstTag(TestId id);
+    return InstTag {way: 0, ptr: 0, t: id};
+endfunction
+
+function TestId fromInstTag(InstTag tag) = tag.t;
+
 // timeout
 typedef 10000 MaxTimeOut;
 typedef Bit#(TLog#(TAdd#(MaxTimeOut, 1))) TimeOut;
@@ -25,10 +32,18 @@ typedef Bit#(TLog#(TAdd#(MaxTimeOut, 1))) TimeOut;
 // CCM & TLB params
 typedef 16 CCMMaxReqNum;
 typedef 128 CCMMaxDelay;
+
 typedef Bit#(TMax#(SizeOf#(LdQTag), SizeOf#(SBIndex))) CCMReqId;
 
 typedef 16 TLBMaxReqNum;
 typedef 16 TLBMaxDelay;
+
+typedef struct {
+    TestId testId;
+    LdStQTag lsqTag;
+    SpecTag specTag;
+    ByteEn shiftedBE;
+} DelayTLBReq deriving(Bits, Eq, FShow);
 
 // test req generator
 typedef 4 TestLineNum; // number of cache lines
@@ -107,11 +122,11 @@ endfunction
 
 // test FSM
 typedef enum {
-    Init,
-    GenReq,
-    Test,
-    CheckMem,
-    Done
+    StartInit,
+    WaitInitDone,
+    Testing,
+    StartCheck,
+    WaitCheckDone
 } TestState deriving(Bits, Eq, FShow);
 
 // test req & ref resp

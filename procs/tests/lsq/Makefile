@@ -3,6 +3,7 @@ EXTPATH = -p +:./bsv \
 		  -p +:$(RISCY_HOME)/coherence/src
 TARGETS = TSO.Unit TSO.Integrate WEAK.Unit WEAK.Integrate
 BUILD_DIRS = buildTSODir buildWEAKDir
+LINK_JOBS ?= 16
 
 define tso_macro
 $(patsubst %,-D TSO_MM,$(filter TSO.%,$(1)))
@@ -44,7 +45,10 @@ $(TARGETS): %:
 		-bdir $(call build_dir,$@) \
 		-info-dir $(call build_dir,$@) \
 		-simdir $(call build_dir,$@) \
-		-o sim.$@ $(call build_dir,$@)/*.ba
+		-o sim.$@ \
+		-Xc++ -D_GLIBCXX_USE_CXX11_ABI=0 \
+		-parallel-sim-link $(LINK_JOBS) \
+		$(call build_dir,$@)/*.ba
 
 all: $(TARGETS)
 
