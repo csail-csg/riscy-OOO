@@ -41,6 +41,12 @@ endmodule
 
 typedef enum {Invalid, Lr, Sc} WaitBlockingResp deriving(Bits, Eq, FShow);
 
+typedef struct {
+    LineDataOffset offset;
+    ByteEn shiftedBE;
+    Data shiftedData;
+} WaitStResp deriving(Bits, Eq, FShow);
+
 (* synthesize *)
 module mkTbIntegrate(Empty);
     // reference & test req generator
@@ -69,6 +75,7 @@ module mkTbIntegrate(Empty);
     Reg#(TestCnt) lrCnt <- mkReg(0);
     Reg#(TestCnt) scCnt <- mkReg(0);
     Reg#(Bit#(64)) killCnt <- mkConfigReg(0);
+    Reg#(Bit#(64)) stallCnt <- mkConfigReg(0);
 
     // logs
     Reg#(File) reqLog <- mkReg(InvalidFile);
@@ -98,6 +105,9 @@ module mkTbIntegrate(Empty);
 `endif
     // for Lr/Sc we first need to execution
     Reg#(WaitBlockingResp) waitLrScResp <- mkReg(Invalid);
+`ifdef TSO_MM
+    Fifo#(1, WaitStResp) waitStRespQ <- mkCFFifo;
+`endif
     // req to send to LSQ
     Reg#(TestCnt) sendPtr <- mkReg(0);
     // req to commit
@@ -126,6 +136,19 @@ module mkTbIntegrate(Empty);
         endmethod
 
         method ActionValue#(Tuple2#(LineByteEn, Line)) respSt(CCMReqId id);
+`ifdef TSO_MM
+            lsq.deqSt;
+            let waitSt <- toGet(waitStRespQ).get;
+            Vector#(LineSzData, ByteEn) be = replicate(replicate(False));
+            Line data = replicate(0);
+            be[waitSt.offset] = waitSt.shiftedBE;
+            data[waitSt.offset] = waitSt.shiftedData;
+            // incr comptr & set wire to reset timeout
+            comStPtr <= nextPtr.sub(comStPtr);
+            commitInst.send;
+            $display("[respSt] %t: comPtr %d; ", $time, comStPtr, fshow(waitSt));
+            return tuple2(unpack(pack(be)), data);
+`else
             SBIndex idx = truncate(id);
             // deq SB
             let e <- stb.deq(idx);
@@ -135,6 +158,7 @@ module mkTbIntegrate(Empty);
             deqSB.send;
             // return SB entry
             return tuple2(e.byteEn, unpack(e.data));
+`endif
         endmethod
     endinterface);
     CCM ccm <- mkCCM(memRespIfc);
@@ -336,8 +360,8 @@ module mkTbIntegrate(Empty);
 
         // print pass & stats
         $fdisplay(stderr, "INFO: pass");
-        $fdisplay(stderr, "stats: Ld %d, Lr %d, St %d, Sc %d, kill %d",
-            ldCnt, lrCnt, stCnt, scCnt, killCnt
+        $fdisplay(stderr, "stats: Ld %d, Lr %d, St %d, Sc %d, kill %d, stall %d",
+            ldCnt, lrCnt, stCnt, scCnt, killCnt, stallCnt
         );
         $finish;
     endseq);
@@ -485,10 +509,16 @@ module mkTbIntegrate(Empty);
     endfunction
         
     rule doKillLdByLdSt;
-        // get load to kill from LSQ
         let info <- lsq.getLdKilledByLdSt;
         doKillLd(info, "[doKillLdByLdSt]");
     endrule
+
+`ifdef TSO_MM
+    rule doKillByCache;
+        let info <- lsq.getLdKilledByCache;
+        doKillLd(info, "[doKillLdByCache]");
+    endrule
+`endif
 
     // issue Ld
     function Action doIssueLd(LSQIssueLdInfo info, String rule_name);
@@ -514,6 +544,7 @@ module mkTbIntegrate(Empty);
         end
         else begin
             doAssert(issRes == Stall, "load is stalled");
+            stallCnt <= stallCnt + 1;
         end
     endaction
     endfunction
@@ -584,10 +615,12 @@ module mkTbIntegrate(Empty);
     endrule
 
     rule doDeqLSQ_Lr_issue(
-        lsqDeqLd.memFunc == Lr &&
-        waitLrScResp == Invalid &&
-        lsqDeqLd.specBits == 0 &&
-        stb.noMatchLdQ(lsqDeqLd.paddr, lsqDeqLd.shiftedBE)
+        lsqDeqLd.memFunc == Lr
+        && waitLrScResp == Invalid
+        && lsqDeqLd.specBits == 0
+`ifndef TSO_MM
+        && stb.noMatchLdQ(lsqDeqLd.paddr, lsqDeqLd.shiftedBE)
+`endif
     );
         // send to mem
         waitLrScResp <= Lr;
@@ -633,6 +666,44 @@ module mkTbIntegrate(Empty);
     // We have to put spec bits == 0 into guard, because the older load may be
     // deq in the same cycle, and spec bits is not cleared immediately (it is
     // done at the end of this cycle)
+`ifdef TSO_MM
+    rule doDeqLSQ_St(
+        lsqDeqSt.memFunc == St &&
+        lsqDeqSt.specBits == 0
+    );
+        // send to mem
+        ccm.procReq(0, MemReq {
+            op: St,
+            addr: lsqDeqSt.paddr,
+            byteEn: ?,
+            data: ?
+        });
+        // record waiting for store resp
+        LineDataOffset offset = getLineDataOffset(lsqDeqSt.paddr);
+        waitStRespQ.enq(WaitStResp {
+            offset: getLineDataOffset(lsqDeqSt.paddr),
+            shiftedBE: lsqDeqSt.shiftedBE,
+            shiftedData: lsqDeqSt.stData
+        });
+        // leave deq LSQ and incr comStPtr to cache resp time
+        // log
+        TestEntry testEn = test.sub(truncate(comStPtr));
+        $display("[doDeqLSQ_St] %t: comPtr %d; ", $time, comStPtr,
+            fshow(lsqDeqSt), "; ", fshow(testEn)
+        );
+        $fdisplay(respStLog, "%d: ", comStPtr, fshow(lsqDeqSt));
+        // check
+        doAssert(!lsqDeqSt.isMMIO, "no MMIO in test");
+        doAssert(lsqDeqSt.specBits == 0, "cannot have spec bits");
+        doAssert(comStPtr != fromInteger(valueof(TestNum)), "comStPtr overflow");
+        doAssert(comStPtr == zeroExtend(lsqDeqSt.instTag.t), "comStPtr != inst_tag");
+        let {be, d} = scatterStore(testEn.paddr, testEn.memInst.byteEn, testEn.stData);
+        doAssert(be == lsqDeqSt.shiftedBE, "wrong BE");
+        doAssert(d == lsqDeqSt.stData, "wrong data");
+    endrule
+
+`else
+
     rule doDeqLSQ_St(
         lsqDeqSt.memFunc == St &&&
         lsqDeqSt.specBits == 0 &&&
@@ -669,12 +740,15 @@ module mkTbIntegrate(Empty);
             data: ?
         });
     endrule
+`endif
 
     rule doDeqLSQ_Sc_issue(
-        lsqDeqSt.memFunc == Sc &&
-        waitLrScResp == Invalid &&
-        lsqDeqSt.specBits == 0 &&
-        stb.noMatchStQ(lsqDeqSt.paddr, lsqDeqSt.shiftedBE)
+        lsqDeqSt.memFunc == Sc
+        && waitLrScResp == Invalid
+        && lsqDeqSt.specBits == 0
+`ifndef TSO_MM
+        && stb.noMatchStQ(lsqDeqSt.paddr, lsqDeqSt.shiftedBE)
+`endif
     );
         // send to mem
         waitLrScResp <= Sc;
