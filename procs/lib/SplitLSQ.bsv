@@ -874,6 +874,7 @@ module mkSplitLSQ(SplitLSQ);
 
     // make wrongSpec conflict with all others (but not correctSpec method and
     // findIssue)
+    RWire#(void) wrongSpec_hit_conflict <- mkRWire;
     RWire#(void) wrongSpec_enqIss_conflict <- mkRWire;
     RWire#(void) wrongSpec_enq_conflict <- mkRWire;
     RWire#(void) wrongSpec_cacheEvict_conflict <- mkRWire;
@@ -1305,6 +1306,9 @@ module mkSplitLSQ(SplitLSQ);
     endmethod
 
     method ActionValue#(LSQHitInfo) getHit(LdStQTag t);
+        // Conflict with wrong spec. This makes cache pipelineResp rule
+        // conflict with wrong spec, and can help avoid scheduling cycle.
+        wrongSpec_hit_conflict.wset(?);
         return (case(t) matches
             tagged Ld .tag: (LSQHitInfo {
                 waitWPResp: ld_waitWPResp_hit[tag],
@@ -2324,6 +2328,7 @@ module mkSplitLSQ(SplitLSQ);
             end
 
             // make conflict with others
+            wrongSpec_hit_conflict.wset(?);
             wrongSpec_enqIss_conflict.wset(?);
             wrongSpec_enq_conflict.wset(?);
             wrongSpec_update_conflict.wset(?);

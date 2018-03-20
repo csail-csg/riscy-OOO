@@ -297,18 +297,20 @@ endmodule
 module mkDummyStoreBuffer(StoreBuffer);
     method Bool isEmpty = True;
     method Maybe#(SBIndex) getEnqIndex(Addr paddr) = Invalid;
-    method Action enq(SBIndex idx, Addr paddr, ByteEn be, Data data) if(False);
-        noAction;
+    method Action enq(SBIndex idx, Addr paddr, ByteEn be, Data data);
+        doAssert(False, "enq should never be called)");
     endmethod
-    method ActionValue#(SBEntry) deq(SBIndex idx) if(False);
+    method ActionValue#(SBEntry) deq(SBIndex idx);
+        doAssert(False, "deq should never be called)");
         return ?;
     endmethod
-    method ActionValue#(Tuple2#(SBIndex, SBEntry)) issue if(False);
+    method ActionValue#(Tuple2#(SBIndex, SBEntry)) issue;
+        doAssert(False, "issue should never be called)");
         return ?;
     endmethod
     method SBSearchRes search(Addr paddr, ByteEn be);
         return SBSearchRes {matchIdx: Invalid, forwardData: Invalid};
     endmethod
-    method Bool noMatchLdQ(Addr paddr, ByteEn be) = False; 
-    method Bool noMatchStQ(Addr paddr, ByteEn be) = False; 
+    method Bool noMatchLdQ(Addr paddr, ByteEn be) = True; 
+    method Bool noMatchStQ(Addr paddr, ByteEn be) = True; 
 endmodule
