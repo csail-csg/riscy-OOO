@@ -591,6 +591,8 @@ module mkSplitLSQ(SplitLSQ);
     // request faults), we should first copy the MMIO request to a reg, and
     // then kill using the info in reg.
 
+    Bool verbose = True;
+
     // LQ
     // entry valid bits
     Vector#(LdQSize, Ehr#(2, Bool))             ld_valid           <- replicateM(mkEhr(False));
@@ -794,7 +796,7 @@ module mkSplitLSQ(SplitLSQ);
     // enq/deq ptr
     Reg#(StQTag) st_enqP <- mkReg(0);
     Reg#(StQTag) st_deqP <- mkReg(0);
-    Reg#(StQTag) st_verifyP <- mkReg(0);
+    Ehr#(2, StQTag) st_verifyP <- mkEhr(0);
 
     let st_valid_wrongSpec = getVEhrPort(st_valid, 0); // write
     let st_valid_verify    = getVEhrPort(st_valid, 0);
@@ -830,6 +832,7 @@ module mkSplitLSQ(SplitLSQ);
     let st_verified_wrongSpec = getVEhrPort(st_verified, 0);
     let st_verified_verify    = getVEhrPort(st_verified, 0); // write
     let st_verified_updAddr   = getVEhrPort(st_verified, 1); // assert
+    let st_verified_deqSt     = getVEhrPort(st_verified, 1);
     let st_verified_enq       = getVEhrPort(st_verified, 1); // write
 
     let st_specTag_updAddr = getVEhrPort(st_specTag, 0); // write
@@ -842,8 +845,9 @@ module mkSplitLSQ(SplitLSQ);
     let st_specBits_enq         = getVEhrPort(st_specBits, 0); // write, C with wrongSpec
     let st_specBits_correctSpec = getVEhrPort(st_specBits, 1); // write
 
-    Reg#(StQTag) st_verifyP_verify    = st_verifyP;
-    Reg#(StQTag) st_verifyP_wrongSpec = st_verifyP;
+    Reg#(StQTag) st_verifyP_wrongSpec = st_verifyP[0]; // write
+    Reg#(StQTag) st_verifyP_verify    = st_verifyP[0]; // write, C with wrongSpec
+    Reg#(StQTag) st_verifyP_deqSt     = st_verifyP[1]; // write, C with wrongSpec
 
     // FIFO of LSQ tags that try to issue, there should be no replication in it
     LSQIssueLdQ issueLdQ <- mkLSQIssueLdQ;
@@ -1045,15 +1049,22 @@ module mkSplitLSQ(SplitLSQ);
         // find the oldest load to issue (note that we search for valid entry),
         // and record it in wire
         if(findOldestLd(ableToIssue) matches tagged Valid .tag) begin
-            issueLdInfo.wset(LSQIssueLdInfo {
+            let info = LSQIssueLdInfo {
                 tag: tag,
                 paddr: ld_paddr_findIss[tag],
                 shiftedBE: ld_shiftedBE_findIss[tag]
-            });
+            };
+            issueLdInfo.wset(info);
+            if(verbose) begin
+                $display("[LSQ - findIssue] ", fshow(info));
+            end
         end
     endrule
 
     rule enqIssueQ(issueLdInfo.wget matches tagged Valid .info);
+        if(verbose) begin
+            $display("[LSQ - enqIss] ", fshow(info));
+        end
         // sanity check
         doAssert(ld_valid_enqIss[info.tag],
                  "enq issueQ entry is valid");
@@ -1152,6 +1163,8 @@ module mkSplitLSQ(SplitLSQ);
         Vector#(LdQSize, LdQTag) idxVec = genWith(fromInteger);
         joinActions(map(setVerified, idxVec));
 
+        if(verbose) $display("[LSQ - verifySt] st_verifyP %d", verP);
+
         // make conflict with incorrect spec
         wrongSpec_verify_conflict.wset(?);
     endrule
@@ -1210,18 +1223,18 @@ module mkSplitLSQ(SplitLSQ);
                                      readVEhr(0, st_verified));
         if(all(\== (False), valid_verified)) begin
             // nothing is valid and verified
-            doAssert(st_verifyP == st_deqP,
+            doAssert(st_verifyP[0] == st_deqP,
                      "nothing verified, so verifyP = deqP");
         end
         else begin
             // SQ is not empty, and some valid entry is verified, verified
             // entries should be in [deqP, verifyP)
             function Bool in_range(StQTag i);
-                if(st_deqP < st_verifyP) begin
-                    return st_deqP <= i && i < st_verifyP;
+                if(st_deqP < st_verifyP[0]) begin
+                    return st_deqP <= i && i < st_verifyP[0];
                 end
                 else begin
-                    return st_deqP <= i || i < st_verifyP;
+                    return st_deqP <= i || i < st_verifyP[0];
                 end
             endfunction
             for(Integer i = 0; i < valueof(StQSize); i = i+1) begin
@@ -1316,6 +1329,13 @@ module mkSplitLSQ(SplitLSQ);
                         MemInst mem_inst,
                         Maybe#(PhyDst) dst,
                         SpecBits spec_bits) if(ld_can_enq_wire);
+        if(verbose) begin
+            $display("[LSQ - enqLd] enqP %d; ", ld_enqP,
+                     "; ", fshow(inst_tag),
+                     "; ", fshow(mem_inst),
+                     "; ", fshow(dst),
+                     "; ", fshow(spec_bits));
+        end
         doAssert(!ld_valid_enq[ld_enqP],
                  "entry at enqP must be invalid");
         doAssert(isLdQMemFunc(mem_inst.mem_func),
@@ -1366,6 +1386,13 @@ module mkSplitLSQ(SplitLSQ);
                         MemInst mem_inst,
                         Maybe#(PhyDst) dst,
                         SpecBits spec_bits) if(st_can_enq_wire);
+        if(verbose) begin
+            $display("[LSQ - enqSt] enqP %d; ", st_enqP,
+                     "; ", fshow(inst_tag),
+                     "; ", fshow(mem_inst),
+                     "; ", fshow(dst),
+                     "; ", fshow(spec_bits));
+        end
         doAssert(!st_valid_enq[st_enqP],
                  "entry at enqP must be invalid");
         doAssert(isStQMemFunc(mem_inst.mem_func),
@@ -1490,6 +1517,14 @@ module mkSplitLSQ(SplitLSQ);
             doAssert(False, "unknown lsq tag");
         end
 
+        if(verbose) begin
+            $display("[LSQ - updateAddr] ", fshow(lsqTag),
+                     "; ", fshow(pa), "; ", fshow(mmio),
+                     "; ", fshow(shift_be), "; ", fshow(spec_tag),
+                     "; ", fshow(doKill), "; ", fshow(youngerLds),
+                     "; ", fshow(curSt));
+        end
+
         // kill younger loads
         if(doKill) begin
             // Kill the youngested load which satisifies all the following
@@ -1544,6 +1579,9 @@ module mkSplitLSQ(SplitLSQ);
                     data: killTag,
                     spec_bits: ld_specBits_updAddr[killTag]
                 });
+                if(verbose) begin
+                    $display("[LSQ - updateAddr] kill tag %d", killTag);
+                end
                 // checks
                 doAssert(ld_computed_updAddr[killTag], "must be computed");
                 doAssert(!ld_isMMIO_updAddr[killTag], "cannot kill MMIO");
@@ -1576,6 +1614,10 @@ module mkSplitLSQ(SplitLSQ);
                                                   Addr pa,
                                                   ByteEn shift_be,
                                                   SBSearchRes sbRes);
+        if(verbose) begin
+            $display("[LSQ - issueLd] ", fshow(tag), "; ", fshow(pa),
+                     "; ", fshow(shift_be), "; ", fshow(sbRes));
+        end
         doAssert(pa == ld_paddr_issue[tag], "Ld paddr incorrect");
         doAssert(shift_be == ld_shiftedBE_issue[tag], "Ld BE incorrect");
         doAssert(ld_valid_issue[tag], "issuing Ld must be valid");
@@ -1843,6 +1885,9 @@ module mkSplitLSQ(SplitLSQ);
     endmethod
 
     method ActionValue#(LSQIssueLdInfo) getIssueLd;
+        if(verbose) begin
+            $display("[LSQ - getIssueLd] ", fshow(issueLdQ.first));
+        end
         issueLdQ.deq;
         // reset inIssueQ
         let tag = issueLdQ.first.data.tag;
@@ -1853,6 +1898,9 @@ module mkSplitLSQ(SplitLSQ);
     endmethod
 
     method ActionValue#(LSQKillLdInfo) getLdKilledByLdSt;
+        if(verbose) begin
+            $display("[LSQ - getLdKilledByLdSt] ", fshow(killByLdStQ.first));
+        end
         killByLdStQ.deq;
         let tag = killByLdStQ.first.data;
         doAssert(
@@ -1871,6 +1919,9 @@ module mkSplitLSQ(SplitLSQ);
 
 `ifdef TSO_MM
     method ActionValue#(LSQKillLdInfo) getLdKilledByCache;
+        if(verbose) begin
+            $display("[LSQ - getLdKilledByCache] ", fshow(killByCacheQ.first));
+        end
         killByCacheQ.deq;
         let tag = killByCacheQ.first.data;
         doAssert(
@@ -1915,6 +1966,10 @@ module mkSplitLSQ(SplitLSQ);
             res.data = gatherLoad(ld_paddr_resp[t], ld_byteEn[t],
                                   ld_unsigned[t], alignedData);
         end
+        if(verbose) begin
+            $display("[LSQ - respLd] ", fshow(t), "; ", fshow(alignedData),
+                     "; ", fshow(res));
+        end
         // make conflict with incorrect spec
         wrongSpec_respLd_conflict.wset(?);
         // return
@@ -1941,6 +1996,8 @@ module mkSplitLSQ(SplitLSQ);
 
     method Action deqLd if(deqLdGuard);
         LdQTag deqP = ld_deqP_deqLd;
+
+        if(verbose) $display("[LSQ - deqLd] deqP %d", deqP);
 
         // sanity check
         doAssert(checkAddrAlign(ld_paddr_deqLd[deqP], ld_byteEn[deqP]),
@@ -2008,6 +2065,8 @@ module mkSplitLSQ(SplitLSQ);
     method Action deqSt if(deqStGuard);
         StQTag deqP = st_deqP;
 
+        if(verbose) $display("[LSQ - deqSt] deqP %d", deqP);
+
         // sanity check
         doAssert(checkAddrAlign(st_paddr_deqSt[deqP], st_byteEn[deqP]),
                  "addr BE should be naturally aligned");
@@ -2027,7 +2086,16 @@ module mkSplitLSQ(SplitLSQ);
 
         // remove entry
         st_valid_deqSt[deqP] <= False;
-        st_deqP <= getNextStPtr(deqP);
+        let new_st_deqP = getNextStPtr(deqP);
+        st_deqP <= new_st_deqP;
+
+        // in case the deq entry is not verified, verifyP must be equal to
+        // deqP, so verifyP should also move together with deqP
+        if(!st_verified_deqSt[deqP]) begin
+            doAssert(st_verifyP_deqSt == deqP,
+                     "oldest SQ entry not verified, so verifyP = deqP");
+            st_verifyP_deqSt <= new_st_deqP;
+        end
 
         // tell LQ entries that this SQ entry is removed, no need to check LQ
         // entry valid:
@@ -2058,6 +2126,7 @@ module mkSplitLSQ(SplitLSQ);
 
 `ifdef TSO_MM
     method Action cacheEvict(LineAddr lineAddr);
+        if(verbose) $display("[LSQ - cacheEvict] ", fshow(lineAddr));
         // kill a load if it satisfies the following conditions:
         // (1) valid
         // (2) executing and read from memory (just killing done loads is not
@@ -2082,6 +2151,9 @@ module mkSplitLSQ(SplitLSQ);
                 data: killTag,
                 spec_bits: ld_specBits_evict[killTag]
             });
+            if(verbose) begin
+                $display("[LSQ - cacheEvict] kill tag %d", killTag);
+            end
             // checks
             doAssert(ld_computed_evict[killTag], "must be computed");
             doAssert(!ld_isMMIO_evict[killTag], "cannot kill MMIO");
@@ -2103,6 +2175,9 @@ module mkSplitLSQ(SplitLSQ);
 `else
 
     method Action wakeupLdStalledBySB(SBIndex sbIdx);
+        if(verbose) begin
+            $display("[LSQ - wakeupBySB] ", fshow(sbIdx);
+        end
         function Action setReady(LdQTag i);
         action
             // no need to check valid here, we can write anything to invalid
@@ -2121,6 +2196,9 @@ module mkSplitLSQ(SplitLSQ);
 
     interface SpeculationUpdate specUpdate;
         method Action correctSpeculation(SpecBits mask);
+            if(verbose && mask != maxBound) begin
+                $display("[LSQ - correctSpec] ", fshow(mask));
+            end
             // clear spec bits for LQ entries
             function Action correctSpecLd(LdQTag i);
             action
@@ -2201,9 +2279,12 @@ module mkSplitLSQ(SplitLSQ);
             endfunction
             Vector#(LdQSize, Bool) killedValidLds = map(isValidLdKilled,
                                                         ldIdxVec);
+            LdQTag new_ld_enqP = ld_enqP;
             if(findOldestLd(killedValidLds) matches tagged Valid .t) begin
-                ld_enqP <= t;
+                new_ld_enqP = t;
             end
+            ld_enqP <= new_ld_enqP;
+
             // StQ enqP
             function Bool isValidStKilled(StQTag i);
                 return st_valid_wrongSpec[i] &&
@@ -2227,11 +2308,19 @@ module mkSplitLSQ(SplitLSQ);
             endfunction
             Vector#(StQSize, Bool) unverifiedSts = map(unkilledUnverified,
                                                        stIdxVec);
+            StQTag new_st_verifyP;
             if(findOldestSt(unverifiedSts) matches tagged Valid .t) begin
-                st_verifyP_wrongSpec <= t;
+                new_st_verifyP = t;
             end
             else begin
-                st_verifyP_wrongSpec <= new_st_enqP;
+                new_st_verifyP = new_st_enqP;
+            end
+            st_verifyP_wrongSpec <= new_st_verifyP;
+
+            if(verbose) begin
+                $display("[LSQ - wrongSpec] ", fshow(specTag),
+                         "; ", fshow(new_ld_enqP), "; ", fshow(new_st_enqP),
+                         "; ", fshow(new_st_verifyP));
             end
 
             // make conflict with others

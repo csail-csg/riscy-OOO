@@ -789,7 +789,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // not deq LSQ here.
         inIfc.incorrectSpec(waitMMIO.specTag, waitMMIO.instTag);
         inIfc.incrementEpochWithoutRedirect;
-        // we try to avoid using lsq.firstLd here, so don't print or assert
+        // we try to avoid using lsq.firstLd here, so don't assert
+        if(verbose) $display("[doDeqLdQ_MMIO_fault] ", fshow(waitMMIO));
     endrule
 
     // deq StQ
@@ -983,7 +984,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // not deq LSQ here.
         inIfc.incorrectSpec(waitMMIO.specTag, waitMMIO.instTag);
         inIfc.incrementEpochWithoutRedirect;
-        // we try to avoid using lsq.firstSt here, so don't print or assert
+        // we try to avoid using lsq.firstSt here, so don't assert
+        if(verbose) $display("[doDeqLdQ_MMIO_fault] ", fshow(waitMMIO));
     endrule
 
     // send req to D$
