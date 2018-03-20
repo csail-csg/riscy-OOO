@@ -117,6 +117,10 @@ module mkTbIntegrate(Empty);
     Vector#(LdQSize, Reg#(TestId)) testingLdPtr <- replicateM(mkRegU);
     // load resps
     RegFile#(TestId, Data) ldResp <- mkRegFileFull;
+    // FIFOs to req CCM
+    Fifo#(1, Tuple2#(CCMReqId, MemReq)) reqLdQ <- mkBypassFifo;
+    Fifo#(1, Tuple2#(CCMReqId, MemReq)) reqStQ <- mkBypassFifo;
+    Fifo#(1, Tuple2#(CCMReqId, MemReq)) reqLrScQ <- mkBypassFifo;
 
     RWire#(LSQIssueLdInfo) issueLd <- mkRWire; // issue right after TLB resp
 
@@ -535,12 +539,12 @@ module mkTbIntegrate(Empty);
             forwardQ.enq(tuple2(info.tag, forward.data));
         end
         else if(issRes == ToCache) begin
-            ccm.procReq(zeroExtend(info.tag), MemReq {
+            reqLdQ.enq(tuple2(zeroExtend(info.tag), MemReq {
                 op: Ld,
                 addr: info.paddr,
                 byteEn: replicate(False),
                 data: ?
-            });
+            }));
         end
         else begin
             doAssert(issRes == Stall, "load is stalled");
@@ -624,12 +628,12 @@ module mkTbIntegrate(Empty);
     );
         // send to mem
         waitLrScResp <= Lr;
-        ccm.procReq(0, MemReq {
+        reqLrScQ.enq(tuple2(0, MemReq {
             op: Lr,
             addr: lsqDeqLd.paddr,
             byteEn: lsqDeqLd.shiftedBE,
             data: ?
-        });
+        }));
         // print
         $display("[doDeqLSQ_Lr_issue] %t: ", $time, fshow(lsqDeqLd));
         // check
@@ -672,12 +676,12 @@ module mkTbIntegrate(Empty);
         lsqDeqSt.specBits == 0
     );
         // send to mem
-        ccm.procReq(0, MemReq {
+        reqStQ.enq(tuple2(0, MemReq {
             op: St,
             addr: lsqDeqSt.paddr,
             byteEn: ?,
             data: ?
-        });
+        }));
         // record waiting for store resp
         LineDataOffset offset = getLineDataOffset(lsqDeqSt.paddr);
         waitStRespQ.enq(WaitStResp {
@@ -733,12 +737,12 @@ module mkTbIntegrate(Empty);
 
     rule doIssueSB;
         let {sbIdx, en} <- stb.issue;
-        ccm.procReq(zeroExtend(sbIdx), MemReq {
+        reqStQ.enq(tuple2(zeroExtend(sbIdx), MemReq {
             op: St,
             addr: {en.addr, 0},
             byteEn: ?,
             data: ?
-        });
+        }));
     endrule
 `endif
 
@@ -752,12 +756,12 @@ module mkTbIntegrate(Empty);
     );
         // send to mem
         waitLrScResp <= Sc;
-        ccm.procReq(0, MemReq {
+        reqLrScQ.enq(tuple2(0, MemReq {
             op: Sc,
             addr: lsqDeqSt.paddr,
             byteEn: lsqDeqSt.shiftedBE,
             data: lsqDeqSt.stData
-        });
+        }));
         // print
         $display("[doDeqLSQ_Sc_issue] %t: ", $time, fshow(lsqDeqSt));
         // check
@@ -788,5 +792,20 @@ module mkTbIntegrate(Empty);
         let {be, d} = scatterStore(testEn.paddr, testEn.memInst.byteEn, testEn.stData);
         doAssert(be == lsqDeqSt.shiftedBE, "wrong BE");
         doAssert(d == lsqDeqSt.stData, "wrong data");
+    endrule
+
+    rule sendLdToMem;
+        let {id, r} <- toGet(reqLdQ).get;
+        ccm.procReq(id, r);
+    endrule
+
+    rule sendStToMem;
+        let {id, r} <- toGet(reqStQ).get;
+        ccm.procReq(id, r);
+    endrule
+
+    rule sendLrScToMem;
+        let {id, r} <- toGet(reqLrScQ).get;
+        ccm.procReq(id, r);
     endrule
 endmodule
