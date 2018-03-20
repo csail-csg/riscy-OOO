@@ -2180,7 +2180,7 @@ module mkSplitLSQ(SplitLSQ);
 
     method Action wakeupLdStalledBySB(SBIndex sbIdx);
         if(verbose) begin
-            $display("[LSQ - wakeupBySB] ", fshow(sbIdx);
+            $display("[LSQ - wakeupBySB] ", fshow(sbIdx));
         end
         function Action setReady(LdQTag i);
         action
