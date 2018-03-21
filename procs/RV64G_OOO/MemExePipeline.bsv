@@ -252,8 +252,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         endmethod
 `ifdef TSO_MM
         method ActionValue#(Tuple2#(LineByteEn, Line)) respSt(DProcReqId id);
-        //    doAssert(False, "respSt for TSO not implemented");
-        //    return ?;
             lsq.deqSt; // deq here
             let waitSt <- toGet(waitStRespQ).get;
             if(verbose) begin
