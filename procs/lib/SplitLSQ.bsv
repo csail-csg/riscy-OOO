@@ -313,7 +313,6 @@ typedef struct {
     ByteEn          shiftedBE;
     Maybe#(SpecTag) specTag;
     SpecBits        specBits;
-    Bool            waitWPResp; // TODO actually not needed
 } LdQDeqEntry deriving (Bits, Eq, FShow);
 
 typedef struct {
@@ -420,6 +419,9 @@ interface SplitLSQ;
     // Wake up younger loads when SB deq (only WEAK model has SB)
     method Action wakeupLdStalledBySB(SBIndex sbIdx);
 `endif
+    // For system consistency, check SQ empty. Need this check because a normal
+    // St can sit in the SQ while already committed from ROB
+    method Bool stqEmpty;
     // Speculation
     interface SpeculationUpdate specUpdate;
 endinterface
@@ -763,7 +765,6 @@ module mkSplitLSQ(SplitLSQ);
 
     let ld_waitWPResp_hit       = getVEhrPort(ld_waitWPResp, 0);
     let ld_waitWPResp_findIss   = getVEhrPort(ld_waitWPResp, 0);
-    let ld_waitWPResp_deqLd     = getVEhrPort(ld_waitWPResp, 0);
     let ld_waitWPResp_updAddr   = getVEhrPort(ld_waitWPResp, 0);
     let ld_waitWPResp_issue     = getVEhrPort(ld_waitWPResp, 0); // assert
     let ld_waitWPResp_enqIss    = getVEhrPort(ld_waitWPResp, 0);
@@ -798,6 +799,7 @@ module mkSplitLSQ(SplitLSQ);
     Reg#(StQTag) st_deqP <- mkReg(0);
     Ehr#(2, StQTag) st_verifyP <- mkEhr(0);
 
+    let st_valid_empty     = getVEhrPort(st_valid, 0);
     let st_valid_wrongSpec = getVEhrPort(st_valid, 0); // write
     let st_valid_verify    = getVEhrPort(st_valid, 0);
     let st_valid_updAddr   = getVEhrPort(st_valid, 0); // assert
@@ -1993,8 +1995,7 @@ module mkSplitLSQ(SplitLSQ);
             isMMIO: ld_isMMIO_deqLd[deqP],
             shiftedBE: ld_shiftedBE_deqLd[deqP],
             specTag: ld_specTag_deqLd[deqP],
-            specBits: ld_specBits_deqLd[deqP],
-            waitWPResp: ld_waitWPResp_deqLd[deqP]
+            specBits: ld_specBits_deqLd[deqP]
         };
     endmethod
 
@@ -2006,8 +2007,6 @@ module mkSplitLSQ(SplitLSQ);
         // sanity check
         doAssert(checkAddrAlign(ld_paddr_deqLd[deqP], ld_byteEn[deqP]),
                  "addr BE should be naturally aligned");
-        doAssert(!ld_waitWPResp_deqLd[deqP],
-                 "cannot wait for wrong path resp");
         if(ld_memFunc[deqP] == Ld || ld_isMMIO_deqLd[deqP]) begin
             doAssert(isValid(ld_specTag_deqLd[deqP]),
                      "Ld or MMIO must have spec tag");
@@ -2197,6 +2196,10 @@ module mkSplitLSQ(SplitLSQ);
         wrongSpec_wakeBySB_conflict.wset(?);
     endmethod
 `endif
+
+    method Bool stqEmpty;
+        return !st_valid_empty[st_deqP];
+    endmethod
 
     interface SpeculationUpdate specUpdate;
         method Action correctSpeculation(SpecBits mask);

@@ -60,7 +60,9 @@ interface CommitInput;
     interface ReorderBufferSynth robIfc;
     interface RegRenamingTable rtIfc;
     interface CsrFile csrfIfc;
-    interface StoreBuffer stbIfc;
+    // no stores
+    method Bool stbEmpty;
+    method Bool stqEmpty;
     // TLB has stopped processing now
     method Bool tlbNoPendingReq;
     // set flags
@@ -130,7 +132,6 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     ReorderBufferSynth rob = inIfc.robIfc;
     RegRenamingTable regRenamingTable = inIfc.rtIfc;
     CsrFile csrf = inIfc.csrfIfc;
-    StoreBuffer stb = inIfc.stbIfc;
 
     // verify packets
 `ifdef VERIFICATION_PACKETS
@@ -182,7 +183,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             state: x.rob_inst_state,
             specBits: x.spec_bits,
             specTag: x.spec_tag,
-            stbEmpty: stb.isEmpty,
+            stbEmpty: inIfc.stbEmpty && inIfc.stqEmpty,
             prv: csrf.decodeInfo.prv,
             htifStall: False
         };
@@ -413,8 +414,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 `endif
             end
             inIfc.setUpdateVMInfo;
-            // always wait store buffer to be empty
-            when(stb.isEmpty, noAction);
+            // always wait store buffer and SQ to be empty
+            when(inIfc.stbEmpty && inIfc.stqEmpty, noAction);
             // We wait TLB to finish all requests and become sync with memory.
             // Notice that currently TLB is read only, so TLB is always in sync
             // with memory (i.e., there is no write to commit to memory). Since
@@ -439,6 +440,9 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             // handle trap
             let trap_pc <- csrf.trap(t.trap, t.pc, t.addr);
             inIfc.redirect_action(trap_pc, t.specTag, t.instTag);
+            // XXX Are we calling incorrectSpec twice here in case of page
+            // fault? Calling twice should be fine, becaus rename has been
+            // blocked by incremented epoch
 `ifdef PERF_COUNT
             // performance counter
             if(inIfc.doStats) begin

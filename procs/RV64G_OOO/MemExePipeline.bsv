@@ -663,7 +663,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
     // issue non-MMIO Lr when
     // (1) not waiting for Lr/Sc/Amo/MMIO resp
-    // (2) not pending on wrong path resp
     // (3) no spec bit
     // (4) WEAK: SB does not match that addr
     // (5) WEAK: if .rl bit is set, SB is empty
@@ -671,7 +670,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         lsqDeqLd.memFunc == Lr
         && !lsqDeqLd.isMMIO
         && waitLrScAmoMMIOResp == Invalid
-        && !lsqDeqLd.waitWPResp
+        //&& !lsqDeqLd.waitWPResp // wrong path is only for Ld, not needed
         && lsqDeqLd.specBits == 0
 `ifndef TSO_MM
         && stb.noMatchLdQ(lsqDeqLd.paddr, lsqDeqLd.shiftedBE)
@@ -716,13 +715,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
     // issue MMIO Ld when
     // (1) not waiting for Lr/Sc/Amo/MMIO resp
-    // (2) not pending on wrong path resp
     // (3) spec bit just contain itself's spec tag
     // (4) WEAK: if .rl bit is set, SB is empty
     rule doDeqLdQ_MMIO_issue(
         lsqDeqLd.isMMIO
         && waitLrScAmoMMIOResp == Invalid
-        && !lsqDeqLd.waitWPResp
+        //&& !lsqDeqLd.waitWPResp // wrong path is only for Ld, not needed
         && lsqDeqLd.specBits == (1 << validValue(lsqDeqLd.specTag))
 `ifndef TSO_MM
         && (!lsqDeqLd.rel || stb.isEmpty)
