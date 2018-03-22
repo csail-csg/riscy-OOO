@@ -139,7 +139,7 @@ public:
     virtual void commitInstStuck(uint8_t core, const uint64_t pc,
                                  const uint8_t iType, const int isException,
                                  const int isInterrupt, const uint8_t trapVal,
-                                 const uint8_t state, const uint16_t specBits,
+                                 const uint8_t state, const uint32_t specBits,
                                  const int specTagValid, const uint8_t specTag,
                                  const int stbEmpty, const uint8_t prv, const int htifStall) {
         fprintf(stderr, "  [DEADLOCK commitInstStuck] core %d, pc %016llx, iType %d, isException %d, "
@@ -158,7 +158,7 @@ public:
     virtual void commitUserInstStuck(uint8_t core, const uint64_t pc,
                                      const uint8_t iType, const int isException,
                                      const int isInterrupt, const uint8_t trapVal,
-                                     const uint8_t state, const uint16_t specBits,
+                                     const uint8_t state, const uint32_t specBits,
                                      const int specTagValid, const uint8_t specTag,
                                      const int stbEmpty, const uint8_t prv, const int htifStall) {
         fprintf(stderr, "  [DEADLOCK commitUserInstStuck] core %d, pc %016llx, iType %d, isException %d, "

@@ -23,8 +23,8 @@
 
 PROC := RV64G_OOO
 
-# FPGA is congested, use a slow clk...
-USER_CLK_PERIOD ?= 40
+# core size
+CORE_SIZE ?= SMALL
 # always include perf counter
 PERF_COUNT := true
 # dram type in simulation: VC707 or AWSF1
@@ -39,8 +39,21 @@ TSO_MM ?= false
 # default check cache deadlock
 CHECK_DEADLOCK ?= true
 
+# clk frequency depends on core size
+ifeq ($(CORE_SIZE),TINY)
+USER_CLK_PERIOD ?= 24
+else ifeq ($(CORE_SIZE),SMALL)
+USER_CLK_PERIOD ?= 32
+else ifeq ($(CORE_SIZE),MEDIUM)
+USER_CLK_PERIOD ?= 32
+else ifeq ($(CORE_SIZE),LARGE)
+USER_CLK_PERIOD ?= 40
+else
+$(error unsupported CORE_SIZE)
+endif
+
 # directories
-BUILD_DIR := $(RISCY_HOME)/procs/build/$(PROC).core_$(CORE_NUM)
+BUILD_DIR := $(RISCY_HOME)/procs/build/$(PROC).core_$(CORE_NUM).$(CORE_SIZE)
 ifeq ($(TSO_MM),true)
 BUILD_DIR := $(BUILD_DIR).tso
 else

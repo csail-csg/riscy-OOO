@@ -21,9 +21,12 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+`include "ProcConfig.bsv"
+
 import Assert::*;
 import CacheUtils::*;
 import Types::*;
+import ProcTypes::*;
 import CCTypes::*;
 import LLPipe::*;
 import LLCRqMshr::*;
@@ -31,10 +34,12 @@ import LLBank::*;
 import L1CoCache::*;
 import LLCDmaConnect::*;
 
-// Last-Level: 256KB per bank x 1 bank
-typedef 8 LLWayNum;
+// Last-Level: 512KB per core
+typedef TAdd#(13, TLog#(CoreNum)) LgLLLineNum;
+typedef `LOG_LLC_WAYS LgLLWayNum;
+typedef TExp#(LgLLWayNum) LLWayNum;
 typedef 0 LgLLBankNum;
-typedef 9 LgLLSetNum;
+typedef TSub#(LgLLLineNum, TAdd#(LgLLWayNum, LgLLBankNum)) LgLLSetNum;
 
 typedef Bit#(LgLLBankNum) LLBankId;
 typedef LgLLSetNum LLIndexSz;
@@ -43,7 +48,7 @@ typedef GetTagSz#(LgLLBankNum, LgLLSetNum) LLTagSz;
 typedef Bit#(LLTagSz) LLTag;
 typedef Bit#(TLog#(LLWayNum)) LLWay;
 
-typedef 8 LLCRqNum;
+typedef LLWayNum LLCRqNum;
 typedef Bit#(TLog#(LLCRqNum)) LLCRqMshrIdx;
 
 // all L1$ are children

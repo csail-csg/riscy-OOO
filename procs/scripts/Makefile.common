@@ -85,6 +85,9 @@ $(error dtc not found)
 endif
 CONNECTALFLAGS += --cflags=" -DDTC_PATH=\"$(DTC_PATH)\" "
 
+# core size
+CONNECTALFLAGS += --bscflags=" -D CORE_$(CORE_SIZE) "
+
 # core num
 CONNECTALFLAGS += --bscflags=" -D NUM_CORES=$(CORE_NUM) "
 

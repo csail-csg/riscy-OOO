@@ -43,6 +43,7 @@ import IPRqMshr::*;
 import IBank::*;
 
 export L1Num;
+export LgL1WayNum;
 export L1WayNum;
 export L1Way;
 
@@ -58,16 +59,17 @@ export mkICoCache;
 typedef TMul#(CoreNum, 2) L1Num;
 
 // Way num is shared among all coherent L1$ (I and D)
-typedef 4 L1WayNum;
-typedef Bit#(TLog#(L1WayNum)) L1Way;
+typedef `LOG_L1_WAYS LgL1WayNum;
+typedef TExp#(LgL1WayNum) L1WayNum;
+typedef Bit#(LgL1WayNum) L1Way;
 
 
 ////////
 // D$ //
 ////////
-// 32KB
-typedef `LOG_DCACHE_BANKS LgDBankNum;
-typedef TSub#(7, LgDBankNum) LgDSetNum;
+typedef 10 LgDLineNum; // 64KB cache
+typedef 0 LgDBankNum;
+typedef TSub#(LgDLineNum, TAdd#(LgDBankNum, LgL1WayNum)) LgDSetNum;
 
 typedef Bit#(LgDBankNum) DBankId;
 typedef LgDSetNum DIndexSz;
@@ -75,8 +77,8 @@ typedef Bit#(DIndexSz) DIndex;
 typedef GetTagSz#(LgDBankNum, LgDSetNum) DTagSz;
 typedef Bit#(DTagSz) DTag;
 
-typedef 4 DCRqNum;
-typedef 2 DPRqNum;
+typedef L1WayNum DCRqNum;
+typedef 4 DPRqNum; // match cache pipeline latency
 typedef Bit#(TLog#(DCRqNum)) DCRqMshrIdx;
 typedef Bit#(TLog#(DPRqNum)) DPRqMshrIdx;
 
@@ -195,8 +197,9 @@ endmodule
 ////////
 // I$ //
 ////////
+typedef 10 LgILineNum; // 64KB cache
 typedef 0 LgIBankNum;
-typedef 7 LgISetNum;
+typedef TSub#(LgILineNum, TAdd#(LgIBankNum, LgL1WayNum)) LgISetNum;
 
 typedef Bit#(LgIBankNum) IBankId;
 typedef LgISetNum IIndexSz;
@@ -204,8 +207,8 @@ typedef Bit#(IIndexSz) IIndex;
 typedef GetTagSz#(LgIBankNum, LgISetNum) ITagSz;
 typedef Bit#(ITagSz) ITag;
 
-typedef 4 ICRqNum;
-typedef 2 IPRqNum;
+typedef L1WayNum ICRqNum;
+typedef 4 IPRqNum; // match cache pipeline latency
 typedef Bit#(TLog#(ICRqNum)) ICRqMshrIdx;
 typedef Bit#(TLog#(IPRqNum)) IPRqMshrIdx;
 

@@ -118,11 +118,7 @@ typedef union tagged {
 
 typedef TExp#(SizeOf#(ArchRIndx)) NumArchReg;
 
-`ifdef PHYS_REG_COUNT
-typedef `PHYS_REG_COUNT NumPhyReg;
-`else
-typedef NumArchReg NumPhyReg;
-`endif
+typedef TAdd#(NumArchReg, `ROB_SIZE) NumPhyReg;
 typedef Bit#(TLog#(NumPhyReg)) PhyRIndx;
 
 typedef struct {

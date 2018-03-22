@@ -46,7 +46,7 @@ public:
 
     virtual void renameErr(uint8_t core, RenameError err, uint64_t pc, uint8_t iType,
                            int isException, int isInterrupt, uint8_t trapVal,
-                           uint16_t specBits, int specTagValid, uint8_t specTag) {
+                           uint32_t specBits, int specTagValid, uint8_t specTag) {
         fprintf(stderr, "[RENAME DEBUG renameErr] core %d, err %d, pc %016llx, iType %d, "
                 "isException %d, isInterrupt %d, trapVal %d, "
                 "specBits %04x, specTagValid %d, specTag %d\n",

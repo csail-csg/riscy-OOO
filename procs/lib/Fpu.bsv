@@ -52,7 +52,6 @@ interface FpuExec;
     method Action       exec(FpuInst fInst, Data rVal1, Data rVal2, Data rVal3);
     method Bool         notEmpty; // True if there is any instruction in this pipeline
     // output
-    method Bool         result_rdy;
     method FpuResult    result_data;
     method Action       result_deq;
 endinterface
@@ -808,8 +807,8 @@ endfunction
 
 (* synthesize *)
 module mkFpuExecPipeline(FpuExec);
-    FIFO#(FpuResult) fpu_exec_fifo <- mkFIFO; // in parallel with pipelined FPUs
-    FIFO#(FpuInst) fpu_func_fifo <- mkFIFO; // in parallel with pipelined FPUs
+    FIFO#(FpuResult) fpu_exec_fifo <- mkSizedFIFO(`FPU_SKID_FIFO_SIZE); // in parallel with pipelined FPUs
+    FIFO#(FpuInst) fpu_func_fifo <- mkSizedFIFO(`FPU_SKID_FIFO_SIZE); // in parallel with pipelined FPUs
     FIFOF#(FpuResult) fpu_exec_fifo_out <- mkFIFOF; // all pipelined FPUs dequeue into this
 
     // Pipelined units
@@ -967,7 +966,6 @@ module mkFpuExecPipeline(FpuExec);
 
     method Bool         notEmpty = fpu_exec_fifo_out.notEmpty;
     // output
-    method Bool       result_rdy = fpu_exec_fifo_out.notEmpty;
     method FpuResult result_data = fpu_exec_fifo_out.first;
     method Action     result_deq = fpu_exec_fifo_out.deq;
 endmodule
@@ -986,7 +984,6 @@ module mkFpuExecDummy(FpuExec);
 
     method Bool         notEmpty = fpu_exec_fifo.notEmpty;
     // output
-    method Bool       result_rdy = fpu_exec_fifo.notEmpty;
     method FpuResult result_data = fpu_exec_fifo.first;
     method Action     result_deq = fpu_exec_fifo.deq;
 endmodule

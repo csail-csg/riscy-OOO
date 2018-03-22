@@ -25,6 +25,7 @@
 import Types::*;
 import ProcTypes::*;
 import Fifo::*;
+import FIFO::*;
 import XilinxIntMul::*;
 import XilinxIntDiv::*;
 
@@ -54,7 +55,6 @@ endfunction
 interface SeqMulDivExec;
     method Action exec(MulDivInst mdInst, Data rVal1, Data rVal2);
     // output
-    method Bool   result_rdy;
     method Data   result_data;
     method Action result_deq;
 endinterface
@@ -67,7 +67,7 @@ module mkSeqMulDivExec(SeqMulDivExec);
     XilinxIntDiv#(void) divUnit <- mkXilinxIntDiv;
 
     // This fifo holds what operation is being done by the unit.
-    Fifo#(4, MulDivInst) funcQ <- mkCFFifo;
+    FIFO#(MulDivInst) funcQ <- mkSizedFIFO(`MULDIV_SKID_FIFO_SIZE);
 
     method Action exec(MulDivInst mdInst, Data rVal1, Data rVal2);
         if(verbose) begin
@@ -99,11 +99,6 @@ module mkSeqMulDivExec(SeqMulDivExec);
     endmethod
 
     // output
-    method Bool result_rdy;
-        return isMulFunc(funcQ.first.func) ? mulUnit.respValid :
-                                             divUnit.respValid;
-    endmethod
-
     method Data result_data;
         let mdInst = funcQ.first;
         Data data = (case(mdInst.func)

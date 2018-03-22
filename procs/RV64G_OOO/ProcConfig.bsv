@@ -21,6 +21,10 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+//
+// ==== common parameters ====
+//
+
 `define rv64 True
 `define m True
 `define a True
@@ -29,58 +33,127 @@
 
 //`define NUM_CORES 1 // defined in make file
 
-// Set this define to use the FMA for Add and Mul
-`define REUSE_FMA
+//`define PERF_COUNT // defined in makefile
+
+`define REUSE_FMA // use FMA for add and mul
 
 `define sizeSup 2 // 2 way superscalar
 
 `define LOG_BOOT_ROM_BYTES 12 // 4KB boot rom
 
-// speculation
 `define DIR_PRED_GSELECT // branch predictor, other options are: BHT, TOUR
-`define NUM_EPOCHS 16
-`define NUM_SPEC_TAGS 16
 
-// ROB
-`define SUP_ROB
-`define ROB_SIZE 48 // match BOOM
-`define PHYS_REG_COUNT TAdd#(64,`ROB_SIZE)
+`define LOG_DEADLOCK_CYCLES 26 // 64M cycles for deadlock detection
 
-// L1 TLB
-`define TLB_SIZE 32
-
-// LSQ
-`define LDQ_SIZE 16
-`define STQ_SIZE 8
-`define SB_SIZE 4 // [sizhuo] make SB smaller, probably easier for synth
-
-// D$
-`define LOG_DCACHE_BANKS 0 // 1 bank for D$ (4 misses)
-
-// reservation station sizes
-`define RS_ALU_SIZE 12
-`define RS_MEM_SIZE 12
-`define RS_FPUMULDIV_SIZE 8 // arbitrary number
-
-// book keeping fifo sizes
-`define BOOKKEEPING_MEM_SIZE 2 // TLB has 1 cycle latency
-`define BOOKKEEPING_FPUMULDIV_SIZE 4 // FPU has 2-elem FIFO, MULDIV has 2-elem FIFO
-
-// be lazy in reservation station wake and phy reg file
+// Be lazy in reservation station wake and phy reg file, and enqs. LSQ is by
+// default lazy. Spec FIFOs are small, so not lazy.
 `define LAZY_RS_RF True
-
-// be lazy in enq (LSQ is fixed to be lazy; bookkeeping fifos are small so not lazy)
 `define RS_LAZY_ENQ True
 `define ROB_LAZY_ENQ True
 
-// performance counters
-//`define PERF_COUNT -- defined in makefile
+`define TLB_SIZE 32 // L1 TLB size
 
-// Debugging
-//`define VERIFICATION_PACKETS
+`define BOOKKEEPING_MEM_SIZE 2 // TLB has 1 cycle latency
 
-// maximum pending reads in DRAM
-`define DRAMLLC_MAX_READS 8 // match LLC MSHR size
+`define FPU_SKID_FIFO_SIZE 5 // FMA has 4 cycle latency
+`define MULDIV_SKID_FIFO_SIZE 5 // MUL has 4 cycle latency
+`define BOOKKEEPING_FPUMULDIV_SIZE 12 // FPU: 5 skid FIFO + 2 out FIFO, muldiv: 5 skid FIFO
 
-// deadlock check
-`define LOG_DEADLOCK_CYCLES 26 // 64M cycles for deadlock detection
+`define LOG_L1_WAYS 3 // 8 ways
+`define LOG_LLC_WAYS 4 // 16 ways
+
+`define DRAMLLC_MAX_READS TExp#(`LOG_LLC_WAYS) // max reads in DRAM, match LLC ways
+
+//
+// ==== CORE SIZE ====
+//
+
+`ifdef CORE_TINY
+
+    // ROB
+    `define ROB_SIZE 48
+
+    // speculation
+    `define NUM_EPOCHS 16
+    `define NUM_SPEC_TAGS 16
+
+    // LSQ
+    `define LDQ_SIZE 18
+    `define STQ_SIZE 11
+    `define SB_SIZE 4
+
+    // reservation station sizes
+    `define RS_ALU_SIZE 12
+    `define RS_MEM_SIZE 12
+    `define RS_FPUMULDIV_SIZE 12
+
+`endif
+
+`ifdef CORE_SMALL
+
+    // ROB
+    `define ROB_SIZE 64
+
+    // speculation
+    `define NUM_EPOCHS 24
+    `define NUM_SPEC_TAGS 24
+
+    // LSQ
+    `define LDQ_SIZE 24
+    `define STQ_SIZE 14
+    `define SB_SIZE 4
+
+    // reservation station sizes
+    `define RS_ALU_SIZE 16
+    `define RS_MEM_SIZE 16
+    `define RS_FPUMULDIV_SIZE 16
+
+`endif
+
+`ifdef CORE_MEDIUM
+
+    // ROB
+    `define ROB_SIZE 96
+
+    // speculation
+    `define NUM_EPOCHS 32
+    `define NUM_SPEC_TAGS 32
+
+    // LSQ
+    `define LDQ_SIZE 36
+    `define STQ_SIZE 21
+    `define SB_SIZE 6
+
+    // reservation station sizes
+    `define RS_ALU_SIZE 24
+    `define RS_MEM_SIZE 24
+    `define RS_FPUMULDIV_SIZE 24
+
+`endif
+
+`ifdef CORE_LARGE
+
+    // ROB
+    `define ROB_SIZE 128
+
+    // speculation
+    `define NUM_EPOCHS 32
+    `define NUM_SPEC_TAGS 32
+
+    // LSQ
+    `define LDQ_SIZE 48
+    `define STQ_SIZE 28
+    `define SB_SIZE 8
+
+    // reservation station sizes
+    `define RS_ALU_SIZE 32
+    `define RS_MEM_SIZE 32
+    `define RS_FPUMULDIV_SIZE 32
+
+`endif
+
+//
+// ==== derived parameters ====
+//
+
+
