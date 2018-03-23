@@ -29,12 +29,20 @@ import FIFO::*;
 import XilinxIntMul::*;
 import XilinxIntDiv::*;
 
-export SeqMulDivExec(..);
-export mkSeqMulDivExec;
+export MulDivResp(..);
+export MulDivExec(..);
+export mkMulDivExec;
 
 function Bool isMulFunc(MulDivFunc func);
     return (case(func)
         Mul, Mulh: True;
+        default: False;
+    endcase);
+endfunction
+
+function Bool isDivFunc(MulDivFunc func);
+    return (case(func)
+        Div, Rem: True;
         default: False;
     endcase);
 endfunction
@@ -51,25 +59,70 @@ function Bool isDivSigned(MulDivSign s);
     return s == Signed; // there is no SignedUnsigned for div
 endfunction
 
-// mul/div that maintains sequential order
-interface SeqMulDivExec;
-    method Action exec(MulDivInst mdInst, Data rVal1, Data rVal2);
+// resp type
+typedef struct {
+    Data data;
+    Maybe#(PhyDst) dst;
+    InstTag tag;
+    // spec bits is not used in later stage, so not included here
+} MulDivResp deriving(Bits, Eq, FShow);
+
+interface MulDivExec;
+    // input req
+    method Action exec(MulDivInst mdInst, Data rVal1, Data rVal2,
+                       Maybe#(PhyDst) dst, InstTag tag, SpecBits spec_bits);
     // output
-    method Data   result_data;
-    method Action result_deq;
+    method ActionValue#(MulDivResp) mulResp;
+    method ActionValue#(MulDivResp) divResp;
+    // speculation
+    interface SpeculationUpdate specUpdate;
 endinterface
 
+// spec fifos in parallel with func units
+typedef struct {
+    MulDivFunc func;
+    Bool w; // op32
+    // generic bookkeepings
+    Maybe#(PhyDst) dst;
+    InstTag tag;
+} MulDivExecInfo deriving(Bits, Eq, FShow);
+
+typedef SpecPoisonFifo#(`BOOKKEEPING_INT_MUL_SIZE, MulDivExecInfo) MulExecQ;
 (* synthesize *)
-module mkSeqMulDivExec(SeqMulDivExec);
+module mkMulExecQ(MulExecQ);
+    let m <- mkSpecPoisonFifo(True); // lazy enq
+    return m;
+endmodule
+
+typedef SpecPoisonFifo#(2, MulDivExecInfo) DivExecQ;
+(* synthesize *)
+module mkDivExecQ(DivExecQ);
+    let m <- mkSpecPoisonFifo(True); // lazy enq
+    return m;
+endmodule
+
+// don't synthesize to optimize guard of exec
+module mkMulDivExec(SeqMulDivExec);
     Bool verbose = False;
 
     XilinxIntMul#(void) mulUnit <- mkXilinxIntMul;
     XilinxIntDiv#(void) divUnit <- mkXilinxIntDiv;
 
-    // This fifo holds what operation is being done by the unit.
-    FIFO#(MulDivInst) funcQ <- mkSizedFIFO(`MULDIV_SKID_FIFO_SIZE);
+    let mulQ <- mkMulExecQ;
+    let divQ <- mkDivExecQ;
 
-    method Action exec(MulDivInst mdInst, Data rVal1, Data rVal2);
+    // drain poisoned resp
+    rule deqMulPoisoned(mulQ.first_poisoned);
+        mulQ.deq;
+        mulUnit.deqResp;
+    endrule
+    rule deqDivPoisoned(divQ.first_poisoned);
+        divQ.deq;
+        divUnit.deqResp;
+    endrule
+
+    method Action exec(MulDivInst mdInst, Data rVal1, Data rVal2,
+                       Maybe#(PhyDst) dst, InstTag tag, SpecBits spec_bits);
         if(verbose) begin
             $display("[MulDiv] ", fshow(mdInst), ", ",
                      fshow(rVal1), ", ", fshow(rVal2));
@@ -86,43 +139,71 @@ module mkSeqMulDivExec(SeqMulDivExec);
                                         zeroExtend(rVal2[31:0]);
         end
 
-        // issue to func unit
+        // issue to func unit & bookkeeping fifo
+        let info = MulDivExecInfo {
+            func: mdInst.func,
+            w: mdInst.w,
+            dst: dst,
+            tag: tag
+        };
         if(isMulFunc(mdInst.func)) begin
             mulUnit.req(a, b, getXilinxMulSign(mdInst.sign), ?);
+            mulQ.enq(info, spec_bits);
         end
         else begin
             divUnit.req(a, b, isDivSigned(mdInst.sign), ?);
+            divQ.enq(info, spec_bits);
         end
-
-        // save in bookkeeping fifo
-        funcQ.enq(mdInst);
     endmethod
 
     // output
-    method Data result_data;
-        let mdInst = funcQ.first;
-        Data data = (case(mdInst.func)
+    method ActionValue#(MulDivResp) mulResp if(!mulQ.first_poisoned);
+        mulUnit.deqResp
+        mulQ.deq;
+        let info = mulQ.first_data.data;
+        doAssert(isMulFunc(info.func), "must be mul func");
+        // get result data
+        Data data = (case(info.func)
             Mul  : (truncate(mulUnit.product));
             Mulh : (truncateLSB(mulUnit.product));
-            Div  : (divUnit.quotient);
-            Rem  : (divUnit.remainder);
+            default: ?;
         endcase);
         // correct for OP32 instructions
-        if (mdInst.w) begin
+        if (info.w) begin
             data = signExtend(data[31:0]);
         end
-        return data;
+        return MulDivResp {
+            data: data,
+            dst: info.dst,
+            tag: info.tag
+        };
     endmethod
 
-    method Action result_deq;
-        funcQ.deq;
-        let mdInst = funcQ.first;
-        if(isMulFunc(mdInst.func)) begin
-            mulUnit.deqResp;
+    method ActionValue#(MulDivResp) divResp;
+        divUnit.deqResp;
+        divQ.deq;
+        let info = divQ.first_data.data;
+        doAssert(isDivFunc(info.func), "must be div func");
+        // get result data
+        Data data = (case(info.func)
+            Div  : (divUnit.quotient);
+            Rem  : (divUnit.remainder);
+            default: ?;
+        endcase);
+        // correct for OP32 instructions
+        if (info.w) begin
+            data = signExtend(data[31:0]);
         end
-        else begin
-            divUnit.deqResp;
-        end
+        return MulDivResp {
+            data: data,
+            dst: info.dst,
+            tag: info.tag
+        };
     endmethod
+
+    interface specUpdate = joinSpeculationUpdate(vec(
+        mulQ.specUpdate,
+        divQ.specUpdate
+    ));
 endmodule
 

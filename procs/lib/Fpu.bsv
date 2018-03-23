@@ -37,6 +37,14 @@ import Divide::*;
 import SquareRoot::*;
 import FloatingPoint::*;
 import XilinxFpu::*;
+import HasSpecBits::*;
+import SpecFifo::*;
+import SpecPoisonFifo::*;
+
+export FpuResult(..);
+export FpuResp(..);
+export FpuExec(..);
+export mkFpuExecPipeline;
 
 typedef FloatingPoint::RoundMode FpuRoundMode;
 typedef FloatingPoint::Exception FpuException;
@@ -48,47 +56,25 @@ typedef struct {
     Bit#(5) fflags;
 } FpuResult deriving(Bits, Eq, FShow);
 
+typedef struct {
+    FpuResult res;
+    Maybe#(PhyDst) dst;
+    InstTag tag;
+    // spec bits is not used in later stage, so not included here
+} FpuResp deriving(Bits, Eq, FShow);
+
 interface FpuExec;
-    method Action       exec(FpuInst fInst, Data rVal1, Data rVal2, Data rVal3);
-    method Bool         notEmpty; // True if there is any instruction in this pipeline
+    // input req
+    method Action exec(FpuInst fpu_inst, Data rVal1, Data rVal2, Data rVal3,
+                       Maybe#(PhyDst) dst, InstTag tag, SpecBits specBits);
     // output
-    method FpuResult    result_data;
-    method Action       result_deq;
+    method ActionValue#(FpuResp) simpleResp;
+    method ActionValue#(FpuResp) fmaResp;
+    method ActionValue#(FpuResp) divResp;
+    method ActionValue#(FpuResp) sqrtResp;
+    // speculation
+    interface SpeculationUpdate specUpdate;
 endinterface
-
-function Tuple2#(FloatingPoint#(e,m), FpuException) fmaFP(
-    FloatingPoint#(e,m) in1, FloatingPoint#(e,m) in2,
-    FloatingPoint#(e,m) in3, FpuRoundMode rmode
-) provisos (
-    Add#(a__, TLog#(TAdd#(1, TAdd#(m, 5))), TAdd#(e, 1)),
-    Add#(b__, TLog#(TAdd#(1, TAdd#(TAdd#(m, 1), TAdd#(m, 1)))), TAdd#(e, 1))
-);
-    let {mult_data, mult_exception} = multFP(in1, in2, rmode);
-    let {final_data, add_exception} = addFP(mult_data, in3, rmode);
-    return tuple2(final_data, mult_exception | add_exception);
-endfunction
-
-// Double Precision FPU Pipelines
-`ifndef REUSE_FMA
-// If reusing the FMA, don't bother compiling these.
-// Hopefully this reduces compilation/synthesis time.
-(* synthesize *)
-module mkDoubleAdd(Server#(
-    Tuple3#(Double, Double, FpuRoundMode),
-    Tuple2#(Double, FpuException)
-));
-    let fpu <- mkFloatingPointAdder;
-    return fpu;
-endmodule
-(* synthesize *)
-module mkDoubleMult(Server#(
-    Tuple3#(Double, Double, FpuRoundMode),
-    Tuple2#(Double, FpuException)
-));
-    let fpu <- mkFloatingPointMultiplier;
-    return fpu;
-endmodule
-`endif
 
 (* synthesize *)
 module mkDoubleDiv(Server#(Tuple3#(Double, Double, FpuRoundMode), Tuple2#(Double, FpuException)));
@@ -123,147 +109,22 @@ module mkDoubleFMA(Server#(Tuple4#(Maybe#(Double), Double, Double, FpuRoundMode)
     return fpu;
 endmodule
 
-// Single Precision FPU Pipelines
-// resuse double precision
-module mkFloatWrapperForBinaryOp#(
-    Server#(Tuple3#(Double, Double, FpuRoundMode),Tuple2#(Double, FpuException)) double_fpu
-)(
-    Server#(Tuple3#(Float, Float, FpuRoundMode), Tuple2#(Float, FpuException))
-);
-    let verbose = False;
-    FIFO#(Tuple2#(FpuRoundMode, FpuException)) rmode_exc_fifo <- mkFIFO;
-    interface Put request;
-        method Action put(Tuple3#(Float, Float, FpuRoundMode) x);
-            let rmode = tpl_3(x);
-            Double d1; FpuException exc1;
-            Double d2; FpuException exc2;
-            {d1, exc1} = convert(tpl_1(x), rmode, True);
-            {d2, exc2} = convert(tpl_2(x), rmode, True);
-            double_fpu.request.put(tuple3(d1, d2, rmode));
-            rmode_exc_fifo.enq(tuple2(rmode, exc1 | exc2));
-            if (verbose) $display("    exc1 = ", fshow(exc1));
-            if (verbose) $display("    exc2 = ", fshow(exc2));
-        endmethod
-    endinterface
-    interface Get response;
-        method ActionValue#(Tuple2#(Float, FpuException)) get;
-            rmode_exc_fifo.deq;
-            let {rmode, exc_in} = rmode_exc_fifo.first;
-            let x <- double_fpu.response.get;
-            let exc_op = tpl_2(x);
-            Float f; FpuException exc_conv;
-            {f, exc_conv} = convert(tpl_1(x), rmode, True);
-            if (verbose) $display("    exc_in = ", fshow(exc_in));
-            if (verbose) $display("    exc_op = ", fshow(exc_op));
-            if (verbose) $display("    exc_conv = ", fshow(exc_conv));
-            return tuple2(f, exc_in | exc_op | exc_conv);
-        endmethod
-    endinterface
-endmodule
-module mkFloatWrapperForSqrt#(
-    Server#(Tuple2#(Double, FpuRoundMode),Tuple2#(Double, FpuException)) double_fpu
-)(
-    Server#(Tuple2#(Float, FpuRoundMode), Tuple2#(Float, FpuException))
-);
-    FIFO#(Tuple2#(FpuRoundMode, FpuException)) rmode_exc_fifo <- mkFIFO;
-    interface Put request;
-        method Action put(Tuple2#(Float, FpuRoundMode) x);
-            let rmode = tpl_2(x);
-            Double d1; FpuException exc1;
-            {d1, exc1} = convert(tpl_1(x), rmode, True);
-            double_fpu.request.put(tuple2(d1, rmode));
-            rmode_exc_fifo.enq(tuple2(rmode, exc1 ));
-        endmethod
-    endinterface
-    interface Get response;
-        method ActionValue#(Tuple2#(Float, FpuException)) get;
-            rmode_exc_fifo.deq;
-            let {rmode, exc_in} = rmode_exc_fifo.first;
-            let x <- double_fpu.response.get;
-            let exc_op = tpl_2(x);
-            Float f; FpuException exc_conv;
-            {f, exc_conv} = convert(tpl_1(x), rmode, True);
-            return tuple2(f, exc_in | exc_op | exc_conv);
-        endmethod
-    endinterface
-endmodule
-module mkFloatWrapperForFMA#(
-    Server#(Tuple4#(Maybe#(Double), Double, Double, FpuRoundMode), Tuple2#(Double, FpuException)) double_fpu
-)(
-    Server#(Tuple4#(Maybe#(Float), Float, Float, FpuRoundMode), Tuple2#(Float, FpuException))
-);
-    FIFO#(Tuple2#(FpuRoundMode, FpuException)) rmode_exc_fifo <- mkFIFO;
-    interface Put request;
-        method Action put(Tuple4#(Maybe#(Float), Float, Float, FpuRoundMode) x);
-            let rmode = tpl_4(x);
-            Maybe#(Double) d1_maybe = tagged Invalid;
-            FpuException exc1 = unpack(0);
-            if (isValid(tpl_1(x))) begin
-                Double d1;
-                {d1, exc1} = convert(fromMaybe(?,tpl_1(x)), rmode, True);
-                d1_maybe = tagged Valid d1;
-            end
-            Double d2; FpuException exc2;
-            Double d3; FpuException exc3;
-            {d2, exc2} = convert(tpl_2(x), rmode, True);
-            {d3, exc3} = convert(tpl_3(x), rmode, True);
-            double_fpu.request.put(tuple4(d1_maybe, d2, d3, rmode));
-            rmode_exc_fifo.enq(tuple2(rmode, exc1 | exc2 | exc3));
-        endmethod
-    endinterface
-    interface Get response;
-        method ActionValue#(Tuple2#(Float, FpuException)) get;
-            rmode_exc_fifo.deq;
-            let {rmode, exc_in} = rmode_exc_fifo.first;
-            let x <- double_fpu.response.get;
-            let exc_op = tpl_2(x);
-            Float f; FpuException exc_conv;
-            {f, exc_conv} = convert(tpl_1(x), rmode, True);
-            return tuple2(f, exc_in | exc_op | exc_conv);
-        endmethod
-    endinterface
-endmodule
-module mkAddWrapperForFMA#(
-    Server#(Tuple4#(Maybe#(ft), ft, ft, FpuRoundMode), Tuple2#(ft, FpuException)) fma_module
-)(
-    Server#(Tuple3#(ft, ft, FpuRoundMode), Tuple2#(ft, FpuException))
-) provisos (Alias#(ft, FloatingPoint#(e,m)));
-    interface Put request;
-        method Action put(Tuple3#(ft, ft, FpuRoundMode) x);
-            let in1 = tpl_1(x);
-            let in2 = tpl_2(x);
-            let rm = tpl_3(x);
-            ft one_const = one(False);
-            fma_module.request.put(tuple4(tagged Valid in1, in2, one_const, rm));
-        endmethod
-    endinterface
-    interface Get response;
-        method ActionValue#(Tuple2#(ft, FpuException)) get;
-            let x <- fma_module.response.get();
-            return x;
-        endmethod
-    endinterface
-endmodule
-module mkMulWrapperForFMA#(
-    Server#(Tuple4#(Maybe#(ft), ft, ft, FpuRoundMode), Tuple2#(ft, FpuException)) fma_module
-)(
-    Server#(Tuple3#(ft, ft, FpuRoundMode), Tuple2#(ft, FpuException))
-) provisos (Alias#(ft, FloatingPoint#(e,m)));
-    interface Put request;
-        method Action put(Tuple3#(ft, ft, FpuRoundMode) x);
-            let in1 = tpl_1(x);
-            let in2 = tpl_2(x);
-            let rm = tpl_3(x);
-            fma_module.request.put(tuple4(tagged Invalid, in1, in2, rm));
-        endmethod
-    endinterface
-    interface Get response;
-        method ActionValue#(Tuple2#(ft, FpuException)) get;
-            let x <- fma_module.response.get();
-            return x;
-        endmethod
-    endinterface
-endmodule
+// wrap FMA to an adder
+function Tuple4#(Maybe#(Double), Double, Double, FpuRoundMode) getAddReqToFma(Tuple3#(Double, Double, FpuRoundMode) x);
+    let in1 = tpl_1(x);
+    let in2 = tpl_2(x);
+    let rm = tpl_3(x);
+    Double one_const = one(False);
+    return tuple4(tagged Valid in1, in2, one_const, rm);
+endfunction
+
+// wrap FMA to a multiplier
+function Tuple4#(Maybe#(Double), Double, Double, FpuRoundMode) getMulReqToFma(Tuple3#(Double, Double, FpuRoundMode) x);
+    let in1 = tpl_1(x);
+    let in2 = tpl_2(x);
+    let rm = tpl_3(x);
+    return tuple4(tagged Invalid, in1, in2, rm);
+endfunction
 
 // FCVT float -> float functions
 function Tuple2#(Double, FpuException) fcvt_d_s (Float in, FpuRoundMode rmode);
@@ -537,22 +398,6 @@ function Bit#(n) saturating_shift_right(Bit#(n) in, Int#(m) amt)
     return shifted;
 endfunction
 
-function Tuple2#(FloatingPoint#(e, m), FpuException) int_to_float(
-    Bit#(65) in, Bool is_32bit, Bool is_unsigned, FpuRoundMode rmode
-) provisos (FixedFloatCVT#(FloatingPoint#(e, m), Int#(65)));
-    Int#(65) in_signed;
-    if (is_32bit && is_unsigned) begin
-        in_signed = unpack(zeroExtend(in[31:0]));
-    end else if (is_32bit && !is_unsigned) begin
-        in_signed = unpack(signExtend(in[31:0]));
-    end else if(!is_32bit && is_unsigned) begin
-        in_signed = unpack(zeroExtend(in));
-    end else if(!is_32bit && !is_unsigned) begin
-        in_signed = unpack(signExtend(in));
-    end
-    return vFixedToFloat(in_signed, 1'b0, rmode);
-endfunction
-
 // exec function for simple operations
 (* noinline *)
 function FpuResult execFpuSimple(FpuInst fpu_inst, Data rVal1, Data rVal2);
@@ -805,101 +650,105 @@ function FpuResult execFpuSimple(FpuInst fpu_inst, Data rVal1, Data rVal2);
     return fpu_result;
 endfunction
 
+// Spec FIFO in parallel with FP units. Div and Sqrt should not be frequent, so
+// we use small FIFOs. FMA may be mroe frequent, so match its latency
+typedef enum {Fma, Div, Sqrt} FpuFuncUnit deriving(Bits, Eq, FShow);
+typedef struct {
+    // fpu inst specific
+    FpuRoundMode roundMode;
+    FpuPrecision precision;
+    FpuException exc_conv_in; // exception during convert single input to double
+    // generic bookkeeping
+    Maybe#(PhyDst) dst;
+    InstTag tag;
+} FpuExecInfo deriving(Bits, Eq, FShow);
+
+typedef SpecPoisonFifo#(n, FpuExecInfo) FpuExecQ#(numeric type n);
+module mkFpuExecQ(FpuExecQ#(n));
+    let m <- mkSpecPoisonFifo(True); // lazy enq
+    return m;
+endmodule
+
+typedef FpuExecQ#(2) MinimumExecQ;
 (* synthesize *)
+module mkMinimumExecQ(MinimumExecQ);
+    let m <- mkFpuExecQ;
+    return m;
+endmodule
+
+typedef FpuExecQ#(`BOOKKEEPING_FP_FMA_SIZE) FmaExecQ;
+(* synthesize *)
+module mkFmaExecQ(FmaExecQ);
+    let m <- mkFpuExecQ;
+    return m;
+endmodule
+
+// for simple ops that do not go to func units, we have a respQ for them
+typedef SpecFifo_SB_deq_enq_C_deq_enq#(2, FpuResp) SimpleRespQ;
+(* synthesize *)
+module mkSimpleRespQ(SimpleRespQ);
+    let m <- mkSpecFifo_SB_deq_enq_C_deq_enq(True); // lazy enq
+    return m;
+endmodule
+
+// don't synthesize to optimize guard for exec method
 module mkFpuExecPipeline(FpuExec);
-    FIFO#(FpuResult) fpu_exec_fifo <- mkSizedFIFO(`FPU_SKID_FIFO_SIZE); // in parallel with pipelined FPUs
-    FIFO#(FpuInst) fpu_func_fifo <- mkSizedFIFO(`FPU_SKID_FIFO_SIZE); // in parallel with pipelined FPUs
-    FIFOF#(FpuResult) fpu_exec_fifo_out <- mkFIFOF; // all pipelined FPUs dequeue into this
+    // simple req that can be done combinationally
+    let simpleQ <- mkSimpleRespQ;
+    // spec fifos in parallel with each func unit
+    let fmaQ <- mkFmaExecQ;
+    let divQ <- mkMinimumExecQ;
+    let sqrtQ <- mkMinimumExecQ;
 
     // Pipelined units
-    // Double
     let double_fma <- mkDoubleFMA;
-
-`ifdef REUSE_FMA
-    let double_add <- mkAddWrapperForFMA(double_fma);
-    let double_mult <- mkMulWrapperForFMA(double_fma);
-`else
-    let double_add <- mkDoubleAdd;
-    let double_mult <- mkDoubleMult;
-`endif
-
     let double_div <- mkDoubleDiv;
     let double_sqrt <- mkDoubleSqrt;
 
-    // // Float
-    // let float_add <- mkFloatAdd;
-    // let float_mult <- mkFloatMult;
-    // let float_div <- mkFloatDiv;
-    // let float_sqrt <- mkFloatSqrt;
-    // let float_fma <- mkFloatFMA;
-
-    // Float ops implemented with Double FPUs
-    let float_fma <- mkFloatWrapperForFMA(double_fma);
-    let float_add <- mkFloatWrapperForBinaryOp(double_add);
-    let float_mult <- mkFloatWrapperForBinaryOp(double_mult);
-    let float_div <- mkFloatWrapperForBinaryOp(double_div);
-    let float_sqrt <- mkFloatWrapperForSqrt(double_sqrt);
-
-    rule finish;
-        let x = fpu_exec_fifo.first;
-        let fpu_inst = fpu_func_fifo.first;
-        let fpu_f = fpu_inst.func;
-        fpu_exec_fifo.deq;
-        fpu_func_fifo.deq;
-
-        if (fpu_inst.precision == Single) begin
-            Float out = unpack(0);
-            FpuException exc = unpack(0);
-            Bool pipeline_result = False;
-            // Fpu Decoding
-            case (fpu_f)
-                // pipeline instructions
-                FAdd:   begin {out, exc} <- float_add.response.get; pipeline_result = True; end
-                FSub:   begin {out, exc} <- float_add.response.get; pipeline_result = True; end
-                FMul:   begin {out, exc} <- float_mult.response.get; pipeline_result = True; end
-                FDiv:   begin {out, exc} <- float_div.response.get; pipeline_result = True; end
-                FSqrt:  begin {out, exc} <- float_sqrt.response.get; pipeline_result = True; end
-                FMAdd:  begin {out, exc} <- float_fma.response.get; pipeline_result = True; end
-                FMSub:  begin {out, exc} <- float_fma.response.get; pipeline_result = True; end
-                FNMSub: begin {out, exc} <- float_fma.response.get; out = -out; pipeline_result = True; end
-                FNMAdd: begin {out, exc} <- float_fma.response.get; out = -out; pipeline_result = True; end
-            endcase
-            if (pipeline_result) begin
-                // canonicalize NaNs
-                if (isNaN(out)) out = canonicalNaN;
-                // update data and exception in x
-                x.data = zeroExtend(pack(out));
-                x.fflags = pack(exc);
-            end
-        end else if (fpu_inst.precision == Double) begin
-            Double out = unpack(0);
-            FpuException exc = unpack(0);
-            Bool pipeline_result = False;
-            // Fpu Decoding
-            case (fpu_f)
-                // pipeline instructions
-                FAdd:   begin {out, exc} <- double_add.response.get; pipeline_result = True; end
-                FSub:   begin {out, exc} <- double_add.response.get; pipeline_result = True; end
-                FMul:   begin {out, exc} <- double_mult.response.get; pipeline_result = True; end
-                FDiv:   begin {out, exc} <- double_div.response.get; pipeline_result = True; end
-                FSqrt:  begin {out, exc} <- double_sqrt.response.get; pipeline_result = True; end
-                FMAdd:  begin {out, exc} <- double_fma.response.get; pipeline_result = True; end
-                FMSub:  begin {out, exc} <- double_fma.response.get; pipeline_result = True; end
-                FNMSub: begin {out, exc} <- double_fma.response.get; out = -out; pipeline_result = True; end
-                FNMAdd: begin {out, exc} <- double_fma.response.get; out = -out; pipeline_result = True; end
-            endcase
-            if (pipeline_result) begin
-                // canonicalize NaNs
-                if (isNaN(out)) out = canonicalNaN;
-                // update data and exception in x
-                x.data = pack(out);
-                x.fflags = pack(exc);
-            end
+    // post processing of results that come out of function unit
+    function FpuResp finalizeResult(FpuExecInfo info, Double out, Exception exc_op);
+        FpuResult res;
+        if(info.precision == Single) begin
+            // convert out back to single
+            let {out_f, exc_conv_out} = fcvt_s_d(out, info.roundMode);
+            // canonicalize NaN
+            Float val_f = isNan(out_f) ? canonicalNaN : out_f;
+            res = FpuResult {
+                data: zeroExtend(pack(val_f)),
+                fflags: pack(info.exc_conv_in | exc_op | exc_conv_out)
+            };
         end
-        fpu_exec_fifo_out.enq(x);
+        else begin
+            // not convert needed, just canonicalize NaN
+            Double val = isNan(out) ? canonicalNaN : out;
+            res = FpuResult {
+                data: pack(val),
+                fflags: pack(exc_op) // info.exc_conv_in should be 0
+            };
+        end
+        return FpuResp {
+            res: res,
+            dst: info.dst,
+            tag: info.tag
+        };
+    endfunction
+
+    // drain poisoned insts
+    rule deqFmaPoisoned(fmaQ.first_poisoned);
+        fmaQ.deq;
+        let x <- double_fma.response.get;
+    endrule
+    rule deqDivPoisoned(divQ.first_poisoned);
+        divQ.deq;
+        let x <- double_div.response.get;
+    endrule
+    rule deqSqrtPoisoned(sqrtQ.first_poisoned);
+        sqrtQ.deq;
+        let x <- double_sqrt.response.get;
     endrule
 
-    method Action exec(FpuInst fpu_inst, Data rVal1, Data rVal2, Data rVal3);
+    method Action exec(FpuInst fpu_inst, Data rVal1, Data rVal2, Data rVal3,
+                       Maybe#(PhyDst) dst, InstTag tag, SpecBits spec_bits);
         // Convert the Risc-V RVRoundMode to FloatingPoint::RoundMode
         FpuRoundMode fpu_rm = (case (fpu_inst.rm)
                 RNE:        Rnd_Nearest_Even;
@@ -911,80 +760,109 @@ module mkFpuExecPipeline(FpuExec);
                 default:    Rnd_Nearest_Even;
             endcase);
 
-        FpuResult fpu_result = execFpuSimple(fpu_inst, rVal1, rVal2);
-
+        // convert float inputs to double: may have exceptions
+        Exception exc_conv = unpack(0);
+        Double in1 = unpack(rVal1);
+        Double in2 = unpack(rVal2);
+        Double in3 = unpack(rVal3);
         if (fpu_inst.precision == Single) begin
-            // single precision
-            Float in1 = unpack(rVal1[31:0]);
-            Float in2 = unpack(rVal2[31:0]);
-            Float in3 = unpack(rVal3[31:0]);
-            Float dst = unpack(0);
-            Maybe#(Data) full_dst = Invalid;
-            FpuException e = unpack(0);
-            let fpu_f = fpu_inst.func;
-            // Fpu Decoding
-            case (fpu_f)
-                // pipeline instructions
-                FAdd:   float_add.request.put(tuple3(in1, in2, fpu_rm));
-                FSub:   float_add.request.put(tuple3(in1, -in2, fpu_rm));
-                FMul:   float_mult.request.put(tuple3(in1, in2, fpu_rm));
-                FDiv:   float_div.request.put(tuple3(in1, in2, fpu_rm));
-                FSqrt:  float_sqrt.request.put(tuple2(in1, fpu_rm));
-                // Bluespec FMA(a, b, c) is a + b * c, RISC-V ISA needs in1 *
-                // in2 + in3, so we need to shuffle the inputs
-                FMAdd:  float_fma.request.put(tuple4(tagged Valid in3, in1, in2, fpu_rm));
-                FMSub:  float_fma.request.put(tuple4(tagged Valid (-in3), in1, in2, fpu_rm));
-                FNMSub: float_fma.request.put(tuple4(tagged Valid (-in3), in1, in2, fpu_rm));
-                FNMAdd: float_fma.request.put(tuple4(tagged Valid in3, in1, in2, fpu_rm));
-            endcase
-        end else if (fpu_inst.precision == Double) begin
-            // double precision
-            Double in1 = unpack(rVal1);
-            Double in2 = unpack(rVal2);
-            Double in3 = unpack(rVal3);
-            Double dst = unpack(0);
-            Maybe#(Data) full_dst = Invalid;
-            FpuException e = unpack(0);
-            let fpu_f = fpu_inst.func;
-            // Fpu Decoding
-            case (fpu_f)
-                // pipeline instructions
-                FAdd:   double_add.request.put(tuple3(in1, in2, fpu_rm));
-                FSub:   double_add.request.put(tuple3(in1, -in2, fpu_rm));
-                FMul:   double_mult.request.put(tuple3(in1, in2, fpu_rm));
-                FDiv:   double_div.request.put(tuple3(in1, in2, fpu_rm));
-                FSqrt:  double_sqrt.request.put(tuple2(in1, fpu_rm));
-                FMAdd:  double_fma.request.put(tuple4(tagged Valid in3, in1, in2, fpu_rm));
-                FMSub:  double_fma.request.put(tuple4(tagged Valid (-in3), in1, in2, fpu_rm));
-                FNMSub: double_fma.request.put(tuple4(tagged Valid (-in3), in1, in2, fpu_rm));
-                FNMAdd: double_fma.request.put(tuple4(tagged Valid in3, in1, in2, fpu_rm));
+            // conver single to double
+            Float f1 = unpack(rVal1[31:0]);
+            Float f2 = unpack(rVal2[31:0]);
+            Float f3 = unpack(rVal3[31:0]);
+            let {d1, exc1} = fcvt_d_s(in1_f, fpu_rm);
+            let {d2, exc2} = fcvt_d_s(in1_f, fpu_rm);
+            let {d3, exc3} = fcvt_d_s(in1_f, fpu_rm);
+            in1 = d1;
+            in2 = d2;
+            in3 = d3;
+            // get exception
+            case (fpu_inst.func)
+                FSqrt: begin
+                    exc_conv = exc1;
+                end
+                FAdd, FSub, FMul, FDiv: begin
+                    exc_conv = exc1 | exc2;
+                end
+                FMAdd, FMSub, FNMSub, FNMAdd: begin
+                    exc_conv = exc1 | exc2 | exc3;
+                end
             endcase
         end
-        fpu_exec_fifo.enq(fpu_result);
-        fpu_func_fifo.enq(fpu_inst);
+
+        // request function unit
+        case (fpu_inst.func)
+            FAdd:   double_fma.request.put(getAddReqToFma(tuple3(in1, in2, fpu_rm)));
+            FSub:   double_fma.request.put(getAddReqToFma(tuple3(in1, -in2, fpu_rm)));
+            FMul:   double_fma.request.put(getMulReqToFma(tuple3(in1, in2, fpu_rm)));
+            FDiv:   double_div.request.put(tuple3(in1, in2, fpu_rm));
+            FSqrt:  double_sqrt.request.put(tuple2(in1, fpu_rm));
+            // Bluespec FMA(a, b, c) is a + b * c, RISC-V ISA needs in1 *
+            // in2 + in3, so we need to shuffle the inputs
+            FMAdd:  double_fma.request.put(tuple4(tagged Valid in3, in1, in2, fpu_rm));
+            FMSub:  double_fma.request.put(tuple4(tagged Valid (-in3), in1, in2, fpu_rm));
+            FNMSub: double_fma.request.put(tuple4(tagged Valid (-in3), in1, in2, fpu_rm));
+            FNMAdd: double_fma.request.put(tuple4(tagged Valid in3, in1, in2, fpu_rm));
+        endcase
+
+        // enq to spec fifo
+        let info = FpuExecInfo {
+            roundMode: fpu_rm,
+            precision: fpu_inst.precision,
+            exc_conv_in: exc_conv,
+            dst: dst,
+            tag: tag,
+        };
+        case (fpu_inst.func)
+            FAdd, FSub, FMul, FMAdd, FMSub, FNMSub, FNMAdd: begin
+                fmaQ.enq(info, spec_bits);
+            end
+            FDiv: begin
+                divQ.enq(info, spec_bits);
+            end
+            FSqrt: begin
+                sqrtQ.enq(info, spec_bits);
+            end
+            default: begin
+                // simple ops that can be directly handled
+                FpuResult fpu_result = execFpuSimple(fpu_inst, rVal1, rVal2);
+                simpleQ.enq(FpuResp {
+                    res: fpu_result,
+                    dst: dst,
+                    tag: tag
+                }, spec_bits);
+            end
+        endcase
     endmethod
 
-    method Bool         notEmpty = fpu_exec_fifo_out.notEmpty;
-    // output
-    method FpuResult result_data = fpu_exec_fifo_out.first;
-    method Action     result_deq = fpu_exec_fifo_out.deq;
-endmodule
-
-(* synthesize *)
-module mkFpuExecDummy(FpuExec);
-    FIFOF#(FpuResult) fpu_exec_fifo <- mkFIFOF;
-
-    method Action exec(FpuInst fpu_inst, Data rVal1, Data rVal2, Data rVal3);
-        $fdisplay(stderr, "[ERROR] mkFpuExecDummy is in use");
-        // don't do the function...
-        FpuResult res = unpack(0);
-        // ...and enqueue it into fpu_exec_fifo
-        fpu_exec_fifo.enq(res);
+    method ActionValue#(FpuResp) simpleResp;
+        simpleRespQ.deq;
+        return simpleRespQ.first.data;
     endmethod
 
-    method Bool         notEmpty = fpu_exec_fifo.notEmpty;
-    // output
-    method FpuResult result_data = fpu_exec_fifo.first;
-    method Action     result_deq = fpu_exec_fifo.deq;
+    method ActionValue#(FpuResp) fmaResp if(!fmaQ.first_poisoned);
+        fmaQ.deq;
+        let {out, exc} <- double_fma.response.get;
+        return finalizeResp(fmaQ.first_data.data, out, exc);
+    endmethod
+
+    method ActionValue#(FpuResp) divResp if(!divQ.first_poisoned);
+        divQ.deq;
+        let {out, exc} <- double_div.response.get;
+        return finalizeResp(divQ.first_data.data, out, exc);
+    endmethod
+
+    method ActionValue#(FpuResp) sqrtResp if(!sqrtQ.first_poisoned);
+        sqrtQ.deq;
+        let {out, exc} <- double_sqrt.response.get;
+        return finalizeResp(sqrtQ.first_data.data, out, exc);
+    endmethod
+
+    interface specUpdate = joinSpeculationUpdate(vec(
+        simpleRespQ.specUpdate,
+        fmaQ.specUpdate,
+        divQ.specUpdate,
+        sqrtQ.specUpdate
+    ));
 endmodule
 

@@ -35,7 +35,6 @@ import ReservationStationFpuMulDiv::*;
 import ReorderBuffer::*;
 import HasSpecBits::*;
 import SpecFifo::*;
-import SpecPoisonFifo::*;
 import MulDiv::*;
 import Fpu::*;
 import Bypass::*;
@@ -78,13 +77,6 @@ typedef SpecFifo_SB_deq_enq_C_deq_enq#(1, FpuMulDivRegReadToExe) FpuMulDivRegToE
 (* synthesize *)
 module mkFpuMulDivRegToExeFifo(FpuMulDivRegToExeFifo);
     let m <- mkSpecFifo_SB_deq_enq_C_deq_enq(False);
-    return m;
-endmodule
-
-typedef SpecPoisonFifo#(`BOOKKEEPING_FPUMULDIV_SIZE, FpuMulDivExeToFinish) FpuMulDivExeToFinFifo;
-(* synthesize *)
-module mkFpuMulDivExeToFinFifo(FpuMulDivExeToFinFifo);
-    let m <- mkSpecPoisonFifo(True); // do lazy enq
     return m;
 endmodule
 
@@ -196,6 +188,7 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         regToExeQ.deq;
         let regToExe = regToExeQ.first;
         let x = regToExe.data;
+        let spec_bits = regToExe.spec_bits;
         if(verbose) $display("[doExeFpuMulDiv] ", fshow(regToExe));
 
         // send to exe unit
@@ -203,71 +196,57 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         Data rVal2 = x.rVal2;
         Data rVal3 = x.rVal3;
         case (x.execFunc) matches
-            tagged Fpu    .fpu_inst:    fpuExec.exec(fpu_inst, rVal1, rVal2, rVal3);
-            tagged MulDiv .muldiv_inst: mulDivExec.exec(muldiv_inst, rVal1, rVal2);
-            default: doAssert(False, "unknown execFunc for doExeFpuMulDiv");
-        endcase
-
-        // go to next stage
-        exeToFinQ.enq(ToSpecFifo {
-            data: FpuMulDivExeToFinish {
-                execFunc: x.execFunc,
-                dst: x.dst,
-                tag: x.tag
-            },
-            spec_bits: regToExe.spec_bits
-        });
-    endrule
-
-    rule doFinishFpuMulDiv(!exeToFinQ.first_poisoned);
-        exeToFinQ.deq;
-        let exeToFin = exeToFinQ.first_data;
-        let x = exeToFin.data;
-
-        // get execution results
-        Data res_data = 0;
-        Bit#(5) fflags = 0;
-        case (x.execFunc) matches
             tagged Fpu .fpu_inst: begin
-                fpuExec.result_deq;
-                res_data = fpuExec.result_data.data;
-                fflags = fpuExec.result_data.fflags;
-                if(verbose) $display("[doFinishFpuMulDiv] fpu ", fshow(exeToFin), " ; ", fshow(fpuExec.result_data));
+                fpuExec.exec(fpu_inst, rVal1, rVal2, rVal3, x.dst, x.tag, spec_bits);
             end
             tagged MulDiv .muldiv_inst: begin
-                mulDivExec.result_deq;
-                res_data = mulDivExec.result_data;
-                if(verbose) $display("[doFinishFpuMulDiv] muldiv ", fshow(exeToFin), " ; ", fshow(mulDivExec.result_data));
+                mulDivExec.exec(muldiv_inst, rVal1, rVal2, x.dst, x.tag, spec_bits);
             end
             default: begin
-                if(verbose) $display("[doFinishFpuMulDiv] ", fshow(exeToFin));
-                doAssert(False, "unknown exec func");
+                doAssert(False, "unknown execFunc for doExeFpuMulDiv");
             end
         endcase
-
-        // write to register file
-        if(x.dst matches tagged Valid .dst) begin
-            inIfc.writeRegFile(dst.indx, res_data);
-        end
-
-        // update the instruction in the reorder buffer.
-        inIfc.rob_setExecuted(x.tag, res_data, fflags, Executed);
-
-        // since FPU op has no spec tag, this rule is ordered before other rules that calls incorrectSpec
-        // then BSV compiler creates cycles in scheduling
-        // We manually creates a conflict between this rule and incorrectSpec to break the cycle
-        inIfc.conflictWrongSpec;
     endrule
 
-    rule killPoisonedInstFpuMulDiv(exeToFinQ.first_poisoned);
-        exeToFinQ.deq;
-        let exeToFin = exeToFinQ.first_data;
-        if(verbose) $display("[killPoisonedInstFpuMulDiv] ", fshow(exeToFin));
-        // drain wrong path FPU/MulDiv results
-        case (exeToFin.data.execFunc) matches
-            tagged Fpu    .fpu_inst:    fpuExec.result_deq;
-            tagged MulDiv .muldiv_inst: mulDivExec.result_deq;
-        endcase
+    function Action doFinish(Maybe#(PhyDst) dst, InstTag tag, Data data, Bit#(5) fflags);
+    action
+        // write to register file
+        if(dst matches tagged Valid .valid_dst) begin
+            inIfc.writeRegFile(valid_dst.indx, data);
+        end
+        // update the instruction in the reorder buffer.
+        inIfc.rob_setExecuted(tag, data, fflags, Executed);
+    endaction
+    endfunction
+
+    rule doFinishFpFma;
+        FpuResp resp <- fpuExec.fmaResp;
+        if(verbose) $display("[doFinishFpFma] ", fshow(resp));
+        doFinish(resp.dst, resp.tag, resp.res.data, resp.res.fflags);
+    endrule
+
+    rule doFinishFpDiv;
+        FpuResp resp <- fpuExec.divResp;
+        if(verbose) $display("[doFinishFpDiv] ", fshow(resp));
+        doFinish(resp.dst, resp.tag, resp.res.data, resp.res.fflags);
+    endrule
+
+    rule doFinishFpSqrt;
+        FpuResp resp <- fpuExec.sqrtResp;
+        if(verbose) $display("[doFinishFpSqrt] ", fshow(resp));
+        doFinish(resp.dst, resp.tag, resp.res.data, resp.res.fflags);
+    endrule
+
+    rule doFinishIntMul;
+        MulDivResp resp <- mulDivExec.mulResp;
+        if(verbose) $display("[doFinishIntMul] ", fshow(resp));
+        doFinish(resp.dst, resp.tag, resp.data, 0);
+    endrule
+
+    rule doFinishIntDiv;
+        MulDivResp resp <- mulDivExec.divResp;
+        if(verbose) $display("[doFinishIntDiv] ", fshow(resp));
+        doFinish(resp.dst, resp.tag, resp.data, 0);
     endrule
 
     interface recvBypass = map(getRecvBypassIfc, bypassWire);
@@ -278,6 +257,7 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         rsFpuMulDiv.specUpdate,
         dispToRegQ.specUpdate,
         regToExeQ.specUpdate,
-        exeToFinQ.specUpdate
+        fpuExec.specUpdate,
+        mulDivExec.specUpdate
     ));
 endmodule

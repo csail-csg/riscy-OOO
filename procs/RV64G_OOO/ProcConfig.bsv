@@ -46,7 +46,8 @@
 `define LOG_DEADLOCK_CYCLES 26 // 64M cycles for deadlock detection
 
 // Be lazy in reservation station wake and phy reg file, and enqs. LSQ is by
-// default lazy. Spec FIFOs are small, so not lazy.
+// default lazy. 1-elem spec FIFOs (pipeline stage regs) are by default not
+// lazy.
 `define LAZY_RS_RF True
 `define RS_LAZY_ENQ True
 `define ROB_LAZY_ENQ True
