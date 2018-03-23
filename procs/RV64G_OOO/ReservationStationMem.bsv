@@ -37,6 +37,6 @@ typedef struct {
 typedef ReservationStation#(`RS_MEM_SIZE, WrAggrPortNum, MemRSData) ReservationStationMem;
 (* synthesize *)
 module mkReservationStationMem(ReservationStationMem);
-    let m <- mkReservationStation(`LAZY_RS_RF, `RS_LAZY_ENQ);
+    let m <- mkReservationStation(`LAZY_RS_RF, `RS_LAZY_ENQ, False);
     return m;
 endmodule

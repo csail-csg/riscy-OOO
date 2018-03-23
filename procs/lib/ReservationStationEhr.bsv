@@ -25,6 +25,7 @@
 import Types::*;
 import ProcTypes::*;
 import Vector::*;
+import ConfigReg::*;
 import HasSpecBits::*;
 import Ehr::*;
 import GetPut::*;
@@ -53,16 +54,23 @@ interface ReservationStation#(
 
     interface Vector#(setRegReadyNum, Put#(Maybe#(PhyRIndx))) setRegReady;
 
+    // For count-based scheduling when there are multiple reservation stations
+    // for the same inst type. This method only takes effect when module
+    // parameter countValid is true.
+    method Bit#(TLog#(TAdd#(size, 1))) approximateCount;
+
     interface SpeculationUpdate specUpdate;
 endinterface
 
 typedef Bit#(TAdd#(1, TLog#(NumInstTags))) VirtualInstTime;
 
-module mkReservationStation#(Bool lazySched, Bool lazyEnq)(
+module mkReservationStation#(Bool lazySched, Bool lazyEnq, Bool countValid)(
     ReservationStation#(size, setRegReadyNum, a)
 ) provisos (
     NumAlias#(regsReadyPortNum, TAdd#(1, setRegReadyNum)),
     Alias#(idxT, Bit#(TLog#(size))),
+    Alias#(countT, Bit#(TLog#(TAdd#(size, 1)))),
+    Log#(TAdd#(1, size), TLog#(TAdd#(size, 1))),
     Bits#(a, aSz), FShow#(a),
     Add#(1, b__, size)
 );
@@ -89,6 +97,16 @@ module mkReservationStation#(Bool lazySched, Bool lazyEnq)(
     // wrong spec conflict with enq and dispatch
     RWire#(void) wrongSpec_enq_conflict <- mkRWire;
     RWire#(void) wrongSpec_dispatch_conflict <- mkRWire;
+
+    // approximate count of valid entries
+    Reg#(countT) validEntryCount <- mkConfigReg(0);
+
+    if(countValid) begin
+        (* fire_when_enabled, no_implicit_conditions *)
+        rule countValidEntries;
+            validEntryCount <= pack(countElem(True, readVEhr(0, valid)));
+        endrule
+    end
 
     // enq time in ROB, used as pivot to get virtual inst time (dispatch happens before ROB enq)
     Wire#(InstTime) robEnqTime <- mkDWire(0);
@@ -229,6 +247,10 @@ module mkReservationStation#(Bool lazySched, Bool lazyEnq)(
         valid[i][valid_dispatch_port] <= False;
         // conflict with wrong spec
         wrongSpec_dispatch_conflict.wset(?);
+    endmethod
+
+    method countT approximateCount;
+        return validEntryCount;
     endmethod
 
     interface setRegReady = setRegReadyIfc;

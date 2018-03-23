@@ -189,7 +189,7 @@ module mkMulDivExec(MulDivExec);
         };
     endmethod
 
-    method ActionValue#(MulDivResp) divResp;
+    method ActionValue#(MulDivResp) divResp if(!divQ.first_poisoned);
         divUnit.deqResp;
         divQ.deq;
         let info = divQ.first_data.data;

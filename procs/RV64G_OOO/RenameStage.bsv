@@ -271,6 +271,30 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 `endif
     endrule
 
+    // Count based scheduling in case of $n$ RS for the same inst type. We
+    // assume all such RS are of the same size, and prioritize RS with smaller
+    // valid (occupied) entries.
+    function Maybe#(idxT) scheduleRS(
+        Vector#(n, countT) valid_cnt, Vector#(n, Bool) rdy
+    ) provisos(
+        Ord#(countT), Alias#(idxT, Bit#(TLog#(n))), Add#(1, a__, n)
+    );
+        function Bit#(TLog#(n)) getRS(idxT a, idxT b);
+            if(!rdy[a]) begin
+                return b;
+            end
+            else if(!rdy[b]) begin
+                return a;
+            end
+            else begin
+                // prioritize RS with smaller valid-entry count
+                return valid_cnt[a] < valid_cnt[b] ? a : b;
+            end
+        endfunction
+        Vector#(n, idxT) idxVec = genWith(fromInteger);
+        idxT idx = fold(getRS, idxVec);
+        return rdy[idx] ? Valid (idx) : Invalid;
+    endfunction
 
     // rename correct path inst
     rule doRenaming(
@@ -304,6 +328,12 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
         // initial spec bits at the beginning of this cycle
         // we may update it during the processing
         SpecBits spec_bits = specTagManager.currentSpecBits;
+
+        // ALU RS valid counts
+        Vector#(AluExeNum, Bit#(TLog#(TAdd#(`RS_ALU_SIZE, 1)))) aluRSCount;
+        for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
+            aluRSCount[i] = reservationStationAlu[i].approximateCount;
+        end
 
         // We apply actions at the end of each iteration
         // We **cannot** apply actions at the end of rule,
@@ -415,8 +445,8 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                     if (to_exec) begin
                         // find an ALU pipeline
                         function Bool aluValid(Integer k) = !aluExeUsed[k] && reservationStationAlu[k].canEnq;
-                        Vector#(AluExeNum, Integer) idxVec = genVector;
-                        if(findIndex(aluValid, idxVec) matches tagged Valid .k) begin
+                        Vector#(AluExeNum, Bool) aluReady = map(aluValid, genVector);
+                        if(scheduleRS(aluRSCount, aluReady) matches tagged Valid .k) begin
                             // can process, send to ALU rs
                             aluExeUsed[k] = True; // mark resource used
                             reservationStationAlu[k].enq(ToReservationStation {
