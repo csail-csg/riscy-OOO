@@ -22,12 +22,16 @@
 // SOFTWARE.
 
 `include "ProcConfig.bsv"
+import BuildVector::*;
 import Types::*;
 import ProcTypes::*;
 import Fifo::*;
 import FIFO::*;
 import XilinxIntMul::*;
 import XilinxIntDiv::*;
+import HasSpecBits::*;
+import SpecFifo::*;
+import SpecPoisonFifo::*;
 
 export MulDivResp(..);
 export MulDivExec(..);
@@ -102,7 +106,7 @@ module mkDivExecQ(DivExecQ);
 endmodule
 
 // don't synthesize to optimize guard of exec
-module mkMulDivExec(SeqMulDivExec);
+module mkMulDivExec(MulDivExec);
     Bool verbose = False;
 
     XilinxIntMul#(void) mulUnit <- mkXilinxIntMul;
@@ -148,17 +152,23 @@ module mkMulDivExec(SeqMulDivExec);
         };
         if(isMulFunc(mdInst.func)) begin
             mulUnit.req(a, b, getXilinxMulSign(mdInst.sign), ?);
-            mulQ.enq(info, spec_bits);
+            mulQ.enq(ToSpecFifo {
+                data: info,
+                spec_bits: spec_bits
+            });
         end
         else begin
             divUnit.req(a, b, isDivSigned(mdInst.sign), ?);
-            divQ.enq(info, spec_bits);
+            divQ.enq(ToSpecFifo {
+                data: info,
+                spec_bits: spec_bits
+            });
         end
     endmethod
 
     // output
     method ActionValue#(MulDivResp) mulResp if(!mulQ.first_poisoned);
-        mulUnit.deqResp
+        mulUnit.deqResp;
         mulQ.deq;
         let info = mulQ.first_data.data;
         doAssert(isMulFunc(info.func), "must be mul func");

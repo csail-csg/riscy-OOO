@@ -117,8 +117,12 @@ ifeq ($(USE_XILINX_FPU),true)
 CONNECTALFLAGS += --bscflags=" -D USE_XILINX_FPU "
 endif
 
-# xilinx multiplier latency
-XILINX_INT_MUL_LATENCY = 3
+# xilinx FMA latency (originally 4)
+XILINX_FP_FMA_LATENCY = 3
+CONNECTALFLAGS += --bscflags " -D XILINX_FP_FMA_LATENCY=$(XILINX_FP_FMA_LATENCY) "
+
+# xilinx multiplier latency (originally 3)
+XILINX_INT_MUL_LATENCY = 2
 CONNECTALFLAGS += --bscflags " -D XILINX_INT_MUL_LATENCY=$(XILINX_INT_MUL_LATENCY) "
 
 CONNECTALFLAGS += --bscflags=" +RTS -K1G -RTS " --bscflags=" -steps-max-intervals 200 "
@@ -179,7 +183,7 @@ FP_DIV_XCI = $(CONNECTALDIR)/out/$(BOARD)/fp_div/fp_div.xci
 FP_SQRT_XCI = $(CONNECTALDIR)/out/$(BOARD)/fp_sqrt/fp_sqrt.xci
 
 # also configure the latency and rate (number of cycles per input) of IP core
-FP_FMA_LATENCY = 4
+FP_FMA_LATENCY = $(XILINX_FP_FMA_LATENCY)
 FP_DIV_LATENCY = 12
 FP_DIV_RATE = 1
 FP_SQRT_LATENCY = 8

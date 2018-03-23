@@ -56,9 +56,11 @@
 
 `define BOOKKEEPING_MEM_SIZE 2 // TLB has 1 cycle latency
 
-`define FPU_SKID_FIFO_SIZE 5 // FMA has 4 cycle latency
-`define MULDIV_SKID_FIFO_SIZE 5 // MUL has 4 cycle latency
-`define BOOKKEEPING_FPUMULDIV_SIZE 12 // FPU: 5 skid FIFO + 2 out FIFO, muldiv: 5 skid FIFO
+// FMA bookkeeping FIFO: add 1 to allow simultaneous enq/deq
+`define BOOKKEEPING_FP_FMA_SIZE TAdd#(`XILINX_FP_FMA_LATENCY, 1)
+// INT MUL bookkeeping FIFO: add 1 to allow simultaneous enq/deq, another 1
+// because of internal flow control in MUL unit
+`define BOOKKEEPING_INT_MUL_SIZE TAdd#(`XILINX_INT_MUL_LATENCY, 2)
 
 `define LOG_L1_WAYS 3 // 8 ways
 `define LOG_LLC_WAYS 4 // 16 ways

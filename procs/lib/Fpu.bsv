@@ -27,6 +27,7 @@
 // The FpuExec module abstracts away the ISA implementation simplifying the
 // requirements for the hardware FPU units.
 
+import BuildVector::*;
 import Types::*;
 import ProcTypes::*;
 import FIFO::*;
@@ -658,6 +659,7 @@ typedef struct {
     FpuRoundMode roundMode;
     FpuPrecision precision;
     FpuException exc_conv_in; // exception during convert single input to double
+    Bool negateResult;
     // generic bookkeeping
     Maybe#(PhyDst) dst;
     InstTag tag;
@@ -706,23 +708,32 @@ module mkFpuExecPipeline(FpuExec);
     let double_sqrt <- mkDoubleSqrt;
 
     // post processing of results that come out of function unit
-    function FpuResp finalizeResult(FpuExecInfo info, Double out, Exception exc_op);
+    function FpuResp finalizeResp(FpuExecInfo info, Double out, FpuException exc_op);
         FpuResult res;
         if(info.precision == Single) begin
             // convert out back to single
             let {out_f, exc_conv_out} = fcvt_s_d(out, info.roundMode);
+            // negate result if needed
+            if(info.negateResult) begin
+                out_f = -out_f;
+            end
             // canonicalize NaN
-            Float val_f = isNan(out_f) ? canonicalNaN : out_f;
+            out_f = isNaN(out_f) ? canonicalNaN : out_f;
             res = FpuResult {
-                data: zeroExtend(pack(val_f)),
+                data: zeroExtend(pack(out_f)),
                 fflags: pack(info.exc_conv_in | exc_op | exc_conv_out)
             };
         end
         else begin
-            // not convert needed, just canonicalize NaN
-            Double val = isNan(out) ? canonicalNaN : out;
+            // no convert is needed
+            // negate result if needed
+            if(info.negateResult) begin
+                out = -out;
+            end
+            // canonicalize NaN
+            out = isNaN(out) ? canonicalNaN : out;
             res = FpuResult {
-                data: pack(val),
+                data: pack(out),
                 fflags: pack(exc_op) // info.exc_conv_in should be 0
             };
         end
@@ -761,7 +772,7 @@ module mkFpuExecPipeline(FpuExec);
             endcase);
 
         // convert float inputs to double: may have exceptions
-        Exception exc_conv = unpack(0);
+        FpuException exc_conv = unpack(0);
         Double in1 = unpack(rVal1);
         Double in2 = unpack(rVal2);
         Double in3 = unpack(rVal3);
@@ -770,9 +781,9 @@ module mkFpuExecPipeline(FpuExec);
             Float f1 = unpack(rVal1[31:0]);
             Float f2 = unpack(rVal2[31:0]);
             Float f3 = unpack(rVal3[31:0]);
-            let {d1, exc1} = fcvt_d_s(in1_f, fpu_rm);
-            let {d2, exc2} = fcvt_d_s(in1_f, fpu_rm);
-            let {d3, exc3} = fcvt_d_s(in1_f, fpu_rm);
+            let {d1, exc1} = fcvt_d_s(f1, fpu_rm);
+            let {d2, exc2} = fcvt_d_s(f2, fpu_rm);
+            let {d3, exc3} = fcvt_d_s(f3, fpu_rm);
             in1 = d1;
             in2 = d2;
             in3 = d3;
@@ -810,34 +821,47 @@ module mkFpuExecPipeline(FpuExec);
             roundMode: fpu_rm,
             precision: fpu_inst.precision,
             exc_conv_in: exc_conv,
+            negateResult: fpu_inst.func == FNMSub || fpu_inst.func == FNMAdd,
             dst: dst,
-            tag: tag,
+            tag: tag
         };
         case (fpu_inst.func)
             FAdd, FSub, FMul, FMAdd, FMSub, FNMSub, FNMAdd: begin
-                fmaQ.enq(info, spec_bits);
+                fmaQ.enq(ToSpecFifo {
+                    data: info,
+                    spec_bits: spec_bits
+                });
             end
             FDiv: begin
-                divQ.enq(info, spec_bits);
+                divQ.enq(ToSpecFifo {
+                    data: info,
+                    spec_bits: spec_bits
+                });
             end
             FSqrt: begin
-                sqrtQ.enq(info, spec_bits);
+                sqrtQ.enq(ToSpecFifo{
+                    data: info,
+                    spec_bits: spec_bits
+                });
             end
             default: begin
                 // simple ops that can be directly handled
                 FpuResult fpu_result = execFpuSimple(fpu_inst, rVal1, rVal2);
-                simpleQ.enq(FpuResp {
-                    res: fpu_result,
-                    dst: dst,
-                    tag: tag
-                }, spec_bits);
+                simpleQ.enq(ToSpecFifo {
+                    data: FpuResp {
+                        res: fpu_result,
+                        dst: dst,
+                        tag: tag
+                    },
+                    spec_bits: spec_bits
+                });
             end
         endcase
     endmethod
 
     method ActionValue#(FpuResp) simpleResp;
-        simpleRespQ.deq;
-        return simpleRespQ.first.data;
+        simpleQ.deq;
+        return simpleQ.first.data;
     endmethod
 
     method ActionValue#(FpuResp) fmaResp if(!fmaQ.first_poisoned);
@@ -859,7 +883,7 @@ module mkFpuExecPipeline(FpuExec);
     endmethod
 
     interface specUpdate = joinSpeculationUpdate(vec(
-        simpleRespQ.specUpdate,
+        simpleQ.specUpdate,
         fmaQ.specUpdate,
         divQ.specUpdate,
         sqrtQ.specUpdate

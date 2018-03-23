@@ -115,13 +115,12 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
     // pipeline fifos
     let dispToRegQ <- mkFpuMulDivDispToRegFifo;
     let regToExeQ <- mkFpuMulDivRegToExeFifo;
-    let exeToFinQ <- mkFpuMulDivExeToFinFifo;
     
     // wire to recv bypass
     Vector#(TMul#(2, AluExeNum), RWire#(Tuple2#(PhyRIndx, Data))) bypassWire <- replicateM(mkRWire);
 
     // mul div fpu func units
-    SeqMulDivExec mulDivExec <- mkSeqMulDivExec;
+    MulDivExec mulDivExec <- mkMulDivExec;
     FpuExec fpuExec <- mkFpuExecPipeline;
 
     rule doDispatchFpuMulDiv;
@@ -216,8 +215,19 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         end
         // update the instruction in the reorder buffer.
         inIfc.rob_setExecuted(tag, data, fflags, Executed);
+        // since FPU op has no spec tag, this doFinish rule is ordered before
+        // other rules that calls incorrectSpec, and BSV compiler creates
+        // cycles in scheduling. We manually creates a conflict between this
+        // rule and incorrectSpec to break the cycle
+        inIfc.conflictWrongSpec;
     endaction
     endfunction
+
+    rule doFinishFpSimple;
+        FpuResp resp <- fpuExec.simpleResp;
+        if(verbose) $display("[doFinishFpSimple] ", fshow(resp));
+        doFinish(resp.dst, resp.tag, resp.res.data, resp.res.fflags);
+    endrule
 
     rule doFinishFpFma;
         FpuResp resp <- fpuExec.fmaResp;
