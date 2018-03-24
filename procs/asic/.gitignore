@@ -1,0 +1,5 @@
+fpga/vivado*
+fpga/out
+all
+all.tar.gz
+fpga/.Xil
