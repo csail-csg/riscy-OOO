@@ -164,7 +164,11 @@ module mkFetchStage(FetchStage);
     // Pipeline Stage FIFOs
     Fifo#(2, Tuple2#(Bit#(TLog#(SupSize)),Fetch1ToFetch2)) f12f2 <- mkCFFifo;
     Fifo#(4, Tuple2#(Bit#(TLog#(SupSize)),Fetch2ToFetch3)) f22f3 <- mkCFFifo; // FIFO should match I$ latency
+    Fifo#(4, Tuple2#(Bit#(TLog#(SupSize)),Fetch2ToFetch3)) f32d <- mkCFFifo; // FIFO should match I$ latency
+    SupFifo#(SupSize, 2, Fetch3ToDecode) f32decode <- mkSupFifo;
     SupFifo#(SupSize, 2, FromFetchStage) out_fifo <- mkSupFifo;
+       // Can the fifo size be smaller?
+    Fifo#(4,Vector#(SupSize,Maybe#(Instruction))) instdata <- mkPipelineFifo();
 
     // Branch Predictors
     NextAddrPred    nextAddrPred <- mkBtb;
@@ -290,29 +294,38 @@ module mkFetchStage(FetchStage);
         f22f3.enq(tuple2(nbSup,out));
         if (verbose) $display("Fetch2: ", fshow(out));
     endrule
-
+ 
+// Break out of i$
     rule doFetch3;
-        f22f3.deq;
         let {nbSup, fetch3In} = f22f3.first;
+        f22f3.deq();
         if (verbose) $display("Fetch3 %d",fetch3In.pc);
 
         // Get ICache/MMIO response if no exception
         // In case of exception, we still need to process at least inst_data[0]
         // (it will be turned to an exception later), so inst_data[0] must be
         // valid.
-        Vector#(SupSize,Maybe#(Instruction)) inst_data = replicate(tagged Valid (0));
+        Vector#(SupSize,Maybe#(Instruction)) inst_d = replicate(tagged Valid (0));
         if(!isValid(fetch3In.cause)) begin
             if(fetch3In.access_mmio) begin
                 if(verbose) $display("get answer from MMIO %d", fetch3In.pc);
-                inst_data <- mmio.bootRomResp;
+                inst_d <- mmio.bootRomResp;
             end
             else begin
                 if(verbose) $display("get answer from memory %d", fetch3In.pc);
-                inst_data <- mem_server.response.get;
+                inst_d <- mem_server.response.get;
             end
         end
         if(verbose) $display("epoch instr: %d, epoch main : %d", fetch3In.main_epoch, f_main_epoch);
-        
+        instdata.enq(inst_d);
+        f32d.enq(f22f3.first);
+    endrule
+
+    rule doDecode;
+        let {nbSup, fetch3In} = f32d.first;
+        f32d.deq();
+	let inst_data = instdata.first();
+	instdata.deq();
         // The main_epoch check is required to make sure this stage doesn't
         // redirect the PC if a later stage already redirected the PC.
         if (fetch3In.main_epoch == f_main_epoch) begin
