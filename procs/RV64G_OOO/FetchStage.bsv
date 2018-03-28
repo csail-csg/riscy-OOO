@@ -164,11 +164,10 @@ module mkFetchStage(FetchStage);
     // Pipeline Stage FIFOs
     Fifo#(2, Tuple2#(Bit#(TLog#(SupSize)),Fetch1ToFetch2)) f12f2 <- mkCFFifo;
     Fifo#(4, Tuple2#(Bit#(TLog#(SupSize)),Fetch2ToFetch3)) f22f3 <- mkCFFifo; // FIFO should match I$ latency
-    Fifo#(4, Tuple2#(Bit#(TLog#(SupSize)),Fetch2ToFetch3)) f32d <- mkCFFifo; // FIFO should match I$ latency
-    SupFifo#(SupSize, 2, Fetch3ToDecode) f32decode <- mkSupFifo;
+    Fifo#(2, Tuple2#(Bit#(TLog#(SupSize)),Fetch2ToFetch3)) f32d <- mkCFFifo;
+    Fifo#(2, Vector#(SupSize,Maybe#(Instruction))) instdata <- mkPipelineFifo();
     SupFifo#(SupSize, 2, FromFetchStage) out_fifo <- mkSupFifo;
        // Can the fifo size be smaller?
-    Fifo#(4,Vector#(SupSize,Maybe#(Instruction))) instdata <- mkPipelineFifo();
 
     // Branch Predictors
     NextAddrPred    nextAddrPred <- mkBtb;
@@ -324,8 +323,8 @@ module mkFetchStage(FetchStage);
     rule doDecode;
         let {nbSup, fetch3In} = f32d.first;
         f32d.deq();
-	let inst_data = instdata.first();
-	instdata.deq();
+        let inst_data = instdata.first();
+        instdata.deq();
         // The main_epoch check is required to make sure this stage doesn't
         // redirect the PC if a later stage already redirected the PC.
         if (fetch3In.main_epoch == f_main_epoch) begin
