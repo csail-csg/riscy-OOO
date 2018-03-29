@@ -67,7 +67,7 @@ typedef Bit#(LgL1WayNum) L1Way;
 ////////
 // D$ //
 ////////
-typedef 10 LgDLineNum; // 64KB cache
+typedef 9 LgDLineNum; // 32KB cache
 typedef 0 LgDBankNum;
 typedef TSub#(LgDLineNum, TAdd#(LgDBankNum, LgL1WayNum)) LgDSetNum;
 
@@ -197,7 +197,7 @@ endmodule
 ////////
 // I$ //
 ////////
-typedef 10 LgILineNum; // 64KB cache
+typedef 9 LgILineNum; // 32KB cache
 typedef 0 LgIBankNum;
 typedef TSub#(LgILineNum, TAdd#(LgIBankNum, LgL1WayNum)) LgISetNum;
 

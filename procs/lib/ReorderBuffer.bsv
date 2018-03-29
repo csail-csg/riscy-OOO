@@ -434,8 +434,10 @@ module mkSupReorderBuffer#(
     // next val for updating enq regs in case wrongSpec happens
     RWire#(ROBWrongSpecEnqUpdate) wrongSpecEnqUpdate <- mkRWire;
 
-    // ordering regs: deq sequence before others are still mainted
-    // BUT setExecuted_XXX and deq sequence before enq NEEDs explicit ordering
+    // ordering regs: deq sequence < setExecuted_XXX is maintained by each row
+    // BUT setExecuted_XXX < enq, deq < enq, and deq < wrongSpec NEEDs explicit
+    // ordering
+    Reg#(Bool) deq_SB_wrongSpec <- mkRevertingVirtualReg(True);
     Vector#(SupSize, Reg#(Bool)) deq_SB_enq <- replicateM(mkRevertingVirtualReg(True));
     Vector#(SupSize, Reg#(Bool)) setExeAlu_SB_enq <- replicateM(mkRevertingVirtualReg(True));
     Vector#(SupSize, Reg#(Bool)) setExeMem_SB_enq <- replicateM(mkRevertingVirtualReg(True));
@@ -799,7 +801,9 @@ module mkSupReorderBuffer#(
     Vector#(SupSize, ROB_DeqPort) deqIfc;
     for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
         SupWaySel way = getDeqFifoWay(fromInteger(i)); // FIFO[way] is used by deq port i
-        Bool can_deq = can_deq_fifo[way] && all(id, readVReg(deq_SB_enq)); // ordering: < enq
+        Bool can_deq = can_deq_fifo[way] &&
+                       deq_SB_wrongSpec && // ordering: < wrongSpec
+                       all(id, readVReg(deq_SB_enq)); // ordering: < enq
         deqIfc[i] = (interface ROB_DeqPort;
             method Bool canDeq = can_deq;
             method Action deq if(can_deq);
@@ -922,6 +926,8 @@ module mkSupReorderBuffer#(
                 specTag: specTag,
                 killInstTag: killInstTag
             });
+            // order after deq
+            deq_SB_wrongSpec <= False;
             // make it conflict with enq
             for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
                 wrongSpec_enq_conflict[i].wset(?);
