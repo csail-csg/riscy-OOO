@@ -183,6 +183,10 @@ endinterface
 module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Bool verbose = True;
 
+    // we change cache request in case of single core, becaues our MSI protocol
+    // is not good with single core
+    Bool multicore = valueof(CoreNum) > 1;
+
     // reservation station
     ReservationStationMem rsMem <- mkReservationStationMem;
 
@@ -696,7 +700,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         ProcRq#(DProcReqId) req = ProcRq {
             id: 0, // id does not matter
             addr: lsqDeqLd.paddr,
-            toState: S,
+            toState: multicore ? S : M, // in case of single core, just fetch to M
             op: Lr,
             byteEn: ?,
             data: ?,
@@ -1005,7 +1009,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         dMem.procReq.req(ProcRq {
             id: zeroExtend(lsqTag),
             addr: addr,
-            toState: S,
+            toState: multicore ? S : M, // in case of single core, just fetch to M
             op: Ld,
             byteEn: ?,
             data: ?,

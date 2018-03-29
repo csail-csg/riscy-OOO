@@ -33,7 +33,7 @@ interface NextAddrPred;
 endinterface
 
 // Local BTB Typedefs
-typedef 64 BtbEntries;
+typedef 256 BtbEntries; // 4KB BTB
 typedef Bit#(TLog#(BtbEntries)) BtbIndex;
 typedef Bit#(TSub#(TSub#(AddrSz, TLog#(BtbEntries)), 2)) BtbTag;
 
