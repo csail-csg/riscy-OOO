@@ -41,7 +41,7 @@
 
 `define LOG_BOOT_ROM_BYTES 12 // 4KB boot rom
 
-`define DIR_PRED_GSELECT // branch predictor, other options are: BHT, TOUR
+`define DIR_PRED_TOUR // branch predictor, other options are: BHT, TOUR
 
 `define LOG_DEADLOCK_CYCLES 26 // 64M cycles for deadlock detection
 
