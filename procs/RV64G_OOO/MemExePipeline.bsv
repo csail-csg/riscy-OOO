@@ -162,7 +162,6 @@ interface MemExeInput;
     method Action correctSpec_deqLSQ(SpecTag t);
     method Action incorrectSpec(SpecTag spec_tag, InstTag inst_tag);
     // We block issuing LR/SC/AMO/MMIO at wrong spec; otherwise scheduling cycle
-    method Action conflictWrongSpec;
 
     // performance
     method Bool doStats;

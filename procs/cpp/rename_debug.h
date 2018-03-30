@@ -46,7 +46,7 @@ public:
 
     virtual void renameErr(uint8_t core, RenameError err, uint64_t pc, uint8_t iType,
                            int isException, int isInterrupt, uint8_t trapVal,
-                           uint32_t specBits, int specTagValid, uint8_t specTag) {
+                           uint64_t specBits, int specTagValid, uint8_t specTag) {
         fprintf(stderr, "[RENAME DEBUG renameErr] core %d, err %d, pc %016llx, iType %d, "
                 "isException %d, isInterrupt %d, trapVal %d, "
                 "specBits %04x, specTagValid %d, specTag %d\n",
@@ -55,10 +55,10 @@ public:
                 (unsigned)specBits, specTagValid, (int)specTag);
         fprintf(log_fp, "[RENAME DEBUG renameErr] core %d, err %d, pc %016llx, iType %d, "
                 "isException %d, isInterrupt %d, trapVal %d, "
-                "specBits %04x, specTagValid %d, specTag %d\n",
+                "specBits %08x, specTagValid %d, specTag %d\n",
                 (int)core, (int)err, (long long unsigned)pc, (int)iType,
                 isException, isInterrupt, (int)trapVal,
-                (unsigned)specBits, specTagValid, (int)specTag);
+                (unsigned long long)specBits, specTagValid, (int)specTag);
         fflush(log_fp);
     }
 };

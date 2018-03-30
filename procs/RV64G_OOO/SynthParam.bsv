@@ -28,13 +28,15 @@ import HasSpecBits::*;
 import ReservationStationEhr::*;
 
 // ALU exe num = superscalar size
+// FPU exe num = superscalar size / 2
 typedef SupSize AluExeNum;
+typedef TDiv#(SupSize, 2) FpuMulDivExeNum;
 
 // Phy RFile
 // write: Alu < FpuMulDiv < Mem
 // read: Alu, FpuMulDiv, Mem
-typedef TAdd#(2, AluExeNum) RFileWrPortNum;
-typedef TAdd#(2, AluExeNum) RFileRdPortNum;
+typedef TAdd#(1, TAdd#(FpuMulDivExeNum, AluExeNum)) RFileWrPortNum;
+typedef TAdd#(1, TAdd#(FpuMulDivExeNum, AluExeNum)) RFileRdPortNum;
 
 // sb lazy lookup num: same as RFile read, becaues all pipelines recv bypass
 typedef RFileRdPortNum SbLazyLookupPortNum;
@@ -44,8 +46,8 @@ typedef RFileRdPortNum SbLazyLookupPortNum;
 // ordering: LrScAmo < Alu < FpuMulDiv < Ld
 typedef RFileWrPortNum WrConsPortNum;
 function Integer aluWrConsPort(Integer i) = i;
-Integer fpuMulDivWrConsPort = valueof(AluExeNum);
-Integer memWrConsPort = 1 + valueof(AluExeNum);
+function Integer fpuMulDivWrConsPort(Integer i) = valueof(AluExeNum) + i;
+Integer memWrConsPort = valueof(FpuMulDivExeNum) + valueof(AluExeNum);
 
 // ports for writing aggressive elements
 // i.e. set aggressive sb & wake up rs in aggressive pipeline (i.e. recv bypass)
@@ -53,16 +55,16 @@ Integer memWrConsPort = 1 + valueof(AluExeNum);
 // containing forwarding calls lsq.issue, and the rule containing mem resp
 // calls lsq.wakeupLd, we order forward before mem.
 // Ordering: Alu < FpuMulDiv < Forward < Mem
-typedef TAdd#(3, AluExeNum) WrAggrPortNum;
+typedef TAdd#(2, TAdd#(FpuMulDivExeNum, AluExeNum)) WrAggrPortNum;
 function Integer aluWrAggrPort(Integer i) = i;
-Integer fpuMulDivWrAggrPort = valueof(AluExeNum);
-Integer forwardWrAggrPort = 1 + valueof(AluExeNum);
-Integer memWrAggrPort = 2 + valueof(AluExeNum);
+function Integer fpuMulDivWrAggrPort(Integer i) = valueof(AluExeNum) + i;
+Integer forwardWrAggrPort = valueof(FpuMulDivExeNum) + valueof(AluExeNum);
+Integer memWrAggrPort = 1 + valueof(FpuMulDivExeNum) + valueof(AluExeNum);
 
 // ports for read rf & lazy lookup in sb, ordering doesn't matter
 function Integer aluRdPort(Integer i) = i;
-Integer fpuMulDivRdPort = valueof(AluExeNum);
-Integer memRdPort = 1 + valueof(AluExeNum);
+function Integer fpuMulDivRdPort(Integer i) = valueof(AluExeNum) + i;
+Integer memRdPort = valueof(FpuMulDivExeNum) + valueof(AluExeNum);
 
 // ports for correct spec, ordering doesn't matter
 typedef TAdd#(2, AluExeNum) CorrectSpecPortNum;
@@ -71,6 +73,5 @@ Integer deqLSQCorrectSpecPort = valueof(AluExeNum);
 Integer finishMemCorrectSpecPort = 1 + valueof(AluExeNum);
 
 // ports for manual conflict with wrong spec, ordering doesn't matter
-typedef 2 ConflictWrongSpecPortNum;
-Integer finishFpuMulDivConflictWrongSpecPort = 0;
-Integer lsqFirstConflictWrongSpecPort = 1;
+typedef FpuMulDivExeNum ConflictWrongSpecPortNum;
+function Integer finishFpuMulDivConflictWrongSpecPort(Integer i) = i;

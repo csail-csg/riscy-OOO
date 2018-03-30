@@ -61,13 +61,13 @@ interface DeadlockIndication;
     method Action commitInstStuck(
         Bit#(8) core, Bit#(64) pc, Bit#(5) iType,
         Bool isException, Bool isInterrupt, Bit#(4) trapVal,
-        Bit#(2) state, Bit#(32) specBits, Bool specTagValid ,Bit#(5) specTag,
+        Bit#(2) state, Bit#(64) specBits, Bool specTagValid ,Bit#(6) specTag,
         Bool stbEmpty, Bit#(2) prv, Bool htifStall
     );
     method Action commitUserInstStuck(
         Bit#(8) core, Bit#(64) pc, Bit#(5) iType,
         Bool isException, Bool isInterrupt, Bit#(4) trapVal,
-        Bit#(2) state, Bit#(32) specBits, Bool specTagValid, Bit#(5) specTag,
+        Bit#(2) state, Bit#(64) specBits, Bool specTagValid, Bit#(6) specTag,
         Bool stbEmpty, Bit#(2) prv, Bool htifStall
     );
 endinterface
