@@ -30,6 +30,6 @@ interface RenameDebugIndication;
     method Action renameErr(
         Bit#(8) core, RenameError err, Bit#(64) pc, Bit#(5) iType,
         Bool isException, Bool isInterrupt, Bit#(4) trapVal,
-        Bit#(32) specBits, Bool specTagValid, Bit#(5) specTag
+        Bit#(64) specBits, Bool specTagValid, Bit#(6) specTag
     );
 endinterface

@@ -137,7 +137,7 @@ endinterface
 // fixpoint to instantiate modules
 interface CoreFixPoint;
     interface Vector#(AluExeNum, AluExePipeline) aluExeIfc;
-    interface FpuMulDivExePipeline fpuMulDivExeIfc;
+    interface Vector#(FpuMulDivExeNum, FpuMulDivExePipeline) fpuMulDivExeIfc;
     interface MemExePipeline memExeIfc;
     method Action redirect_action(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag);
     interface Reg#(Bool) doStatsIfc;
@@ -200,16 +200,16 @@ module mkCore#(CoreId coreId)(Core);
         for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
             aluSpecUpdate[i] = fix.aluExeIfc[i].specUpdate;
         end
+        Vector#(FpuMulDivExeNum, SpeculationUpdate) fpuMulDivSpecUpdate;
+        for(Integer i = 0; i < valueof(FpuMulDivExeNum); i = i+1) begin
+            fpuMulDivSpecUpdate[i] = fix.fpuMulDivExeIfc[i].specUpdate;
+        end
         GlobalSpecUpdate#(CorrectSpecPortNum, ConflictWrongSpecPortNum) globalSpecUpdate <- mkGlobalSpecUpdate(
-            joinSpeculationUpdate(append(
-                vec(
-                    regRenamingTable.specUpdate,
-                    specTagManager.specUpdate,
-                    fix.fpuMulDivExeIfc.specUpdate,
-                    fix.memExeIfc.specUpdate
-                ),
-                aluSpecUpdate
-            )),
+            joinSpeculationUpdate(
+                append(append(vec(regRenamingTable.specUpdate,
+                                  specTagManager.specUpdate,
+                                  fix.memExeIfc.specUpdate), aluSpecUpdate), fpuMulDivSpecUpdate)
+            ),
             rob.specUpdate
         );
 
@@ -235,7 +235,9 @@ module mkCore#(CoreId coreId)(Core);
             for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
                 fix.aluExeIfc[i].rsAluIfc.setRegReady[wrAggrPort].put(Valid (dst));
             end
-            fix.fpuMulDivExeIfc.rsFpuMulDivIfc.setRegReady[wrAggrPort].put(Valid (dst));
+            for(Integer i = 0; i < valueof(FpuMulDivExeNum); i = i+1) begin
+                fix.fpuMulDivExeIfc[i].rsFpuMulDivIfc.setRegReady[wrAggrPort].put(Valid (dst));
+            end
             fix.memExeIfc.rsMemIfc.setRegReady[wrAggrPort].put(Valid (dst));
         endaction
         endfunction
@@ -256,7 +258,9 @@ module mkCore#(CoreId coreId)(Core);
                     method Action send(PhyRIndx dst, Data data);
                         // broadcast bypass
                         Integer recvPort = valueof(AluExeNum) * sendPort + i;
-                        fix.fpuMulDivExeIfc.recvBypass[recvPort].recv(dst, data);
+                        for(Integer j = 0; j < valueof(FpuMulDivExeNum); j = j+1) begin
+                            fix.fpuMulDivExeIfc[j].recvBypass[recvPort].recv(dst, data);
+                        end
                         fix.memExeIfc.recvBypass[recvPort].recv(dst, data);
                         for(Integer j = 0; j < valueof(AluExeNum); j = j+1) begin
                             fix.aluExeIfc[j].recvBypass[recvPort].recv(dst, data);
@@ -283,20 +287,23 @@ module mkCore#(CoreId coreId)(Core);
             aluExe[i] <- mkAluExePipeline(aluExeInput);
         end
 
-        let fpuMulDivExeInput = (interface FpuMulDivExeInput;
-            method sbCons_lazyLookup = sbCons.lazyLookup[fpuMulDivRdPort].get;
-            method rf_rd1 = rf.read[fpuMulDivRdPort].rd1;
-            method rf_rd2 = rf.read[fpuMulDivRdPort].rd2;
-            method rf_rd3 = rf.read[fpuMulDivRdPort].rd3;
-            method csrf_rd = csrf.rd;
-            method rob_setExecuted = rob.setExecuted_doFinishFpuMulDiv;
-            method Action writeRegFile(PhyRIndx dst, Data data);
-                writeAggr(fpuMulDivWrAggrPort, dst);
-                writeCons(fpuMulDivWrConsPort, dst, data);
-            endmethod
-            method conflictWrongSpec = globalSpecUpdate.conflictWrongSpec[finishFpuMulDivConflictWrongSpecPort].put(?);
-        endinterface);
-        let fpuMulDivExe <- mkFpuMulDivExePipeline(fpuMulDivExeInput);
+        Vector#(FpuMulDivExeNum, FpuMulDivExePipeline) fpuMulDivExe;
+        for(Integer i = 0; i < valueof(FpuMulDivExeNum); i = i+1) begin
+            let fpuMulDivExeInput = (interface FpuMulDivExeInput;
+                method sbCons_lazyLookup = sbCons.lazyLookup[fpuMulDivRdPort(i)].get;
+                method rf_rd1 = rf.read[fpuMulDivRdPort(i)].rd1;
+                method rf_rd2 = rf.read[fpuMulDivRdPort(i)].rd2;
+                method rf_rd3 = rf.read[fpuMulDivRdPort(i)].rd3;
+                method csrf_rd = csrf.rd;
+                method rob_setExecuted = rob.setExecuted_doFinishFpuMulDiv[i].set;
+                method Action writeRegFile(PhyRIndx dst, Data data);
+                    writeAggr(fpuMulDivWrAggrPort(i), dst);
+                    writeCons(fpuMulDivWrConsPort(i), dst, data);
+                endmethod
+                method conflictWrongSpec = globalSpecUpdate.conflictWrongSpec[finishFpuMulDivConflictWrongSpecPort(i)].put(?);
+            endinterface);
+            fpuMulDivExe[i] <- mkFpuMulDivExePipeline(fpuMulDivExeInput);
+        end
 
         let memExeInput = (interface MemExeInput;
             method sbCons_lazyLookup = sbCons.lazyLookup[memRdPort].get;
@@ -323,7 +330,6 @@ module mkCore#(CoreId coreId)(Core);
             method correctSpec_doFinishMem = globalSpecUpdate.correctSpec[finishMemCorrectSpecPort].put;
             method correctSpec_deqLSQ = globalSpecUpdate.correctSpec[deqLSQCorrectSpecPort].put;
             method incorrectSpec = globalSpecUpdate.incorrectSpec;
-            method conflictWrongSpec = globalSpecUpdate.conflictWrongSpec[lsqFirstConflictWrongSpecPort].put(?);
             method doStats = doStatsReg._read;
         endinterface);
         let memExe <- mkMemExePipeline(memExeInput);
@@ -340,7 +346,10 @@ module mkCore#(CoreId coreId)(Core);
     for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
         reservationStationAlu[i] = coreFix.aluExeIfc[i].rsAluIfc;
     end
-    ReservationStationFpuMulDiv reservationStationFpuMulDiv = coreFix.fpuMulDivExeIfc.rsFpuMulDivIfc;
+    Vector#(FpuMulDivExeNum, ReservationStationFpuMulDiv) reservationStationFpuMulDiv;
+    for(Integer i = 0; i < valueof(FpuMulDivExeNum); i = i+1) begin
+        reservationStationFpuMulDiv[i] = coreFix.fpuMulDivExeIfc[i].rsFpuMulDivIfc;
+    end
     ReservationStationMem reservationStationMem = coreFix.memExeIfc.rsMemIfc;
     DTlb dTlb = coreFix.memExeIfc.dTlbIfc;
     SplitLSQ lsq = coreFix.memExeIfc.lsqIfc;
@@ -450,7 +459,9 @@ module mkCore#(CoreId coreId)(Core);
     rule sendRobEnqTime;
         InstTime t = rob.getEnqTime;
         reservationStationMem.setRobEnqTime(t);
-        reservationStationFpuMulDiv.setRobEnqTime(t);
+        for(Integer i = 0; i < valueof(FpuMulDivExeNum); i = i+1) begin
+            reservationStationFpuMulDiv[i].setRobEnqTime(t);
+        end
         for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
             reservationStationAlu[i].setRobEnqTime(t);
         end

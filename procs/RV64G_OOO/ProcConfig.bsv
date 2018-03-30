@@ -37,11 +37,9 @@
 
 `define REUSE_FMA // use FMA for add and mul
 
-`define sizeSup 2 // 2 way superscalar
-
 `define LOG_BOOT_ROM_BYTES 12 // 4KB boot rom
 
-`define DIR_PRED_GSELECT // branch predictor, other options are: BHT, TOUR
+`define DIR_PRED_TOUR // branch predictor, other options are: BHT, TOUR
 
 `define LOG_DEADLOCK_CYCLES 26 // 64M cycles for deadlock detection
 
@@ -73,12 +71,15 @@
 
 `ifdef CORE_TINY
 
+    // superscalar
+    `define sizeSup 2
+
     // ROB
     `define ROB_SIZE 48
 
     // speculation
     `define NUM_EPOCHS 16
-    `define NUM_SPEC_TAGS 16
+    `define NUM_SPEC_TAGS 32
 
     // LSQ
     `define LDQ_SIZE 18
@@ -94,12 +95,15 @@
 
 `ifdef CORE_SMALL
 
+    // superscalar
+    `define sizeSup 2
+
     // ROB
     `define ROB_SIZE 64
 
     // speculation
-    `define NUM_EPOCHS 24
-    `define NUM_SPEC_TAGS 24
+    `define NUM_EPOCHS 16
+    `define NUM_SPEC_TAGS 32
 
     // LSQ
     `define LDQ_SIZE 24
@@ -113,40 +117,46 @@
 
 `endif
 
-`ifdef CORE_MEDIUM
+`ifdef CORE_SMALL_WIDE
+
+    // superscalar
+    `define sizeSup 4
 
     // ROB
-    `define ROB_SIZE 96
+    `define ROB_SIZE 64
 
     // speculation
-    `define NUM_EPOCHS 32
+    `define NUM_EPOCHS 16
     `define NUM_SPEC_TAGS 32
 
     // LSQ
-    `define LDQ_SIZE 36
-    `define STQ_SIZE 21
-    `define SB_SIZE 6
+    `define LDQ_SIZE 24
+    `define STQ_SIZE 14
+    `define SB_SIZE 4
 
     // reservation station sizes
-    `define RS_ALU_SIZE 24
-    `define RS_MEM_SIZE 24
-    `define RS_FPUMULDIV_SIZE 24
+    `define RS_ALU_SIZE 8
+    `define RS_MEM_SIZE 8
+    `define RS_FPUMULDIV_SIZE 16
 
 `endif
 
 `ifdef CORE_LARGE
 
+    // superscalar
+    `define sizeSup 2
+
     // ROB
     `define ROB_SIZE 128
 
     // speculation
-    `define NUM_EPOCHS 32
-    `define NUM_SPEC_TAGS 32
+    `define NUM_EPOCHS 16
+    `define NUM_SPEC_TAGS 64
 
     // LSQ
     `define LDQ_SIZE 48
     `define STQ_SIZE 28
-    `define SB_SIZE 8
+    `define SB_SIZE 4
 
     // reservation station sizes
     `define RS_ALU_SIZE 32
@@ -154,6 +164,51 @@
     `define RS_FPUMULDIV_SIZE 32
 
 `endif
+
+`ifdef CORE_LARGE_WIDE
+
+    // superscalar
+    `define sizeSup 4
+
+    // ROB
+    `define ROB_SIZE 128
+
+    // speculation
+    `define NUM_EPOCHS 16
+    `define NUM_SPEC_TAGS 64
+
+    // LSQ
+    `define LDQ_SIZE 48
+    `define STQ_SIZE 28
+    `define SB_SIZE 4
+
+    // reservation station sizes
+    `define RS_ALU_SIZE 16
+    `define RS_MEM_SIZE 16
+    `define RS_FPUMULDIV_SIZE 32
+
+`endif
+
+//`ifdef CORE_MEDIUM
+//
+//    // ROB
+//    `define ROB_SIZE 96
+//
+//    // speculation
+//    `define NUM_EPOCHS 32
+//    `define NUM_SPEC_TAGS 32
+//
+//    // LSQ
+//    `define LDQ_SIZE 36
+//    `define STQ_SIZE 21
+//    `define SB_SIZE 4
+//
+//    // reservation station sizes
+//    `define RS_ALU_SIZE 24
+//    `define RS_MEM_SIZE 24
+//    `define RS_FPUMULDIV_SIZE 24
+//
+//`endif
 
 //
 // ==== derived parameters ====

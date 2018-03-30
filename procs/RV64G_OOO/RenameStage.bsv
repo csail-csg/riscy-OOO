@@ -65,7 +65,7 @@ interface RenameInput;
     interface EpochManager emIfc;
     interface SpecTagManager smIfc;
     interface Vector#(AluExeNum, ReservationStationAlu) rsAluIfc;
-    interface ReservationStationFpuMulDiv rsFpuMulDivIfc;
+    interface Vector#(FpuMulDivExeNum, ReservationStationFpuMulDiv) rsFpuMulDivIfc;
     interface ReservationStationMem rsMemIfc;
     interface SplitLSQ lsqIfc;
     // pending MMIO req from platform
@@ -98,11 +98,8 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     CsrFile csrf = inIfc.csrfIfc;
     EpochManager epochManager = inIfc.emIfc;
     SpecTagManager specTagManager = inIfc.smIfc;
-    Vector#(AluExeNum, ReservationStationAlu) reservationStationAlu;
-    for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
-        reservationStationAlu[i] = inIfc.rsAluIfc[i];
-    end
-    ReservationStationFpuMulDiv reservationStationFpuMulDiv = inIfc.rsFpuMulDivIfc;
+    Vector#(AluExeNum, ReservationStationAlu) reservationStationAlu = inIfc.rsAluIfc;
+    Vector#(FpuMulDivExeNum, ReservationStationFpuMulDiv) reservationStationFpuMulDiv = inIfc.rsFpuMulDivIfc;
     ReservationStationMem reservationStationMem = inIfc.rsMemIfc;
     SplitLSQ lsq = inIfc.lsqIfc;
 
@@ -317,7 +314,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 
         // track limited resource usage
         Vector#(AluExeNum, Bool) aluExeUsed = replicate(False);
-        Bool fpuMulDivExeUsed = False;
+        Vector#(FpuMulDivExeNum, Bool) fpuMulDivExeUsed = replicate(False);
         Bool memExeUsed = False;
         Bool specTagClaimed = False; // specTagManager
 
@@ -333,6 +330,11 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
         Vector#(AluExeNum, Bit#(TLog#(TAdd#(`RS_ALU_SIZE, 1)))) aluRSCount;
         for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
             aluRSCount[i] = reservationStationAlu[i].approximateCount;
+        end
+        // FPU/MUL/DIV RS valid counts
+        Vector#(FpuMulDivExeNum, Bit#(TLog#(TAdd#(`RS_FPUMULDIV_SIZE, 1)))) fpuMulDivRSCount;
+        for(Integer i = 0; i < valueof(FpuMulDivExeNum); i = i+1) begin
+            fpuMulDivRSCount[i] = reservationStationFpuMulDiv[i].approximateCount;
         end
 
         // We apply actions at the end of each iteration
@@ -464,10 +466,12 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                         end
                     end
                     else if (to_FpuMulDiv) begin
-                        if(!fpuMulDivExeUsed && reservationStationFpuMulDiv.canEnq) begin
+                        function Bool fpuMulDivValid(Integer k) = !fpuMulDivExeUsed[k] && reservationStationFpuMulDiv[k].canEnq;
+                        Vector#(FpuMulDivExeNum, Bool) fpuMulDivReady = map(fpuMulDivValid, genVector);
+                        if(scheduleRS(fpuMulDivRSCount, fpuMulDivReady) matches tagged Valid .k) begin
                             // can process, send to FPU MUL DIV rs
-                            fpuMulDivExeUsed = True; // mark resource used
-                            reservationStationFpuMulDiv.enq(ToReservationStation {
+                            fpuMulDivExeUsed[k] = True; // mark resource used
+                            reservationStationFpuMulDiv[k].enq(ToReservationStation {
                                 data: FpuMulDivRSData {execFunc: dInst.execFunc},
                                 regs: phy_regs,
                                 tag: inst_tag,

@@ -595,6 +595,9 @@ module mkSplitLSQ(SplitLSQ);
 
     Bool verbose = True;
 
+    // we may simplify things in case of single core
+    Bool multicore = valueof(CoreNum) > 1;
+
     // LQ
     // entry valid bits
     Vector#(LdQSize, Ehr#(2, Bool))             ld_valid           <- replicateM(mkEhr(False));
@@ -1476,14 +1479,16 @@ module mkSplitLSQ(SplitLSQ);
             ld_specTag_updAddr[tag] <= spec_tag;
 
 `ifndef TSO_MM
-            // for WEAK model, try to kill younger load
-            doKill = True;
-            curSt = olderStVirTags[tag];
-            LdQVirTag virTag = ldVirTags[tag];
-            function Bool isYounger(LdQTag i);
-                return ldVirTags[i] > virTag;
-            endfunction
-            youngerLds = map(isYounger, idxVec);
+            // for WEAK model, try to kill younger load in case of multicore
+            if(multicore) begin
+                doKill = True;
+                curSt = olderStVirTags[tag];
+                LdQVirTag virTag = ldVirTags[tag];
+                function Bool isYounger(LdQTag i);
+                    return ldVirTags[i] > virTag;
+                endfunction
+                youngerLds = map(isYounger, idxVec);
+            end
 `endif
         end
         else if(lsqTag matches tagged St .tag) begin
@@ -1742,7 +1747,8 @@ module mkSplitLSQ(SplitLSQ);
         // We need to check LQ entry which satisfies:
         // (1) valid
         // (2) older
-        // (3) has acquire, or is computed but unissued and has overlap addr
+        // (3) has acquire, or in case of multicore it is computed but unissued
+        // and has overlap addr
         LdQVirTag issueVTag = ldVirTags[tag];
         function Bool isLdNeedCheck(LdQTag i);
             Bool valid = ld_valid_issue[i];
@@ -1754,7 +1760,7 @@ module mkSplitLSQ(SplitLSQ);
                                        ld_paddr_issue[i],
                                        ld_shiftedBE_issue[i]);
             return valid && older &&
-                   (acquire || computed && unissued && overlap);
+                   (acquire || multicore && computed && unissued && overlap);
         endfunction
         Vector#(LdQSize, Bool) checkLds = map(isLdNeedCheck,
                                               genWith(fromInteger));

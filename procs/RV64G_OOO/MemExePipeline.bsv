@@ -137,8 +137,8 @@ interface MemExeInput;
     method Data csrf_rd(CSR csr);
     // ROB
     method Addr rob_getPC(InstTag t);
-    method Action rob_setExecuted_doFinishMem(InstTag t, Data data, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
-    method Action rob_setExecuted_deqLSQ(InstTag t, Data res, Maybe#(Exception) cause, RobInstState new_state);
+    method Action rob_setExecuted_doFinishMem(InstTag t, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
+    method Action rob_setExecuted_deqLSQ(InstTag t, Maybe#(Exception) cause, RobInstState new_state);
     method Action rob_setLdSpecBit(InstTag t, SpecTag specTag);
     // MMIO
     method Bool isMMIOAddr(Addr a);
@@ -162,7 +162,6 @@ interface MemExeInput;
     method Action correctSpec_deqLSQ(SpecTag t);
     method Action incorrectSpec(SpecTag spec_tag, InstTag inst_tag);
     // We block issuing LR/SC/AMO/MMIO at wrong spec; otherwise scheduling cycle
-    method Action conflictWrongSpec;
 
     // performance
     method Bool doStats;
@@ -182,6 +181,10 @@ endinterface
 
 module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Bool verbose = True;
+
+    // we change cache request in case of single core, becaues our MSI protocol
+    // is not good with single core
+    Bool multicore = valueof(CoreNum) > 1;
 
     // reservation station
     ReservationStationMem rsMem <- mkReservationStationMem;
@@ -455,7 +458,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if (isValid(cause)) (* nosplit *) begin
             // LSQ entry should be killed due to exception in addr translation
             // ROB entry becomes Executed to handle exception
-            inIfc.rob_setExecuted_doFinishMem(x.tag, ?, x.vaddr, cause, Executed);
+            inIfc.rob_setExecuted_doFinishMem(x.tag, x.vaddr, cause, Executed);
             // use spec bits to kill other entries, but wait until ROB commit to resolve exception
             inIfc.incorrectSpec(memSpecTag, x.tag);
             inIfc.incrementEpochWithoutRedirect;
@@ -502,7 +505,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             end
             // change ROB entry: for non-MMIO store, inst is executed
             RobInstState robState = (!isMMIO && x.mem_func == St) ? Executed : InLdStQ;
-            inIfc.rob_setExecuted_doFinishMem(x.tag, ?, x.vaddr, cause, robState);
+            inIfc.rob_setExecuted_doFinishMem(x.tag, x.vaddr, cause, robState);
             // set spec bits
             if(isLd && !isMMIO) begin
                 // For non-MMIO Ld, we keep spec tag and make SpecBits of ROB
@@ -671,7 +674,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doAssert(isValid(lsqDeqLd.specTag), "must have spec tag");
         inIfc.correctSpec_deqLSQ(validValue(lsqDeqLd.specTag));
         // set ROB as Executed
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, ?, Invalid, Executed);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, Executed);
     endrule
 
     // issue non-MMIO Lr when
@@ -696,7 +699,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         ProcRq#(DProcReqId) req = ProcRq {
             id: 0, // id does not matter
             addr: lsqDeqLd.paddr,
-            toState: S,
+            toState: multicore ? S : M, // in case of single core, just fetch to M
             op: Lr,
             byteEn: ?,
             data: ?,
@@ -720,7 +723,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             inIfc.writeRegFile(dst.indx, resp);
             inIfc.setRegReadyAggr_mem(dst.indx);
         end
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, ?, Invalid, Executed);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, Executed);
         if(verbose) $display("[doDeqLdQ_Lr_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
         doAssert(lsqDeqLd.memFunc == Lr && !lsqDeqLd.isMMIO, "must be non-MMIO Lr");
@@ -778,7 +781,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             inIfc.writeRegFile(dst.indx, resp);
             inIfc.setRegReadyAggr_mem(dst.indx);
         end
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, ?, Invalid, Executed);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, Executed);
         if(verbose) $display("[doDeqLdQ_MMIO_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
         doAssert(isValid(lsqDeqLd.specTag), "must have spec tag");
@@ -794,7 +797,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // reset wait bit
         waitLrScAmoMMIOResp <= Invalid;
         // raise access fault
-        inIfc.rob_setExecuted_deqLSQ(waitMMIO.instTag, ?, Valid (LoadAccessFault), Executed);
+        inIfc.rob_setExecuted_deqLSQ(waitMMIO.instTag, Valid (LoadAccessFault), Executed);
         // Use spec bits to kill other entries, but wait until ROB commit to
         // resolve exception. This will also kill this LSQ entry, so we should
         // not deq LSQ here.
@@ -911,7 +914,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             inIfc.writeRegFile(dst.indx, resp);
             inIfc.setRegReadyAggr_mem(dst.indx);
         end
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, ?, Invalid, Executed);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, Executed);
         if(verbose) $display("[doDeqStQ_ScAmo_deq] ", fshow(lsqDeqSt), "; ", fshow(resp));
         // check
         doAssert((lsqDeqSt.memFunc == Sc || lsqDeqSt.memFunc == Amo) &&
@@ -973,7 +976,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             inIfc.writeRegFile(dst.indx, resp);
             inIfc.setRegReadyAggr_mem(dst.indx);
         end
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, ?, Invalid, Executed);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, Executed);
         if(verbose) $display("[doDeqStQ_MMIO_deq] ", fshow(lsqDeqSt), "; ", fshow(resp));
         // check
         doAssert(isValid(lsqDeqSt.specTag), "must have spec tag");
@@ -989,7 +992,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // reset wait bit
         waitLrScAmoMMIOResp <= Invalid;
         // raise access fault
-        inIfc.rob_setExecuted_deqLSQ(waitMMIO.instTag, 0, Valid (StoreAccessFault), Executed);
+        inIfc.rob_setExecuted_deqLSQ(waitMMIO.instTag, Valid (StoreAccessFault), Executed);
         // Use spec bits to kill other entries, but wait until ROB commit to
         // resolve exception. This will also kill this LSQ entry, so we should
         // not deq LSQ here.
@@ -1005,7 +1008,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         dMem.procReq.req(ProcRq {
             id: zeroExtend(lsqTag),
             addr: addr,
-            toState: S,
+            toState: multicore ? S : M, // in case of single core, just fetch to M
             op: Ld,
             byteEn: ?,
             data: ?,

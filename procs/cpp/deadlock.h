@@ -139,38 +139,38 @@ public:
     virtual void commitInstStuck(uint8_t core, const uint64_t pc,
                                  const uint8_t iType, const int isException,
                                  const int isInterrupt, const uint8_t trapVal,
-                                 const uint8_t state, const uint32_t specBits,
+                                 const uint8_t state, const uint64_t specBits,
                                  const int specTagValid, const uint8_t specTag,
                                  const int stbEmpty, const uint8_t prv, const int htifStall) {
         fprintf(stderr, "  [DEADLOCK commitInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, specBits %04x, specTagValid %d, specTag %d, "
+                "isInterrupt %d, trapVal %d, state %d, specBits %016llx, specTagValid %d, specTag %d, "
                 "stbEmpty %d, prv %d, htifStall %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, (unsigned)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
+                (int)state, (unsigned long long)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
         fprintf(log_fp, "[DEADLOCK commitInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, specBits %04x, specTagValid %d, specTag %d, "
+                "isInterrupt %d, trapVal %d, state %d, specBits %016llx, specTagValid %d, specTag %d, "
                 "stbEmpty %d, prv %d, htifStall %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, (unsigned)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
+                (int)state, (unsigned long long)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
         fflush(log_fp);
     }
 
     virtual void commitUserInstStuck(uint8_t core, const uint64_t pc,
                                      const uint8_t iType, const int isException,
                                      const int isInterrupt, const uint8_t trapVal,
-                                     const uint8_t state, const uint32_t specBits,
+                                     const uint8_t state, const uint64_t specBits,
                                      const int specTagValid, const uint8_t specTag,
                                      const int stbEmpty, const uint8_t prv, const int htifStall) {
         fprintf(stderr, "  [DEADLOCK commitUserInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, specBits %04x, specTagValid %d, specTag %d, "
+                "isInterrupt %d, trapVal %d, state %d, specBits %016llx, specTagValid %d, specTag %d, "
                 "stbEmpty %d, prv %d, htifStall %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, (unsigned)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
+                (int)state, (unsigned long long)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
         fprintf(log_fp, "[DEADLOCK commitUserInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, specBits %04x, specTagValid %d, specTag %d, "
+                "isInterrupt %d, trapVal %d, state %d, specBits %016llx, specTagValid %d, specTag %d, "
                 "stbEmpty %d, prv %d, htifStall %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, (unsigned)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
+                (int)state, (unsigned long long)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
         fflush(log_fp);
     }
 };
