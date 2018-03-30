@@ -175,8 +175,7 @@ module mkFetchStage(FetchStage);
     let             dirPred      <- mkDirPredictor;
     ReturnAddrStack ras          <- mkRas;
     // Wire to train next addr pred (NAP)
-    RWire#(TrainNAP) napTrainByDec <- mkRWire;
-    RWire#(TrainNAP) napTrainByExe <- mkRWire;
+    Fifo#(2,TrainNAP) napTrainByDec <- mkCFFirainNAP) napTrainByExe <- mkRWire;
 
     // TLB and Cache connections
     ITlb iTlb <- mkITlb;
@@ -380,16 +379,39 @@ module mkFetchStage(FetchStage);
                                 dp_train = pred_res.train;
                             end
                             Maybe#(Addr) nextPc = decodeBrPred(in.pc, dInst, pred_taken);
+                            function Bool linkedR(Maybe#(ArchRIndx) register);
+                                    let res=False;
+                                    if (register matches tagged Valid .r &&& (r == tagged Gpr 1 || r == tagged Gpr 5)) res=True;
+				    return res;
+                            endfunction
 
-                            // return address stack
-                            if (dInst.iType == J && isValid(regs.dst)) begin
+                            // return address stack only push  when rd = x1 or x5
+                            if (dInst.iType == J && linkedR(regs.dst)) begin
                                 // function call -- push return address to stack
                                 ras.pushAddress[i](in.pc + 4);
                             end
-                            else if (dInst.iType == Jr) begin
-                                let new_ppc = ras.firstAddress[i];
-                                ras.popAddress[i];
-                                nextPc = tagged Valid new_ppc;
+                            else if (dInst.iType == Jr ) begin // jalr 
+                                // we push if rs1 != rd and both are x1 or x5
+                                if( regs.src1 != regs.dst && linkedR(regs.src1) && linkedR(regs.dst)) begin
+                                    ras.pushAddress[i](in.pc+4);
+                                    let new_ppc = ras.firstAddress[i];
+                                    ras.popAddress[i];
+                                    nextPc = tagged Valid new_ppc;
+                                end
+                                // we push if rd = x1 or x5 and rs1 is not x1 && x5
+                                if (!linkedR(regs.src1) && linkedR(regs.dst)) begin
+                                    ras.pushAddress[i](in.pc+4);
+                                end
+                                // we push if rd = rs1 = x1 or x5 
+                                if (regs.src1 == regs.dst && linkedR(regs.src1)) begin
+                                    ras.pushAddress[i](in.pc+4);
+                                end
+                                // we pop if rd != x1 or x5, and rs1 = x1 or x5
+                                if (!linkedR(regs.dst) && linkedR(regs.src1)) begin  
+                                    let new_ppc = ras.firstAddress[i];
+                                    ras.popAddress[i];
+                                    nextPc = tagged Valid new_ppc;
+                                end
                             end
 
                             if(verbose) begin
@@ -442,8 +464,8 @@ module mkFetchStage(FetchStage);
             end
             decode_epoch <= decode_epoch_local;
             // send training data for next addr pred
-            if(trainNAP matches tagged Valid .x) begin
-                napTrainByDec.wset(x);
+            if (trainNAP matches tagged Valid .x) begin
+                napTrainByDec.enq(x);
             end
 `ifdef PERF_COUNT
             // performance counter: check whether redirect happens
@@ -463,10 +485,11 @@ module mkFetchStage(FetchStage);
     endrule
 
     // train next addr pred
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule doTrainNAP(isValid(napTrainByDec.wget) || isValid(napTrainByExe.wget));
+    (* fire_when_enabled*)
+    rule doTrainNAP( isValid(napTrainByExe.wget));
         // give priority to train data from exe
-        TrainNAP train = fromMaybe(validValue(napTrainByDec.wget), napTrainByExe.wget);
+        TrainNAP train = fromMaybe(napTrainByDec.first(), napTrainByExe.wget);
+        napTrainByDec.deq();
         nextAddrPred.update(train.pc, train.nextPc, train.nextPc != train.pc + 4);
     endrule
 
