@@ -174,7 +174,8 @@ module mkFetchStage(FetchStage);
     let             dirPred      <- mkDirPredictor;
     ReturnAddrStack ras          <- mkRas;
     // Wire to train next addr pred (NAP)
-    Fifo#(2,TrainNAP) napTrainByDec <- mkCFFirainNAP) napTrainByExe <- mkRWire;
+    RWire#(TrainNAP) napTrainByExe <- mkRWire;
+    Fifo#(2,TrainNAP) napTrainByDec <- mkCFFifo;
 
     // TLB and Cache connections
     ITlb iTlb <- mkITlb;
