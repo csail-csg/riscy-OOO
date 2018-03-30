@@ -124,7 +124,7 @@ interface AluExeInput;
     // ROB
     method Addr rob_getPC(InstTag t);
     method Addr rob_getPredPC(InstTag t);
-    method Action rob_setExecuted(InstTag t, Data res, Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state);
+    method Action rob_setExecuted(InstTag t, Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state);
     // Fetch stage
     method Action fetch_train_predictors(
         Addr pc, Addr next_pc, IType iType, Bool taken,
@@ -297,7 +297,6 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
         // update the instruction in the reorder buffer.
         inIfc.rob_setExecuted(
             x.tag,
-            x.data,
             x.csrData,
             x.controlFlow,
             Executed
