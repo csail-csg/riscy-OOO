@@ -40,14 +40,10 @@ TSO_MM ?= false
 CHECK_DEADLOCK ?= true
 
 # clk frequency depends on core size
-ifeq ($(CORE_SIZE),TINY)
+ifneq (,$(filter $(CORE_SIZE),TINY SMALL SMALL_WIDE))
 USER_CLK_PERIOD ?= 24
-else ifeq ($(CORE_SIZE),SMALL)
+else ifneq (,$(filter $(CORE_SIZE),LARGE LARGE_WIDE))
 USER_CLK_PERIOD ?= 32
-else ifeq ($(CORE_SIZE),MEDIUM)
-USER_CLK_PERIOD ?= 32
-else ifeq ($(CORE_SIZE),LARGE)
-USER_CLK_PERIOD ?= 40
 else
 $(error unsupported CORE_SIZE)
 endif

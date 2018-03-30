@@ -165,7 +165,7 @@
 
 `endif
 
-`ifdef CORE_LARGE
+`ifdef CORE_LARGE_WIDE
 
     // superscalar
     `define sizeSup 4

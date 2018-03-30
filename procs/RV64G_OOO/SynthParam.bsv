@@ -43,7 +43,7 @@ typedef RFileRdPortNum SbLazyLookupPortNum;
 
 // ports for writing conservative elements
 // i.e. write rf & set conservative sb & wake up rs in conservative pipeline (i.e. not recv bypass)
-// ordering: LrScAmo < Alu < FpuMulDiv < Ld
+// ordering: Alu < FpuMulDiv < Mem
 typedef RFileWrPortNum WrConsPortNum;
 function Integer aluWrConsPort(Integer i) = i;
 function Integer fpuMulDivWrConsPort(Integer i) = valueof(AluExeNum) + i;

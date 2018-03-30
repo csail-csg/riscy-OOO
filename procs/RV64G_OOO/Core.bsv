@@ -258,7 +258,7 @@ module mkCore#(CoreId coreId)(Core);
                     method Action send(PhyRIndx dst, Data data);
                         // broadcast bypass
                         Integer recvPort = valueof(AluExeNum) * sendPort + i;
-                        for(Integer j = 0; j < valueof(AluExeNum); j = j+1) begin
+                        for(Integer j = 0; j < valueof(FpuMulDivExeNum); j = j+1) begin
                             fix.fpuMulDivExeIfc[j].recvBypass[recvPort].recv(dst, data);
                         end
                         fix.memExeIfc.recvBypass[recvPort].recv(dst, data);

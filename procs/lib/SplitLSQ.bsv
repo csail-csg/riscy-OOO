@@ -1760,7 +1760,7 @@ module mkSplitLSQ(SplitLSQ);
                                        ld_paddr_issue[i],
                                        ld_shiftedBE_issue[i]);
             return valid && older &&
-                   (acquire || computed && unissued && overlap);
+                   (acquire || multicore && computed && unissued && overlap);
         endfunction
         Vector#(LdQSize, Bool) checkLds = map(isLdNeedCheck,
                                               genWith(fromInteger));
@@ -1776,7 +1776,7 @@ module mkSplitLSQ(SplitLSQ);
             Bool overlap = overlapAddr(pa, shift_be,
                                        st_paddr_issue[i],
                                        st_shiftedBE_issue[i]);
-            return valid_older && (acquire || multicore && computed && overlap);
+            return valid_older && (acquire || computed && overlap);
         endfunction
         Vector#(StQSize, Bool) checkSts = map(isStNeedCheck,
                                               genWith(fromInteger));

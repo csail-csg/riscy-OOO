@@ -49,13 +49,13 @@ public:
                            uint64_t specBits, int specTagValid, uint8_t specTag) {
         fprintf(stderr, "[RENAME DEBUG renameErr] core %d, err %d, pc %016llx, iType %d, "
                 "isException %d, isInterrupt %d, trapVal %d, "
-                "specBits %04x, specTagValid %d, specTag %d\n",
+                "specBits %016llx, specTagValid %d, specTag %d\n",
                 (int)core, (int)err, (long long unsigned)pc, (int)iType,
                 isException, isInterrupt, (int)trapVal,
-                (unsigned)specBits, specTagValid, (int)specTag);
+                (unsigned long long)specBits, specTagValid, (int)specTag);
         fprintf(log_fp, "[RENAME DEBUG renameErr] core %d, err %d, pc %016llx, iType %d, "
                 "isException %d, isInterrupt %d, trapVal %d, "
-                "specBits %08x, specTagValid %d, specTag %d\n",
+                "specBits %016llx, specTagValid %d, specTag %d\n",
                 (int)core, (int)err, (long long unsigned)pc, (int)iType,
                 isException, isInterrupt, (int)trapVal,
                 (unsigned long long)specBits, specTagValid, (int)specTag);

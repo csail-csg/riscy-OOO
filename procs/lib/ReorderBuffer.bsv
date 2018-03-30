@@ -81,7 +81,7 @@ interface ReorderBufferRowEhr#(numeric type aluExeNum, numeric type fpuMulDivExe
     method Action setExecuted_deqLSQ(Maybe#(Exception) cause, RobInstState new_state);
     // doFinishXXX rules set ROB state (future may have vector of doFinishAlu ifc)
     interface Vector#(aluExeNum, Row_setExecuted_doFinishAlu) setExecuted_doFinishAlu;
-    interface Vector#(fpuMulDivExeNum, Row_setExecuted_doFinishFpuMulDiv) setExecuted_doFinishFpuMulDiv
+    interface Vector#(fpuMulDivExeNum, Row_setExecuted_doFinishFpuMulDiv) setExecuted_doFinishFpuMulDiv;
     method Action setExecuted_doFinishMem(Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
     // for Ld in doFinishMem without exception, set this Ld to depend on itself's spec tag
     // this won't be called simultaneously with correct or wrong specution in one rule
@@ -109,12 +109,12 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Integer pvc_enq_port = 1 + valueof(aluExeNum); // write ppc_vaddr_csrData
 
     Integer fflags_deq_port = 0;
-    Integer fflags_finishFpuMulDiv_port = 0; // write fflags
-    Integer fflags_enq_port = 1; // write fflags
+    function Integer fflags_finishFpuMulDiv_port(Integer i) = i; // write fflags
+    Integer fflags_enq_port = valueof(fpuMulDivExeNum); // write fflags
 
     Integer state_deq_port = 0;
     function Integer state_finishAlu_port(Integer i) = i; // write state
-    function Integer state_finishFpuMulDiv_port = valueof(aluExeNum) + i; // write state
+    function Integer state_finishFpuMulDiv_port(Integer i) = valueof(aluExeNum) + i; // write state
     Integer state_deqLSQ_port = valueof(fpuMulDivExeNum) + valueof(aluExeNum); // write state
     Integer state_finishMem_port = 1 + state_deqLSQ_port; // write state
     Integer state_enq_port = 1 + state_finishMem_port; // write state
@@ -131,9 +131,9 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Reg#(Bool)                                                      claimed_phy_reg      <- mkRegU;
     Ehr#(3, Maybe#(Trap))                                           trap                 <- mkEhr(?);
     Ehr#(TAdd#(2, aluExeNum), PPCVAddrCSRData)                      ppc_vaddr_csrData    <- mkEhr(?);
-    Ehr#(2, Bit#(5))                                                fflags               <- mkEhr(?);
+    Ehr#(TAdd#(1, fpuMulDivExeNum), Bit#(5))                        fflags               <- mkEhr(?);
     Reg#(Bool)                                                      will_dirty_fpu_state <- mkRegU;
-    Ehr#(TAdd#(2, TAdd#(fpuMulDivExeNum, aluExeNum)), RobInstState) rob_inst_state       <- mkEhr(?);
+    Ehr#(TAdd#(3, TAdd#(fpuMulDivExeNum, aluExeNum)), RobInstState) rob_inst_state       <- mkEhr(?);
     Reg#(Maybe#(SpecTag))                                           spec_tag             <- mkRegU;
     Ehr#(3, SpecBits)                                               spec_bits            <- mkEhr(?);
 
@@ -163,13 +163,13 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     end
     
     Vector#(fpuMulDivExeNum, Row_setExecuted_doFinishFpuMulDiv) fpuMulDivExe;
-    for(Integer i = 0; i < valueof(fpuMulDivExe); i = i+1) begin
+    for(Integer i = 0; i < valueof(fpuMulDivExeNum); i = i+1) begin
         fpuMulDivExe[i] = (interface Row_setExecuted_doFinishFpuMulDiv;
-            method Action set(Bit#(5) fflags, RobInstState new_state);
+            method Action set(Bit#(5) new_fflags, RobInstState new_state);
                 // always update ROB state
-                rob_inst_state[state_finishFpuMulDiv_port] <= new_state; 
+                rob_inst_state[state_finishFpuMulDiv_port(i)] <= new_state; 
                 // update fflags
-                fflags[fflags_finishFpuMulDiv_port] <= new_fflags;
+                fflags[fflags_finishFpuMulDiv_port(i)] <= new_fflags;
             endmethod
         endinterface);
     end
@@ -222,7 +222,7 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         };
     endmethod
 
-    method Action setExecuted_deqLSQ(Data res, Maybe#(Exception) cause, RobInstState new_state);
+    method Action setExecuted_deqLSQ(Maybe#(Exception) cause, RobInstState new_state);
         rob_inst_state[state_deqLSQ_port] <= new_state;
         // update trap: TODO the check on trap = invalid is redundant
         if(cause matches tagged Valid .e &&& !isValid(trap[trap_deqLSQ_port])) begin
@@ -307,11 +307,11 @@ interface SupReorderBuffer#(numeric type aluExeNum, numeric type fpuMulDivExeNum
     interface Vector#(SupSize, ROB_DeqPort) deqPort;
 
     // deqLSQ rules set ROB state
-    method Action setExecuted_deqLSQ(InstTag x, Data res, Maybe#(Exception) cause, RobInstState new_state);
+    method Action setExecuted_deqLSQ(InstTag x, Maybe#(Exception) cause, RobInstState new_state);
     // doFinishXXX rules set ROB state
     interface Vector#(aluExeNum, ROB_setExecuted_doFinishAlu) setExecuted_doFinishAlu;
     interface Vector#(fpuMulDivExeNum, ROB_setExecuted_doFinishFpuMulDiv) setExecuted_doFinishFpuMulDiv;
-    method Action setExecuted_doFinishMem(InstTag x, Data data, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
+    method Action setExecuted_doFinishMem(InstTag x, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
     // for Ld in doFinishMem without exception, set this Ld to depend on itself's spec tag
     // this won't be called simultaneously with correct or wrong specution in one rule
     // (spec tag of this Ld is kept)
@@ -360,7 +360,7 @@ module mkSupReorderBuffer#(
     Vector#(SupSize, RWire#(void)) wrongSpec_enq_conflict <- replicateM(mkRWire);
 
     // SupSize number of FIFOs
-    Vector#(SupSize, Vector#(SingleScalarSize, ReorderBufferRowEhr#(aluExeNum))) row <- replicateM(replicateM(mkRobRow));
+    Vector#(SupSize, Vector#(SingleScalarSize, ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum))) row <- replicateM(replicateM(mkRobRow));
     Vector#(SupSize, Vector#(SingleScalarSize, Ehr#(3, Bool))) valid <- replicateM(replicateM(mkEhr(False)));
     Vector#(SupSize, Reg#(SingleScalarPtr)) enqP <- replicateM(mkReg(0));
 `ifdef BSIM
@@ -790,7 +790,7 @@ module mkSupReorderBuffer#(
     for(Integer i = 0; i < valueof(aluExeNum); i = i+1) begin
         aluSetExeIfc[i] = (interface ROB_setExecuted_doFinishAlu;
             method Action set(
-                InstTag x, Data res, Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state
+                InstTag x, Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state
             ) if(
                 all(id, readVReg(setExeAlu_SB_enq)) // ordering: < enq
             );
@@ -850,10 +850,10 @@ module mkSupReorderBuffer#(
         return all(isFullFunc, idxVec);
     endmethod
 
-    method Action setExecuted_deqLSQ(InstTag x, Data res, Maybe#(Exception) cause, RobInstState new_state) if(
+    method Action setExecuted_deqLSQ(InstTag x, Maybe#(Exception) cause, RobInstState new_state) if(
         all(id, readVReg(setExeLSQ_SB_enq)) // ordering: < enq
     );
-        row[x.way][x.ptr].setExecuted_deqLSQ(res, cause, new_state);
+        row[x.way][x.ptr].setExecuted_deqLSQ(cause, new_state);
     endmethod
 
     interface setExecuted_doFinishAlu = aluSetExeIfc;
@@ -861,11 +861,11 @@ module mkSupReorderBuffer#(
     interface setExecuted_doFinishFpuMulDiv = fpuMulDivSetExeIfc;
 
     method Action setExecuted_doFinishMem(
-        InstTag x, Data data, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state
+        InstTag x, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state
     ) if(
         all(id, readVReg(setExeMem_SB_enq)) // ordering: < enq
     );
-        row[x.way][x.ptr].setExecuted_doFinishMem(data, vaddr, cause, new_state);
+        row[x.way][x.ptr].setExecuted_doFinishMem(vaddr, cause, new_state);
     endmethod
 
     method Action setLdSpecBit(InstTag x, SpecTag ldSpecTag) if(

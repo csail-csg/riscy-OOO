@@ -25,7 +25,7 @@
 import ReorderBuffer::*;
 import SynthParam::*;
 
-typedef ReorderBufferRowEhr#(AluExeNum) RobRowSynth;
+typedef ReorderBufferRowEhr#(AluExeNum, FpuMulDivExeNum) RobRowSynth;
 (* synthesize *)
 module mkRobRowSynth(RobRowSynth);
     let m <- mkReorderBufferRowEhr;
@@ -34,7 +34,7 @@ endmodule
 
 // use superscalar ROB
 
-typedef SupReorderBuffer#(AluExeNum) ReorderBufferSynth;
+typedef SupReorderBuffer#(AluExeNum, FpuMulDivExeNum) ReorderBufferSynth;
 
 (* synthesize *)
 module mkReorderBufferSynth(ReorderBufferSynth);
