@@ -30,7 +30,6 @@ import ProcTypes::*;
 typedef struct {
     Epoch curEp;
     Epoch checkedEp;
-    Bool waitRedirect;
 } EpochDebugState deriving(Bits, Eq, FShow);
 
 interface EM_checkEpoch;
@@ -45,8 +44,7 @@ interface EpochManager;
     interface Vector#(SupSize, EM_checkEpoch) checkEpoch;
     interface Vector#(SupSize, EM_updatePrevEpoch) updatePrevEpoch;
     method Epoch getEpoch;
-    method Action incrementEpochWithoutRedirect;
-    method Action redirect;
+    method Action incrementEpoch;
     // for debug
     method EpochDebugState getEpochState;
 endinterface
@@ -55,7 +53,6 @@ endinterface
 module mkEpochManager(EpochManager);
     Reg#(Epoch) curr_epoch <- mkReg(0);
     Reg#(Epoch) prev_checked_epoch <- mkReg(0);
-    Reg#(Bool) waiting_for_redirect <- mkReg(False);
     Epoch next_epoch = (curr_epoch== fromInteger(valueOf(NumEpochs)-1)) ? 0 : (curr_epoch+1);
 
     // epochs in the core are within range [prev_checked_epoch, curr_epoch]
@@ -116,31 +113,14 @@ module mkEpochManager(EpochManager);
     method Epoch getEpoch;
         return curr_epoch;
     endmethod
-    method Action incrementEpochWithoutRedirect if(prev_checked_epoch != next_epoch);
-        // It is actually okay to call this twice without redirecting. This
-        // could happen in the case where you have a memory instruction that
-        // causees a page fault followed by an eret. The eret will call this
-        // method first, then the page fault will call the method again and
-        // redirect later.
-        if (!waiting_for_redirect) begin
-            curr_epoch <= next_epoch;
-        end
-        waiting_for_redirect <= True;
-    endmethod
-    method Action redirect if (prev_checked_epoch != next_epoch || waiting_for_redirect);
-        if (waiting_for_redirect) begin
-            // epoch was flipped previously
-            waiting_for_redirect <= False;
-        end else begin
-            curr_epoch <= next_epoch;
-        end
+    method Action incrementEpoch if(prev_checked_epoch != next_epoch);
+        curr_epoch <= next_epoch;
     endmethod
 
     method EpochDebugState getEpochState;
         return EpochDebugState {
             curEp: curr_epoch,
-            checkedEp: prev_checked_epoch,
-            waitRedirect: waiting_for_redirect
+            checkedEp: prev_checked_epoch
         };
     endmethod
 endmodule

@@ -111,10 +111,10 @@ module mkSpecPoisonFifo#(Bool lazyEnq)(
     endmethod
     
     interface SpeculationUpdate specUpdate;
-        method Action incorrectSpeculation(SpecTag x);
+        method Action incorrectSpeculation(Bool kill_all, SpecTag x);
             // poison entries
             for(Integer i = 0 ; i < valueOf(size) ; i = i+1) begin
-                if(specBits[i][sb_wrongSpec_port][x] == 1) begin
+                if(kill_all || specBits[i][sb_wrongSpec_port][x] == 1) begin
                     poisoned[i][poisoned_wrongSpec_port] <= True;
                 end
             end

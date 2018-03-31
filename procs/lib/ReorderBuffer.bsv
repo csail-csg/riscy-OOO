@@ -45,48 +45,51 @@ typedef union tagged {
 } PPCVAddrCSRData deriving(Bits, Eq, FShow);
 
 typedef struct {
-    Addr                pc;
-    IType               iType;
-    Maybe#(CSR)         csr;
-    Bool                claimed_phy_reg; // whether we need to commmit renaming
-    Maybe#(Trap)        trap;
-    PPCVAddrCSRData     ppc_vaddr_csrData;
-    Bit#(5)             fflags;
-    Bool                will_dirty_fpu_state; // True means 2'b11 will be written to FS
-    RobInstState        rob_inst_state; // was executed
+    Addr             pc;
+    IType            iType;
+    Maybe#(CSR)      csr;
+    Bool             claimed_phy_reg; // whether we need to commmit renaming
+    Maybe#(Trap)     trap;
+    Bool             ldKilled; // mispeculative load
+    PPCVAddrCSRData  ppc_vaddr_csrData;
+    Bit#(5)          fflags;
+    Bool             will_dirty_fpu_state; // True means 2'b11 will be written to FS
+    RobInstState     rob_inst_state; // was executed (i.e. can commit)
+    // some mem access is only performed at commit time, so ROB should notify
+    // LSQ that the instrution arrives at commit stage and access can start
+    Maybe#(LdStQTag) memAccessAtCommit;
 
     // speculation
-    SpecBits            spec_bits;
-    Maybe#(SpecTag)     spec_tag;
+    SpecBits         spec_bits;
 } ToReorderBuffer deriving(Bits, Eq, FShow);
 
 typedef enum {
-    InRStation,
-    InLdStQ,
-    Executed
+    NotDone,
+    Executed // i.e. ready to commit
 } RobInstState deriving (Bits, Eq, FShow);
 
 interface Row_setExecuted_doFinishAlu;
-    method Action set(Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state);
+    method Action set(Maybe#(Data) csrData, ControlFlow cf);
 endinterface
 
 interface Row_setExecuted_doFinishFpuMulDiv;
-    method Action set(Bit#(5) fflags, RobInstState new_state);
+    method Action set(Bit#(5) fflags);
 endinterface
 
 interface ReorderBufferRowEhr#(numeric type aluExeNum, numeric type fpuMulDivExeNum);
     method Action write_enq(ToReorderBuffer x);
     method ToReorderBuffer read_deq;
-    // deqLSQ rules set ROB state (result are just for verify packets)
-    method Action setExecuted_deqLSQ(Maybe#(Exception) cause, RobInstState new_state);
-    // doFinishXXX rules set ROB state (future may have vector of doFinishAlu ifc)
+    // deqLSQ rules set ROB state: set execeptions, load mispeculation, and becomes Executed
+    method Action setExecuted_deqLSQ(Maybe#(Exception) cause, Bool ld_killed);
+    // doFinish rules set ROB state for ALU and FPU/MUL/DIV (always become Executed)
     interface Vector#(aluExeNum, Row_setExecuted_doFinishAlu) setExecuted_doFinishAlu;
     interface Vector#(fpuMulDivExeNum, Row_setExecuted_doFinishFpuMulDiv) setExecuted_doFinishFpuMulDiv;
-    method Action setExecuted_doFinishMem(Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
-    // for Ld in doFinishMem without exception, set this Ld to depend on itself's spec tag
-    // this won't be called simultaneously with correct or wrong specution in one rule
-    // (spec tag of this Ld is kept)
-    method Action setLdSpecBit(SpecTag ldSpecTag);
+    // mem addr translation done: record virtual addr (for possible faults),
+    // whether the access needs to be performed at commit stage (NOTE page
+    // faulting inst cannot have this set, since there is no access to
+    // perform), and non-MMIO St can become Executed (NOTE faulting
+    // instructions are not Executed, they are set at deqLSQ time)
+    method Action setExecuted_doFinishMem(Addr vaddr, Maybe#(LdStQTag) access_at_commit, Bool non_mmio_st_done);
     // get original PC/PPC before execution, EHR port 0 will suffice
     method Addr getOrigPC;
     method Addr getOrigPredPC;
@@ -112,6 +115,14 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     function Integer fflags_finishFpuMulDiv_port(Integer i) = i; // write fflags
     Integer fflags_enq_port = valueof(fpuMulDivExeNum); // write fflags
 
+    Integer ldKill_deq_port = 0;
+    Integer ldKill_deqLSQ_port = 0; // set ldKilled
+    Integer ldKill_enq_port = 1; // init ldKilled
+
+    Integer accessCom_deq_port = 0;
+    Integer accessCom_finishMem_port = 0; // set memAccessAtCommit
+    Integer accessCom_enq_port = 1; // init
+
     Integer state_deq_port = 0;
     function Integer state_finishAlu_port(Integer i) = i; // write state
     function Integer state_finishFpuMulDiv_port(Integer i) = valueof(aluExeNum) + i; // write state
@@ -130,11 +141,12 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Reg#(Maybe#(CSR))                                               csr                  <- mkRegU;
     Reg#(Bool)                                                      claimed_phy_reg      <- mkRegU;
     Ehr#(3, Maybe#(Trap))                                           trap                 <- mkEhr(?);
+    Ehr#(2, Bool)                                                   ldKilled             <- mkEhr(?);
+    Ehr#(2, Maybe#(LdStQTag))                                       memAccessAtCommit    <- mkEhr(?);
     Ehr#(TAdd#(2, aluExeNum), PPCVAddrCSRData)                      ppc_vaddr_csrData    <- mkEhr(?);
     Ehr#(TAdd#(1, fpuMulDivExeNum), Bit#(5))                        fflags               <- mkEhr(?);
     Reg#(Bool)                                                      will_dirty_fpu_state <- mkRegU;
     Ehr#(TAdd#(3, TAdd#(fpuMulDivExeNum, aluExeNum)), RobInstState) rob_inst_state       <- mkEhr(?);
-    Reg#(Maybe#(SpecTag))                                           spec_tag             <- mkRegU;
     Ehr#(3, SpecBits)                                               spec_bits            <- mkEhr(?);
 
     // wires to get stale (EHR port 0) values of PPC
@@ -147,9 +159,9 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Vector#(aluExeNum, Row_setExecuted_doFinishAlu) aluSetExe;
     for(Integer i = 0; i < valueof(aluExeNum); i = i+1) begin
         aluSetExe[i] = (interface Row_setExecuted_doFinishAlu;
-            method Action set(Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state);
-                // always update ROB state
-                rob_inst_state[state_finishAlu_port(i)] <= new_state; 
+            method Action set(Maybe#(Data) csrData, ControlFlow cf);
+                // inst is done
+                rob_inst_state[state_finishAlu_port(i)] <= Executed; 
                 // update PPC or csrData (vaddr is always useless for ALU results)
                 if(csrData matches tagged Valid .d) begin
                     ppc_vaddr_csrData[pvc_finishAlu_port(i)] <= CSRData (d);
@@ -165,9 +177,9 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Vector#(fpuMulDivExeNum, Row_setExecuted_doFinishFpuMulDiv) fpuMulDivExe;
     for(Integer i = 0; i < valueof(fpuMulDivExeNum); i = i+1) begin
         fpuMulDivExe[i] = (interface Row_setExecuted_doFinishFpuMulDiv;
-            method Action set(Bit#(5) new_fflags, RobInstState new_state);
-                // always update ROB state
-                rob_inst_state[state_finishFpuMulDiv_port(i)] <= new_state; 
+            method Action set(Bit#(5) new_fflags);
+                // inst is done
+                rob_inst_state[state_finishFpuMulDiv_port(i)] <= Executed; 
                 // update fflags
                 fflags[fflags_finishFpuMulDiv_port(i)] <= new_fflags;
             endmethod
@@ -181,15 +193,16 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
 
     interface setExecuted_doFinishFpuMulDiv = fpuMulDivExe;
 
-    method Action setExecuted_doFinishMem(Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
-        // always update ROB state
-        rob_inst_state[state_finishMem_port] <= new_state; 
-        // update trap: TODO the check on trap = invalid is redundant
-        if(cause matches tagged Valid .e &&& !isValid(trap[trap_finishMem_port])) begin
-            trap[trap_finishMem_port] <= Valid (Exception (e));
+    method Action setExecuted_doFinishMem(Addr vaddr, Maybe#(LdStQTag) access_at_commit, Bool non_mmio_st_done);
+        // update ROB state
+        if(non_mmio_st_done) begin
+            rob_inst_state[state_finishMem_port] <= Executed;
+            doAssert(iType == St, "must be St");
         end
         // update VAddr
         ppc_vaddr_csrData[pvc_finishMem_port] <= VAddr (vaddr);
+        // update access at commit
+        memAccessAtCommit[accessCom_finishMem_port] <= access_at_commit;
     endmethod
 
     method Action write_enq(ToReorderBuffer x);
@@ -198,12 +211,13 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         csr <= x.csr;
         claimed_phy_reg <= x.claimed_phy_reg;
         trap[trap_enq_port] <= x.trap;
+        ldKilled[ldKill_enq_port] <= x.ldKilled;
+        memAccessAtCommit[accessCom_enq_port] <= x.memAccessAtCommit;
         ppc_vaddr_csrData[pvc_enq_port] <= x.ppc_vaddr_csrData;
         fflags[fflags_enq_port] <= x.fflags;
         will_dirty_fpu_state <= x.will_dirty_fpu_state;
         rob_inst_state[state_enq_port] <= x.rob_inst_state;
         spec_bits[sb_enq_port] <= x.spec_bits;
-        spec_tag <= x.spec_tag;
     endmethod
 
     method ToReorderBuffer read_deq;
@@ -213,21 +227,24 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
             csr: csr,
             claimed_phy_reg: claimed_phy_reg,
             trap: trap[trap_deq_port],
+            ldKilled: ldKilled[ldKill_deq_port],
+            memAccessAtCommit: memAccessAtCommit[accessCom_deq_port],
             ppc_vaddr_csrData: ppc_vaddr_csrData[pvc_deq_port],
             fflags: fflags[fflags_deq_port],
             will_dirty_fpu_state: will_dirty_fpu_state,
             rob_inst_state: rob_inst_state[state_deq_port],
-            spec_bits: spec_bits[sb_deq_port],
-            spec_tag: spec_tag
+            spec_bits: spec_bits[sb_deq_port]
         };
     endmethod
 
-    method Action setExecuted_deqLSQ(Maybe#(Exception) cause, RobInstState new_state);
-        rob_inst_state[state_deqLSQ_port] <= new_state;
-        // update trap: TODO the check on trap = invalid is redundant
-        if(cause matches tagged Valid .e &&& !isValid(trap[trap_deqLSQ_port])) begin
-            trap[trap_deqLSQ_port] <= Valid (Exception (e));
-        end
+    method Action setExecuted_deqLSQ(Maybe#(Exception) cause, Bool ld_killed);
+        // inst becomes Executed
+        rob_inst_state[state_deqLSQ_port] <= Executed;
+        // record trap
+        doAssert(!isValid(trap[trap_deqLSQ_port]), "cannot have trap");
+        trap[trap_deqLSQ_port] <= Valid (Exception (e));
+        // record ld misspeculation
+        ldKilled[ldKill_deqLSQ_port] <= ld_killed;
     endmethod
 
     method Action setLdSpecBit(SpecTag ldSpecTag);
@@ -285,11 +302,11 @@ endinterface
 // not raise false conflicts between the superscalar enq/deq actions
 
 interface ROB_setExecuted_doFinishAlu;
-    method Action set(InstTag x, Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state);
+    method Action set(InstTag x, Maybe#(Data) csrData, ControlFlow cf);
 endinterface
 
 interface ROB_setExecuted_doFinishFpuMulDiv;
-    method Action set(InstTag x, Bit#(5) fflags, RobInstState new_state);
+    method Action set(InstTag x, Bit#(5) fflags);
 endinterface
 
 interface ROB_getOrigPC;
@@ -307,15 +324,12 @@ interface SupReorderBuffer#(numeric type aluExeNum, numeric type fpuMulDivExeNum
     interface Vector#(SupSize, ROB_DeqPort) deqPort;
 
     // deqLSQ rules set ROB state
-    method Action setExecuted_deqLSQ(InstTag x, Maybe#(Exception) cause, RobInstState new_state);
-    // doFinishXXX rules set ROB state
+    method Action setExecuted_deqLSQ(InstTag x, Maybe#(Exception) cause, Bool ld_killed);
+    // doFinish rules set ROB state in ALU and FPU/MUL/DIV
     interface Vector#(aluExeNum, ROB_setExecuted_doFinishAlu) setExecuted_doFinishAlu;
     interface Vector#(fpuMulDivExeNum, ROB_setExecuted_doFinishFpuMulDiv) setExecuted_doFinishFpuMulDiv;
-    method Action setExecuted_doFinishMem(InstTag x, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state);
-    // for Ld in doFinishMem without exception, set this Ld to depend on itself's spec tag
-    // this won't be called simultaneously with correct or wrong specution in one rule
-    // (spec tag of this Ld is kept)
-    method Action setLdSpecBit(InstTag x, SpecTag ldSpecTag);
+    // doFinishMem, after addr translation
+    method Action setExecuted_doFinishMem(InstTag x, Addr vaddr, Maybe#(LdStQTag) access_at_commit, Bool non_mmio_st_done);
 
     // get original PC/PPC before execution, EHR port 0 will suffice
     interface Vector#(TAdd#(1, aluExeNum), ROB_getOrigPC) getOrigPC;
@@ -331,6 +345,8 @@ interface SupReorderBuffer#(numeric type aluExeNum, numeric type fpuMulDivExeNum
 endinterface
 
 typedef struct {
+    Bool killAll;
+    // below are only meaningful when killAll is False
     SpecTag specTag;
     InstTag killInstTag;
 } ROBWrongSpecInput deriving(Bits, Eq, FShow);
@@ -351,7 +367,7 @@ module mkSupReorderBuffer#(
     // doCommit rule: deq < wrongSpec (overwrite deq in doCommit) < doRenaming rule: enq
     Integer valid_deq_port = 0;
     Integer valid_wrongSpec_port = 1;
-    Integer valid_enq_port = 2;
+    Integer valid_enq_port = 1;
 
     // doFinishXXX, doDeqLSQ_XXX: setExecute_XXX, correctSpeculation
     // these are handled in mkReorderBufferRowEhr
@@ -361,17 +377,11 @@ module mkSupReorderBuffer#(
 
     // SupSize number of FIFOs
     Vector#(SupSize, Vector#(SingleScalarSize, ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum))) row <- replicateM(replicateM(mkRobRow));
-    Vector#(SupSize, Vector#(SingleScalarSize, Ehr#(3, Bool))) valid <- replicateM(replicateM(mkEhr(False)));
+    Vector#(SupSize, Vector#(SingleScalarSize, Ehr#(2, Bool))) valid <- replicateM(replicateM(mkEhr(False)));
     Vector#(SupSize, Reg#(SingleScalarPtr)) enqP <- replicateM(mkReg(0));
-`ifdef BSIM
     Vector#(SupSize, Ehr#(2, SingleScalarPtr)) deqP_ehr <- replicateM(mkEhr(0));
-    Vector#(SupSize, Reg#(SingleScalarPtr)) deqP;
-    for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
-        deqP[i] = deqP_ehr[i][0];
-    end
-`else
-    Vector#(SupSize, Reg#(SingleScalarPtr)) deqP <- replicateM(mkReg(0));
-`endif
+    let deqP = getVEhrPort(deqP_ehr, 0);
+    let deqP_wrongSpec = getVEhrPort(deqP_ehr, 1); // for overwrite deqP when killing all
 
     // enq/deq port will operate on above FIFOs in a rotating manner
     // We distinguish between enq/deq port and FIFO way
@@ -382,19 +392,21 @@ module mkSupReorderBuffer#(
 
     // firstEnq/DeqWay: which FIFO of row, valid, etc. that enq/deq port 0 should use
     Reg#(SupWaySel) firstEnqWay <- mkReg(0);
-    Reg#(SupWaySel) firstDeqWay <- mkReg(0);
+    Ehr#(2, SupWaySel) firstDeqWay_ehr <- mkReg(0);
+    Reg#(SupWaySel) firstDeqWay = firstDeqWay_ehr[0];
+    Reg#(SupWaySel) firstDeqWay_wrongSpec = firstDeqWay_ehr[1];
 
     // time of inst: enq & deq ptr as if ROB is just a FIFO of size 2^log(NumInstTag)
     Reg#(InstTime) enqTime <- mkReg(0);
-    Reg#(InstTime) deqTime <- mkReg(0);
+    Ehr#(2, InstTime) deqTime_ehr <- mkEhr(0);
+    Reg#(InstTime) deqTime = deqTime_ehr[0];
+    Reg#(InstTime) deqTime_wrongSpec = deqTime_ehr[1]; // for overwrite deqTime when killing all
 
     // wires for recording actions on enq & deq ports
     Vector#(SupSize, RWire#(ToReorderBuffer)) enqEn <- replicateM(mkRWire);
     Vector#(SupSize, PulseWire) deqEn <- replicateM(mkPulseWire);
     // wire for recording action of wrongSpec
     RWire#(ROBWrongSpecInput) wrongSpecEn <- mkRWire;
-    // next val for updating enq regs in case wrongSpec happens
-    RWire#(ROBWrongSpecEnqUpdate) wrongSpecEnqUpdate <- mkRWire;
 
     // ordering regs: deq sequence < setExecuted_XXX is maintained by each row
     // BUT setExecuted_XXX < enq, deq < enq, and deq < wrongSpec NEEDs explicit
@@ -420,9 +432,8 @@ module mkSupReorderBuffer#(
     // XXX above 4 functions require SupSize to be power of 2
 
     // do deq & update firstDeqWay
-    // XXX also process wrongSpec: clear valid bits & compute update for enq regs
     (* fire_when_enabled, no_implicit_conditions *)
-    rule canon_deq_wrongSpec;
+    rule canon_deq;
         // -- apply effects of deq --
         for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
             // for FIFO way i (looping for FIFO way should save area than looping for deq port)
@@ -456,9 +467,28 @@ module mkSupReorderBuffer#(
             // update deq day
             deqTime <= deqTime + fromInteger(valueof(SupSize));
         end
+    endrule
 
-        // -- process wrongSpec --
-        if(wrongSpecEn.wget matches tagged Valid .x) begin
+    // process wrongSpec: clear valid bits & compute update for enq regs
+    rule canon_wrongSpec(wrongSpecEn.wget matches tagged Valid .x);
+        if(x.killAll) begin
+            // kill everything
+            for(Integer w = 0; w < valueof(SupSize); w = w+1) begin
+                for(Integer i = 0; i < valueof(SingleScalarSize); i = i+1) begin
+                    valid[w][i][valid_wrongSpec_port] <= False;
+                end
+            end
+            // reset all ptrs to 0
+            for(Integer w = 0; w < valueof(SupSize); w = w+1) begin
+                enqP[w] <= 0;
+                deqP_wrongSpec[w] <= 0;
+            end
+            firstEnqWay <= 0;
+            firstDeqWay_wrongSpec <= 0;
+            enqTime <= 0;
+            deqTime_wrongSpec <= 0;
+        end
+        else begin
             SpecTag specTag = x.specTag;
             InstTag killInstTag = x.killInstTag;
 
@@ -471,7 +501,7 @@ module mkSupReorderBuffer#(
                 end
             end
 
-            // move enqP to be right after OR just the inst that initiates the kill
+            // move enqP to be right after (or just) the inst that initiates the kill
             // To do this, we need to figure out the number of inst killed in each FIFO way
             // Notice that each FIFO way is enq in round-robin order
             // Since we know the number of killed inst in the FIFO that contains the kill-initiating inst,
@@ -502,65 +532,59 @@ module mkSupReorderBuffer#(
                     return ptr - truncate(len);
                 end
             endfunction
-            // split into two cases: whether the kill-initialting entry is killed by itself
-            // (note: a dequeued entry which calles incorrecSpec is NOT killing itself)
-            SupWaySel firstEnqWayNext;
+            // the kill-initiating inst should not kill itself
+            // (in fact it must be a branch, Ld mis-speculation is handled by kill all at commit stage)
+            // so the ROB entry entry right after the kill-initiating entry should be the enq position
+            // it must be in the way right after the way that contians the kill-initiating entry
+            SupWaySel firstEnqWayNext = killInstTag.way + 1;
+            InstTime enqTimeNext = killInstTag.t + 1;
             Vector#(SupSize, SingleScalarPtr) enqPNext;
             Vector#(SupSize, SingleScalarLen) distToEnqP; // amount to decr enqP to get enqPNext, record for debugging
+            for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
+                // consider virtual way of FIFO i, and get the distance that enqP should decr
+                // virtual way >  kill virtual way: enqP decr by killDistToEnqP
+                // virtual way <= kill virtual way: enqP decr by killDistToEnqP - 1
+                SupWaySel virtualWay = toVirtualWay(fromInteger(i));
+                distToEnqP[i] = virtualWay > virtualKillWay ? killDistToEnqP : killDistToEnqP - 1;
+                enqPNext[i] = decrPtr(enqP[i], distToEnqP[i]);
+            end
+
+            // state update
+            firstEnqWay <= firstEnqWayNext;
+            enqTime <= enqTimeNext;
+            for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
+                enqP[i] <= enqPNext[i];
+            end
+
+            // check kill-initiating inst not killing itself
             Bool killSelf = valid[killInstTag.way][killInstTag.ptr][valid_wrongSpec_port] &&
                             row[killInstTag.way][killInstTag.ptr].dependsOn_wrongSpec(specTag);
-            if(killSelf) begin
-                // the kill-initiating inst also kills itself (e.g. a Ld)
-                // so the kill-initiating entry becomes the next enq position
-                // first enq way will become the way that contains the kill-initialting entry
-                firstEnqWayNext = killInstTag.way;
-                // get the enq pointers for all FIFOs
-                for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
-                    // consider virtual way of FIFO i, and get the distance that enqP should decr
-                    // virtual way >= kill virtual way: enqP decr by killDistToEnqP
-                    // virtual way <  kill virtual way: enqP decr by killDistToEnqP - 1
-                    SupWaySel virtualWay = toVirtualWay(fromInteger(i));
-                    distToEnqP[i] = virtualWay >= virtualKillWay ? killDistToEnqP : killDistToEnqP - 1;
-                    enqPNext[i] = decrPtr(enqP[i], distToEnqP[i]);
-                end
-            end
-            else begin
-                // the kill-initiating inst does not kill itself
-                // so the ROB entry entry right after the kill-initiating entry should be the enq position
-                // it must be in the way right after the way that contians the kill-initiating entry
-                firstEnqWayNext = killInstTag.way + 1;
-                // get the enq pointers for all FIFOs
-                for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
-                    // consider virtual way of FIFO i, and get the distance that enqP should decr
-                    // virtual way >  kill virtual way: enqP decr by killDistToEnqP
-                    // virtual way <= kill virtual way: enqP decr by killDistToEnqP - 1
-                    SupWaySel virtualWay = toVirtualWay(fromInteger(i));
-                    distToEnqP[i] = virtualWay > virtualKillWay ? killDistToEnqP : killDistToEnqP - 1;
-                    enqPNext[i] = decrPtr(enqP[i], distToEnqP[i]);
-                end
-            end
+            doAssert(!killSelf, "cannot kill itself");
+            //if(killSelf) begin
+            //    // the kill-initiating inst also kills itself (e.g. a Ld)
+            //    // so the kill-initiating entry becomes the next enq position
+            //    // first enq way will become the way that contains the kill-initialting entry
+            //    firstEnqWayNext = killInstTag.way;
+            //    enqTimeNext = killInstTag.t;
+            //    // get the enq pointers for all FIFOs
+            //    for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
+            //        // consider virtual way of FIFO i, and get the distance that enqP should decr
+            //        // virtual way >= kill virtual way: enqP decr by killDistToEnqP
+            //        // virtual way <  kill virtual way: enqP decr by killDistToEnqP - 1
+            //        SupWaySel virtualWay = toVirtualWay(fromInteger(i));
+            //        distToEnqP[i] = virtualWay >= virtualKillWay ? killDistToEnqP : killDistToEnqP - 1;
+            //        enqPNext[i] = decrPtr(enqP[i], distToEnqP[i]);
+            //    end
+            //end
 
-            // move enq day to be right after OR just the inst that initiates the kill
-            InstTime enqTimeNext;
-            if(killSelf) begin
-                // kill-initiating entry kills itself, so enqAge becomes the age of killing inst
-                enqTimeNext = killInstTag.t;
+            // wrong spec is conflicting with enq, so enqEn must be all false
+            for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
+                doAssert(!isValid(enqEn[i].wget), "when wrongSpec, enq cannot fire");
             end
-            else begin
-                // kill-initiating entry does not kill itself, so enqAge becomes
-                enqTimeNext = killInstTag.t + 1;
-            end
-
-            // record state update
-            wrongSpecEnqUpdate.wset(ROBWrongSpecEnqUpdate {
-                firstEnqWay: firstEnqWayNext,
-                enqP: enqPNext,
-                enqTime: enqTimeNext
-            });
 
 `ifdef BSIM
             // sanity check in simulation
-            Vector#(SupSize, SingleScalarPtr) deqPVec = readVEhr(1, deqP_ehr);
+            Vector#(SupSize, SingleScalarPtr) deqPVec = readVReg(deqP_wrongSpec);
             Vector#(SupSize, Vector#(SingleScalarSize, Bool)) depVec;
             Vector#(SupSize, Vector#(SingleScalarSize, Bool)) validVec;
             for(Integer w = 0; w < valueof(SupSize); w = w+1) begin
@@ -614,59 +638,43 @@ module mkSupReorderBuffer#(
         end
     endrule
 
-    // apply enq/wrongSpec effects & update firstEnqWay
-    // This rule cannot be merged with canon_deq_wrongSpec,
-    // because many other methods access ROB row contents are sandwiched between
-    // canon_deq_wrongSpec and this rule
+    // Apply enq effects. This rule cannot be merged with canon_deq, because
+    // many other methods access ROB row contents are sandwiched between
+    // canon_deq and this rule.
     (* fire_when_enabled, no_implicit_conditions *)
-    rule canon_enq;
-        if(wrongSpecEnqUpdate.wget matches tagged Valid .upd) begin
-            // wrong spec is conflicting with enq, so enqEn must be all false
-            for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
-                doAssert(!isValid(enqEn[i].wget), "when wrongSpec, enq cannot fire");
+    rule canon_enq(!isValid(wrongSpecEn.wget));
+        for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
+            // for FIFO way i (looping for FIFO way should save area than looping for enq port)
+            SupWaySel enqPort = getEnqPort(fromInteger(i));
+            doAssert(getEnqFifoWay(enqPort) == fromInteger(i), "enq port matches FIFO way");
+            if(enqEn[enqPort].wget matches tagged Valid .x) begin
+                doAssert(!valid[i][enqP[i]][valid_enq_port], "enq entry must be invalid");
+                // update row, set valid, move enqP
+                enqP[i] <= getNextPtr(enqP[i]);
+                row[i][enqP[i]].write_enq(x);
+                valid[i][enqP[i]][valid_enq_port] <= True;
             end
-            // do update (computation is done in incorrectSpeculation method)
-            firstEnqWay <= upd.firstEnqWay;
+        end
+        // update firstEnqWay: find the first enq port that is not enabled
+        Vector#(SupSize, SupWaySel) idxVec = genWith(fromInteger);
+        function Bool notEnq(SupWaySel i);
+            return !isValid(enqEn[i].wget);
+        endfunction
+        if(find(notEnq, idxVec) matches tagged Valid .idx) begin
+            // idx is the first port that does not enq
+            // update firstWay (XXX we require SupSize to be power of 2)
+            firstEnqWay <= firstEnqWay + idx;
+            // update enq day
+            enqTime <= enqTime + zeroExtend(idx);
+            // sanity check: enq ports[idx..max] are not enabled
             for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
-                enqP[i] <= upd.enqP[i];
+                doAssert((fromInteger(i) < idx) == isValid(enqEn[i].wget), "Enq must be consecutive");
             end
-            enqTime <= upd.enqTime;
         end
         else begin
-            // no wrong spec, apply effects of enq
-            for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
-                // for FIFO way i (looping for FIFO way should save area than looping for enq port)
-                SupWaySel enqPort = getEnqPort(fromInteger(i));
-                doAssert(getEnqFifoWay(enqPort) == fromInteger(i), "enq port matches FIFO way");
-                if(enqEn[enqPort].wget matches tagged Valid .x) begin
-                    doAssert(!valid[i][enqP[i]][valid_enq_port], "enq entry must be invalid");
-                    // update row, set valid, move enqP
-                    enqP[i] <= getNextPtr(enqP[i]);
-                    row[i][enqP[i]].write_enq(x);
-                    valid[i][enqP[i]][valid_enq_port] <= True;
-                end
-            end
-            // update firstEnqWay: find the first enq port that is not enabled
-            Vector#(SupSize, SupWaySel) idxVec = genWith(fromInteger);
-            function Bool notEnq(SupWaySel i);
-                return !isValid(enqEn[i].wget);
-            endfunction
-            if(find(notEnq, idxVec) matches tagged Valid .idx) begin
-                // idx is the first port that does not enq
-                // update firstWay (XXX we require SupSize to be power of 2)
-                firstEnqWay <= firstEnqWay + idx;
-                // update enq day
-                enqTime <= enqTime + zeroExtend(idx);
-                // sanity check: enq ports[idx..max] are not enabled
-                for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
-                    doAssert((fromInteger(i) < idx) == isValid(enqEn[i].wget), "Enq must be consecutive");
-                end
-            end
-            else begin
-                // all ports enq, so firstWay keeps the same
-                // update enq day
-                enqTime <= enqTime + fromInteger(valueof(SupSize));
-            end
+            // all ports enq, so firstWay keeps the same
+            // update enq day
+            enqTime <= enqTime + fromInteger(valueof(SupSize));
         end
     endrule
 
@@ -790,11 +798,11 @@ module mkSupReorderBuffer#(
     for(Integer i = 0; i < valueof(aluExeNum); i = i+1) begin
         aluSetExeIfc[i] = (interface ROB_setExecuted_doFinishAlu;
             method Action set(
-                InstTag x, Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state
+                InstTag x, Maybe#(Data) csrData, ControlFlow cf
             ) if(
                 all(id, readVReg(setExeAlu_SB_enq)) // ordering: < enq
             );
-                row[x.way][x.ptr].setExecuted_doFinishAlu[i].set(csrData, cf, new_state);
+                row[x.way][x.ptr].setExecuted_doFinishAlu[i].set(csrData, cf);
             endmethod
         endinterface);
     end
@@ -803,11 +811,11 @@ module mkSupReorderBuffer#(
     for(Integer i = 0; i < valueof(fpuMulDivExeNum); i = i+1) begin
         fpuMulDivSetExeIfc[i] = (interface ROB_setExecuted_doFinishFpuMulDiv;
             method Action set(
-                InstTag x, Bit#(5) fflags, RobInstState new_state
+                InstTag x, Bit#(5) fflags
             ) if(
                 all(id, readVReg(setExeFpuMulDiv_SB_enq)) // ordering: < enq
             );
-                row[x.way][x.ptr].setExecuted_doFinishFpuMulDiv[i].set(fflags, new_state);
+                row[x.way][x.ptr].setExecuted_doFinishFpuMulDiv[i].set(fflags);
             endmethod
         endinterface);
     end
@@ -850,10 +858,10 @@ module mkSupReorderBuffer#(
         return all(isFullFunc, idxVec);
     endmethod
 
-    method Action setExecuted_deqLSQ(InstTag x, Maybe#(Exception) cause, RobInstState new_state) if(
+    method Action setExecuted_deqLSQ(InstTag x, Maybe#(Exception) cause, Bool ld_killed) if(
         all(id, readVReg(setExeLSQ_SB_enq)) // ordering: < enq
     );
-        row[x.way][x.ptr].setExecuted_deqLSQ(cause, new_state);
+        row[x.way][x.ptr].setExecuted_deqLSQ(cause, ld_killed);
     endmethod
 
     interface setExecuted_doFinishAlu = aluSetExeIfc;
@@ -861,17 +869,11 @@ module mkSupReorderBuffer#(
     interface setExecuted_doFinishFpuMulDiv = fpuMulDivSetExeIfc;
 
     method Action setExecuted_doFinishMem(
-        InstTag x, Addr vaddr, Maybe#(Exception) cause, RobInstState new_state
+        InstTag x, Addr vaddr, Maybe#(LdStQTag) access_at_commit, Bool non_mmio_st_done
     ) if(
         all(id, readVReg(setExeMem_SB_enq)) // ordering: < enq
     );
-        row[x.way][x.ptr].setExecuted_doFinishMem(vaddr, cause, new_state);
-    endmethod
-
-    method Action setLdSpecBit(InstTag x, SpecTag ldSpecTag) if(
-        all(id, readVReg(setLdSB_SB_enq)) // ordering: < enq
-    );
-        row[x.way][x.ptr].setLdSpecBit(ldSpecTag);
+        row[x.way][x.ptr].setExecuted_doFinishMem(vaddr, access_at_commit, non_mmio_st_done);
     endmethod
 
     interface getOrigPC = getOrigPCIfc;
@@ -888,9 +890,10 @@ module mkSupReorderBuffer#(
             end
         endmethod
 
-        method Action incorrectSpeculation(SpecTag specTag, InstTag killInstTag);
+        method Action incorrectSpeculation(Bool killAll, SpecTag specTag, InstTag killInstTag);
             // record wrongSpec action
             wrongSpecEn.wset(ROBWrongSpecInput {
+                killAll: killAll,
                 specTag: specTag,
                 killInstTag: killInstTag
             });

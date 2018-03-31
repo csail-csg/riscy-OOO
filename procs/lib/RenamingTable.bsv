@@ -270,11 +270,12 @@ module mkRegRenamingTable(RegRenamingTable) provisos (
 
         // do wrongSpec OR claim free phy reg
         if(wrongSpecEn.wget matches tagged Valid .x) begin
+            Bool killAll = x.killAll;
             SpecTag specTag = x.specTag;
             Vector#(size, indexT) idxVec = genWith(fromInteger);
             // do wrongSpec, first kill entries (make in-flight renaming to free phy reg)
             function Bool needKill(indexT i);
-                return spec_bits[i][sb_wrongSpec_port][specTag] == 1;
+                return killAll || spec_bits[i][sb_wrongSpec_port][specTag] == 1;
             endfunction
             Vector#(size, Bool) isKill = map(needKill, idxVec);
             function Action kill(indexT i);
@@ -475,9 +476,10 @@ module mkRegRenamingTable(RegRenamingTable) provisos (
     interface commit = commitIfc;
 
     interface SpeculationUpdate specUpdate;
-        method Action incorrectSpeculation(SpecTag specTag);
+        method Action incorrectSpeculation(Bool killAll, SpecTag specTag);
             // record wrongSpec
             wrongSpecEn.wset(RTWrongSpec {
+                killAll: killAll,
                 specTag: specTag
             });
             // conflict with rename

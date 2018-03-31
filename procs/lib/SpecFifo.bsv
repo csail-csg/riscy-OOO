@@ -180,12 +180,12 @@ module mkSpecFifo#(
             joinActions(map(correctSpec, idxVec));
         endmethod
 
-        method Action incorrectSpeculation(SpecTag specTag);
+        method Action incorrectSpeculation(Bool kill_all, SpecTag specTag);
             // clear entries
             function Action incorrectSpec(Integer i);
             action
                 SpecBits sb = specBits[i][sched.sbWrongSpecPort];
-                if(sb[specTag] == 1) begin
+                if(kill_all || sb[specTag] == 1) begin
                     valid[i][sched.validWrongSpecPort] <= False; // ordered after deq
                 end
             endaction
