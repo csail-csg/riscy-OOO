@@ -489,7 +489,6 @@ module mkFetchStage(FetchStage);
     rule doTrainNAP( isValid(napTrainByExe.wget));
         // give priority to train data from exe
         TrainNAP train = fromMaybe(?, napTrainByExe.wget);
-        napTrainByDec.deq();
         nextAddrPred.update(train.pc, train.nextPc, train.nextPc != train.pc + 4);
     endrule
     rule doTrainNAPDec;
