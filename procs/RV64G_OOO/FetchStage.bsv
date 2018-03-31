@@ -484,14 +484,20 @@ module mkFetchStage(FetchStage);
         end
     endrule
 
-    // train next addr pred
+        // train next addr pred
     (* fire_when_enabled*)
     rule doTrainNAP( isValid(napTrainByExe.wget));
         // give priority to train data from exe
-        TrainNAP train = fromMaybe(napTrainByDec.first(), napTrainByExe.wget);
+        TrainNAP train = fromMaybe(?, napTrainByExe.wget);
         napTrainByDec.deq();
         nextAddrPred.update(train.pc, train.nextPc, train.nextPc != train.pc + 4);
     endrule
+    rule doTrainNAPDec;
+        TrainNAP train = napTrainByDec.first();
+        napTrainByDec.deq();
+        nextAddrPred.update(train.pc, train.nextPc, train.nextPc != train.pc + 4);
+    endrule
+
 
     interface Vector pipelines = out_fifo.deqS;
     interface iTlbIfc = iTlb;
