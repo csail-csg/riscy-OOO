@@ -206,9 +206,9 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     // This is a rough fix for a bug with the FPU CSR registers.
     // i.e. stall when doReplay(inst) is true
 
-    function Action incrEpochWithoutRedirect;
+    function Action incrEpochStallFetch;
     action
-        epochManager.incrementEpochWithoutRedirect;
+        epochManager.incrementEpoch;
         // stall fetch until redirect
         fetchStage.setWaitRedirect;
     endaction
@@ -237,7 +237,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
         epochManager.updatePrevEpoch[0].update(main_epoch);
         // Flip epoch without redirecting
         // This avoids doing incorrect work
-        incrEpochWithoutRedirect;
+        incrEpochStallFetch;
         // just place it in the reorder buffer
         let y = ToReorderBuffer{pc: pc,
                                 iType: dInst.iType,
@@ -250,13 +250,12 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 ////////
                                 will_dirty_fpu_state: False,
                                 rob_inst_state: Executed,
+                                lsqTag: ?,
+                                ldKilled: False,
+                                memAccessAtCommit: False,
+                                nonMMIOStDone: False,
+                                epochIncremented: True, // we have incremented epoch
                                 spec_bits: specTagManager.currentSpecBits,
-                                spec_tag: Invalid // epoch incremeneted, no need for spec tag 
-`ifdef VERIFICATION_PACKETS
-                                , inst: inst
-                                , arch_reg_dst: Invalid
-                                , result_data: 0 // default val of FullResult
-`endif
                                };
         rob.enqPort[0].enq(y);
         // record if we issue an interrupt
@@ -384,13 +383,6 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                     // without redirecting, we will not need to get a
                     // spec tag because no speculation will be done.
                     new_speculation = False;
-                end else if (dInst.execFunc matches tagged Mem .mem) begin
-                    // This instruction can cause a page fault or misaligned
-                    // address fault, so lets claim a checkpoint for this
-                    // instruction that doesn't include any register renaming
-                    // this instruction may have performed.
-                    new_speculation = True;
-                    speculative_renaming = True;
                 end else if (dInst.execFunc matches tagged Br .br) begin
                     // This instruction can cause a redirection due to branch
                     // misprediction. Lets claim a checkpoint for this instruction.
@@ -427,6 +419,9 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                     // get ROB tag
                     let inst_tag = rob.enqPort[i].getEnqInstTag;
 
+                    // LSQ tag
+                    LdStQTag lsq_tag = ?;
+
                     // check execution pipelines availability
                     // this determines whether this inst can finally be processed
                     // so we will directly take actions on exe pipelines
@@ -440,7 +435,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                         tagged Fpu .fpu:        to_FpuMulDiv = True;
                         tagged Mem .mem:        to_mem = True;
                         default:
-                            // Don't enqueue!
+                            // no need for execution, directly become Executed
                             noAction;
                     endcase
 
@@ -481,6 +476,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                             });
                             doAssert(ppc == pc + 4, "FpuMulDiv next PC is not PC+4");
                             doAssert(!isValid(dInst.csr), "FpuMulDiv never explicitly read/write CSR");
+                            doAssert(!isValid(spec_tag), "should not have spec tag");
                         end
                         else begin
                             // cannot process this inst, stop
@@ -495,6 +491,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 lsqEnqTag matches tagged Valid .lsqTag) begin
                                 // can process, send to Mem rs and LSQ
                                 memExeUsed = True; // mark resource used
+                                lsq_tag = lsqTag; // record LSQ tag
                                 reservationStationMem.enq(ToReservationStation {
                                     data: MemRSData {
                                         mem_func: mem_inst.mem_func,
@@ -510,18 +507,13 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 doAssert(ppc == pc + 4, "Mem next PC is not PC+4");
                                 doAssert(!isValid(dInst.csr), "Mem never explicitly read/write CSR");
                                 doAssert(isValid(dInst.imm), "Mem needs imm for virtual addr");
-                                doAssert(isValid(spec_tag), "Mem needs spec tag for addr translate exception");
+                                doAssert(!isValid(spec_tag), "should not have spec tag");
                                 // put in ldstq
-                                // XXX mark this row with specBits that contains this instructions specTag
-                                let ldstq_spec_bits = spec_bits;
-                                if (spec_tag matches tagged Valid .valid_spec_tag) begin
-                                    ldstq_spec_bits = ldstq_spec_bits | (1 << valid_spec_tag);
-                                end
                                 if(isLdQ) begin
-                                    lsq.enqLd(inst_tag, mem_inst, phy_regs.dst, ldstq_spec_bits);
+                                    lsq.enqLd(inst_tag, mem_inst, phy_regs.dst, spec_bits);
                                 end
                                 else begin
-                                    lsq.enqSt(inst_tag, mem_inst, phy_regs.dst, ldstq_spec_bits);
+                                    lsq.enqSt(inst_tag, mem_inst, phy_regs.dst, spec_bits);
                                 end
                             end
                             else begin
@@ -547,7 +539,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                         // since this is the first inst, no need to ensure epoch can be incr
                         if (needReplay) begin
                             when(rob.isEmpty, noAction);
-                            incrEpochWithoutRedirect;
+                            incrEpochStallFetch;
                             // record if we issue an CSR inst
                             if(dInst.iType == Csr) begin
                                 inIfc.issueCsrInstOrInterrupt;
@@ -606,7 +598,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                         if (arch_regs.dst matches tagged Valid( tagged Fpu .r )) begin
                             will_dirty_fpu_state = True;
                         end
-                        RobInstState rob_inst_state = (to_exec || to_mem || to_FpuMulDiv) ? InRStation : Executed;
+                        RobInstState rob_inst_state = (to_exec || to_mem || to_FpuMulDiv) ? NotDone : Executed;
 
                         let y = ToReorderBuffer{pc: pc,
                                                 iType: dInst.iType,
@@ -619,13 +611,12 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                                 ////////
                                                 will_dirty_fpu_state: will_dirty_fpu_state,
                                                 rob_inst_state: rob_inst_state,
-                                                spec_bits: spec_bits,
-                                                spec_tag: spec_tag
-`ifdef VERIFICATION_PACKETS
-                                                , inst: inst
-                                                , arch_reg_dst: arch_regs.dst
-                                                , result_data: 0 // default val of FullResult
-`endif
+                                                lsqTag: lsq_tag,
+                                                ldKilled: False,
+                                                memAccessAtCommit: False,
+                                                nonMMIOStDone: False,
+                                                epochIncremented: needReplay,
+                                                spec_bits: spec_bits
                                                };
                         rob.enqPort[i].enq(y);
 

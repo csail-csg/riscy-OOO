@@ -113,6 +113,15 @@ module mkAluExeToFinFifo(AluExeToFinFifo);
     return m;
 endmodule
 
+typedef struct {
+    Addr pc;
+    Addr nextPc;
+    IType iType;
+    Bool taken;
+    DirPredTrainInfo dpTrain;
+    Bool mispred;
+} FetchTrainBP deriving(Bits, Eq, FShow);
+
 interface AluExeInput;
     // conservative scoreboard check in reg read stage
     method RegsReady sbCons_lazyLookup(PhyRegs r);
@@ -126,10 +135,7 @@ interface AluExeInput;
     method Addr rob_getPredPC(InstTag t);
     method Action rob_setExecuted(InstTag t, Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state);
     // Fetch stage
-    method Action fetch_train_predictors(
-        Addr pc, Addr next_pc, IType iType, Bool taken,
-        DirPredTrainInfo dpTrain, Bool mispred
-    );
+    method Action fetch_train_predictors(FetchTrainBP train);
 
     // global broadcast methods
     // set aggressive sb & wake up inst in RS
@@ -139,7 +145,7 @@ interface AluExeInput;
     // write reg file & set conservative sb
     method Action writeRegFile(PhyRIndx dst, Data data);
     // redirect
-    method Action redirect_action(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag);
+    method Action redirect(Addr new_pc, SpecTag spec_tag, InstTag inst_tag);
     // spec update
     method Action correctSpec(SpecTag t);
 
@@ -307,13 +313,17 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
         if (x.controlFlow.mispredict) (* nosplit *) begin
             // wrong branch predictin, we must have spec tag
             doAssert(isValid(x.spec_tag), "mispredicted branch must have spec tag");
-            inIfc.redirect_action(x.controlFlow.nextPc, x.spec_tag, x.tag);
+            inIfc.redirect(x.controlFlow.nextPc, validValue(x.spec_tag), x.tag);
             // must be a branch, train branch predictor
             doAssert(x.iType == Jr || x.iType == Br, "only jr and br can mispredict");
-            inIfc.fetch_train_predictors(
-                x.controlFlow.pc, x.controlFlow.nextPc, x.iType,
-                x.controlFlow.taken, x.dpTrain, True
-            );
+            inIfc.fetch_train_predictors(FetchTrainBP {
+                pc: x.controlFlow.pc
+                nextPc: x.controlFlow.nextPc,
+                iType: x.iType,
+                talken: x.controlFlow.taken,
+                dpTrain: x.dpTrain,
+                mispred: True
+            });
 `ifdef PERF_COUNT
             // performance counter
             if(inIfc.doStats) begin
@@ -331,14 +341,15 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
                 inIfc.correctSpec(valid_spec_tag);
             end
             // train branch predictor if needed 
-            // since we can only do 1 training in a cycle, split the rule
-            // XXX not training JAL, reduce chance of conflicts
-            (* split *)
-            if(x.iType == Jr || x.iType == Br) (* nosplit *) begin
-                inIfc.fetch_train_predictors(
-                    x.controlFlow.pc, x.controlFlow.nextPc, x.iType,
-                    x.controlFlow.taken, x.dpTrain, False
-                );
+            if(x.iType == Jr || x.iType == Br) begin
+                inIfc.fetch_train_predictors(FetchTrainBP {
+                    pc: x.controlFlow.pc,
+                    nextPc: x.controlFlow.nextPc,
+                    iType: x.iType,
+                    taken: x.controlFlow.taken,
+                    dpTrain: x.dpTrain,
+                    mispred: False
+                });
             end
         end
     endrule

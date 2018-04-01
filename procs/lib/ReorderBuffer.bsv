@@ -50,14 +50,22 @@ typedef struct {
     Maybe#(CSR)      csr;
     Bool             claimed_phy_reg; // whether we need to commmit renaming
     Maybe#(Trap)     trap;
-    Bool             ldKilled; // mispeculative load
     PPCVAddrCSRData  ppc_vaddr_csrData;
     Bit#(5)          fflags;
     Bool             will_dirty_fpu_state; // True means 2'b11 will be written to FS
     RobInstState     rob_inst_state; // was executed (i.e. can commit)
+    LdStQTag         lsqTag; // tag for LSQ
+    Bool             ldKilled; // mispeculative load
     // some mem access is only performed at commit time, so ROB should notify
     // LSQ that the instrution arrives at commit stage and access can start
-    Maybe#(LdStQTag) memAccessAtCommit;
+    Bool memAccessAtCommit;
+    // a successfully translated non-MMIO store needs ROB to notify the commit
+    // from ROB, so that it can be dequeud from SQ
+    Bool nonMMIOStDone;
+    // We detect some traps at rename stage, and increment epoch to kill
+    // everything from fetch. So we should not increment epoch again when
+    // committing the trap. Therefore we record the epoch increment at rename.
+    Bool epochIncremented;
 
     // speculation
     SpecBits         spec_bits;
@@ -89,7 +97,7 @@ interface ReorderBufferRowEhr#(numeric type aluExeNum, numeric type fpuMulDivExe
     // faulting inst cannot have this set, since there is no access to
     // perform), and non-MMIO St can become Executed (NOTE faulting
     // instructions are not Executed, they are set at deqLSQ time)
-    method Action setExecuted_doFinishMem(Addr vaddr, Maybe#(LdStQTag) access_at_commit, Bool non_mmio_st_done);
+    method Action setExecuted_doFinishMem(Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
     // get original PC/PPC before execution, EHR port 0 will suffice
     method Addr getOrigPC;
     method Addr getOrigPredPC;
@@ -123,6 +131,10 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Integer accessCom_finishMem_port = 0; // set memAccessAtCommit
     Integer accessCom_enq_port = 1; // init
 
+    Integer nonMMIOSt_deq_port = 0;
+    Integer nonMMIOSt_finishMem_port = 0;
+    Integer nonMMIOSt_enq_port = 1;
+
     Integer state_deq_port = 0;
     function Integer state_finishAlu_port(Integer i) = i; // write state
     function Integer state_finishFpuMulDiv_port(Integer i) = valueof(aluExeNum) + i; // write state
@@ -141,12 +153,15 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Reg#(Maybe#(CSR))                                               csr                  <- mkRegU;
     Reg#(Bool)                                                      claimed_phy_reg      <- mkRegU;
     Ehr#(3, Maybe#(Trap))                                           trap                 <- mkEhr(?);
-    Ehr#(2, Bool)                                                   ldKilled             <- mkEhr(?);
-    Ehr#(2, Maybe#(LdStQTag))                                       memAccessAtCommit    <- mkEhr(?);
     Ehr#(TAdd#(2, aluExeNum), PPCVAddrCSRData)                      ppc_vaddr_csrData    <- mkEhr(?);
     Ehr#(TAdd#(1, fpuMulDivExeNum), Bit#(5))                        fflags               <- mkEhr(?);
     Reg#(Bool)                                                      will_dirty_fpu_state <- mkRegU;
     Ehr#(TAdd#(3, TAdd#(fpuMulDivExeNum, aluExeNum)), RobInstState) rob_inst_state       <- mkEhr(?);
+    Reg#(LdStQTag)                                                  lsqTag               <- mkRegU;
+    Ehr#(2, Bool)                                                   ldKilled             <- mkEhr(?);
+    Ehr#(2, Bool)                                                   memAccessAtCommit    <- mkEhr(?);
+    Ehr#(2, Bool)                                                   nonMMIOStDone        <- mkEhr(?);
+    Reg#(Bool)                                                      epochIncremented     <- mkRegU;
     Ehr#(3, SpecBits)                                               spec_bits            <- mkEhr(?);
 
     // wires to get stale (EHR port 0) values of PPC
@@ -193,7 +208,9 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
 
     interface setExecuted_doFinishFpuMulDiv = fpuMulDivExe;
 
-    method Action setExecuted_doFinishMem(Addr vaddr, Maybe#(LdStQTag) access_at_commit, Bool non_mmio_st_done);
+    method Action setExecuted_doFinishMem(Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
+        doAssert(!(access_at_commit && non_mmio_st_done),
+                 "cannot both be true");
         // update ROB state
         if(non_mmio_st_done) begin
             rob_inst_state[state_finishMem_port] <= Executed;
@@ -203,6 +220,8 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         ppc_vaddr_csrData[pvc_finishMem_port] <= VAddr (vaddr);
         // update access at commit
         memAccessAtCommit[accessCom_finishMem_port] <= access_at_commit;
+        // udpate non mmio st
+        nonMMIOStDone[nonMMIOSt_finishMem_port] <= non_mmio_st_done;
     endmethod
 
     method Action write_enq(ToReorderBuffer x);
@@ -211,13 +230,20 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         csr <= x.csr;
         claimed_phy_reg <= x.claimed_phy_reg;
         trap[trap_enq_port] <= x.trap;
-        ldKilled[ldKill_enq_port] <= x.ldKilled;
-        memAccessAtCommit[accessCom_enq_port] <= x.memAccessAtCommit;
         ppc_vaddr_csrData[pvc_enq_port] <= x.ppc_vaddr_csrData;
         fflags[fflags_enq_port] <= x.fflags;
         will_dirty_fpu_state <= x.will_dirty_fpu_state;
         rob_inst_state[state_enq_port] <= x.rob_inst_state;
+        epochIncremented <= x.epochIncremented;
         spec_bits[sb_enq_port] <= x.spec_bits;
+        lsqTag <= x.lsqTag;
+        ldKilled[ldKill_enq_port] <= False;
+        memAccessAtCommit[accessCom_enq_port] <= False;
+        nonMMIOStDone[nonMMIOSt_enq_port] <= False;
+        // check
+        doAssert(!x.ldKilled, "ld killed must be false");
+        doAssert(!x.memAccessAtCommit, "mem access at commit must be false");
+        doAssert(!x.nonMMIOStDone, "non mmio st must be false");
     endmethod
 
     method ToReorderBuffer read_deq;
@@ -227,12 +253,15 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
             csr: csr,
             claimed_phy_reg: claimed_phy_reg,
             trap: trap[trap_deq_port],
-            ldKilled: ldKilled[ldKill_deq_port],
-            memAccessAtCommit: memAccessAtCommit[accessCom_deq_port],
             ppc_vaddr_csrData: ppc_vaddr_csrData[pvc_deq_port],
             fflags: fflags[fflags_deq_port],
             will_dirty_fpu_state: will_dirty_fpu_state,
             rob_inst_state: rob_inst_state[state_deq_port],
+            lsqTag: lsqTag,
+            ldKilled: ldKilled[ldKill_deq_port],
+            memAccessAtCommit: memAccessAtCommit[accessCom_deq_port],
+            nonMMIOStDone: nonMMIOStDone[nonMMIOSt_deq_port],
+            epochIncremented: epochIncremented,
             spec_bits: spec_bits[sb_deq_port]
         };
     endmethod
@@ -329,7 +358,7 @@ interface SupReorderBuffer#(numeric type aluExeNum, numeric type fpuMulDivExeNum
     interface Vector#(aluExeNum, ROB_setExecuted_doFinishAlu) setExecuted_doFinishAlu;
     interface Vector#(fpuMulDivExeNum, ROB_setExecuted_doFinishFpuMulDiv) setExecuted_doFinishFpuMulDiv;
     // doFinishMem, after addr translation
-    method Action setExecuted_doFinishMem(InstTag x, Addr vaddr, Maybe#(LdStQTag) access_at_commit, Bool non_mmio_st_done);
+    method Action setExecuted_doFinishMem(InstTag x, Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
 
     // get original PC/PPC before execution, EHR port 0 will suffice
     interface Vector#(TAdd#(1, aluExeNum), ROB_getOrigPC) getOrigPC;
@@ -869,7 +898,7 @@ module mkSupReorderBuffer#(
     interface setExecuted_doFinishFpuMulDiv = fpuMulDivSetExeIfc;
 
     method Action setExecuted_doFinishMem(
-        InstTag x, Addr vaddr, Maybe#(LdStQTag) access_at_commit, Bool non_mmio_st_done
+        InstTag x, Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done
     ) if(
         all(id, readVReg(setExeMem_SB_enq)) // ordering: < enq
     );
