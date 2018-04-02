@@ -253,6 +253,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 lsqTag: ?,
                                 ldKilled: False,
                                 memAccessAtCommit: False,
+                                lsqAtCommitNotified: False,
                                 nonMMIOStDone: False,
                                 epochIncremented: True, // we have incremented epoch
                                 spec_bits: specTagManager.currentSpecBits,
@@ -614,6 +615,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                                 lsqTag: lsq_tag,
                                                 ldKilled: False,
                                                 memAccessAtCommit: False,
+                                                lsqAtCommitNotified: False,
                                                 nonMMIOStDone: False,
                                                 epochIncremented: needReplay,
                                                 spec_bits: spec_bits

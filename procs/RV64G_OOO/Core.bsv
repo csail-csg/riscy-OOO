@@ -288,7 +288,7 @@ module mkCore#(CoreId coreId)(Core);
                     end
                     epochManager.incrementEpoch;
                     fetchStage.redirect(new_pc);
-                    globalSpecUpdate.incorrectSpec(spec_tag, inst_tag);
+                    globalSpecUpdate.incorrectSpec(False, spec_tag, inst_tag);
                 endmethod
                 method correctSpec = globalSpecUpdate.correctSpec[finishAluCorrectSpecPort(i)].put;
                 method doStats = doStatsReg._read;
@@ -330,20 +330,13 @@ module mkCore#(CoreId coreId)(Core);
             method rob_getPC = rob.getOrigPC[valueof(AluExeNum)].get; // last getPC port
             method rob_setExecuted_doFinishMem = rob.setExecuted_doFinishMem;
             method rob_setExecuted_deqLSQ = rob.setExecuted_deqLSQ;
-            method rob_setLdSpecBit = rob.setLdSpecBit;
             method isMMIOAddr = mmio.isMMIOAddr;
             method mmioReq = mmio.dataReq;
             method mmioRespVal = mmio.dataRespVal;
             method mmioRespDeq = mmio.dataRespDeq;
-            method Action incrementEpochWithoutRedirect;
-                epochManager.incrementEpochWithoutRedirect;
-                // stop fetch until redirect
-                fetchStage.setWaitRedirect;
-            endmethod
             method setRegReadyAggr_mem = writeAggr(memWrAggrPort);
             method setRegReadyAggr_forward = writeAggr(forwardWrAggrPort);
             method writeRegFile = writeCons(memWrConsPort);
-            method redirect_action = redirectFunc;
             method doStats = doStatsReg._read;
         endinterface);
         let memExe <- mkMemExePipeline(memExeInput);
@@ -351,7 +344,9 @@ module mkCore#(CoreId coreId)(Core);
         interface aluExeIfc = aluExe;
         interface fpuMulDivExeIfc = fpuMulDivExe;
         interface memExeIfc = memExe;
-        method redirect_action = redirectFunc;
+        method Action killAll;
+            globalSpecUpdate.incorrectSpec(True, ?, ?);
+        endmethod
         interface doStatsIfc = doStatsReg;
     endmodule
     CoreFixPoint coreFix <- moduleFix(mkCoreFixPoint);
@@ -451,11 +446,15 @@ module mkCore#(CoreId coreId)(Core);
         interface csrfIfc = csrf;
         method stbEmpty = stb.isEmpty;
         method stqEmpty = lsq.stqEmpty;
+        method lsqSetAtCommit = lsq.setAtCommit;
         method tlbNoPendingReq = iTlb.noPendingReq && dTlb.noPendingReq;
         method setFlushTlbs = flush_tlbs._write(True);
         method setUpdateVMInfo = update_vm_info._write(True);
         method setFlushReservation = flush_reservation._write(True);
-        method redirect_action = coreFix.redirect_action;
+        method killAll = coreFix.killAll;
+        method redirectPc = fetchStage.redirect;
+        method setFetchWaitRedirect = fetchStage.setWaitRedirect;
+        method incrementEpoch = epochManager.incrementEpoch;
         method commitCsrInstOrInterrupt = csrInstOrInterruptInflight_commit._write(False);
         method doStats = coreFix.doStatsIfc._read;
         method Bool checkDeadlock;
@@ -485,7 +484,8 @@ module mkCore#(CoreId coreId)(Core);
     // 1. break scheduling cycles
     // 2. XXX since csrf is configReg now, we should not let this rule fire together with doCommit
     // because we read csrf here and write csrf in doCommit
-    (* preempts = "prepareCachesAndTlbs, commitStage.doCommit" *)
+    (* preempts = "prepareCachesAndTlbs, commitStage.doCommitTrap" *)
+    (* preempts = "prepareCachesAndTlbs, commitStage.doCommitSystemInst" *)
     rule prepareCachesAndTlbs(flush_reservation || flush_tlbs || update_vm_info);
         if (flush_reservation) begin
             flush_reservation <= False;
@@ -686,12 +686,8 @@ module mkCore#(CoreId coreId)(Core);
     interface CoreReq coreReq;
         method Action start(
             Bit#(64) startpc,
-            Addr toHostAddr, Addr fromHostAddr,
-            Bit#(64) verification_packets_to_ignore,
-            Bool send_synchronization_packets
+            Addr toHostAddr, Addr fromHostAddr
         );
-            commitStage.initVerify(send_synchronization_packets, 0,
-                                   verification_packets_to_ignore);
             fetchStage.start(startpc);
             started <= True;
             mmio.setHtifAddrs(toHostAddr, fromHostAddr);
@@ -708,8 +704,6 @@ module mkCore#(CoreId coreId)(Core);
     endinterface
 
     interface CoreIndInv coreIndInv;
-        method debug_verify = commitStage.debug_verify;
-
         method ActionValue#(ProcPerfResp) perfResp;
 `ifdef PERF_COUNT
             perfRespQ.deq;

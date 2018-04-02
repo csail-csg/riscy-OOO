@@ -768,7 +768,8 @@ module mkSplitLSQ(SplitLSQ);
     let ld_specBits_enq         = getVEhrPort(ld_specBits, 0); // write, C with wrongSpec
     let ld_specBits_correctSpec = getVEhrPort(ld_specBits, 1); // write
 
-    let ld_atCommit_deqLd = getVEhrPort(ld_atCommit, 0);
+    let ld_atCommit_wrongSpec = getVEhrPort(ld_atCommit, 0);
+    let ld_atCommit_deqLd     = getVEhrPort(ld_atCommit, 0);
     Vector#(SupSize, Vector#(LdQSize, Reg#(Bool))) ld_atCommit_setCom;
     for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
         ld_atCommit_setCom[i] = getVEhrPort(ld_atCommit, i); // write
@@ -866,7 +867,8 @@ module mkSplitLSQ(SplitLSQ);
     let st_specBits_enq         = getVEhrPort(st_specBits, 0); // write, C with wrongSpec
     let st_specBits_correctSpec = getVEhrPort(st_specBits, 1); // write
 
-    let st_atCommit_deqSt = getVEhrPort(st_deqSt, 0);
+    let st_atCommit_wrongSpec = getVEhrPort(st_deqSt, 0);
+    let st_atCommit_deqSt     = getVEhrPort(st_deqSt, 0);
     Vector#(SupSize, Vector#(StQSize, Reg#(Bool))) st_atCommit_setCom;
     for(Integer i = 0; i < valueof(StQSize); i = i+1) begin
         st_atCommit_setCom[i] = getVEhrPort(st_atCommit, i); // write
@@ -2235,10 +2237,12 @@ module mkSplitLSQ(SplitLSQ);
 
             // clear wrong path LQ entries & set wrong path load filter. NOTE
             // that olderSt and olderStVerified fields are not affected by the
-            // kill
+            // kill. NOTE that if atCommit is true, then killAll should not
+            // kill this entry
             Vector#(LdQSize, LdQTag) ldIdxVec = genWith(fromInteger);
             function Bool isLdNeedKill(LdQTag i);
-                return killAll || ld_specBits_wrongSpec[i][specTag] == 1;
+                return (killAll && !ld_atCommit_wrongSpec[i]) ||
+                       ld_specBits_wrongSpec[i][specTag] == 1;
             endfunction
             Vector#(LdQSize, Bool) ldNeedKill = map(isLdNeedKill, ldIdxVec);
             function Action killLdQ(LdQTag i);
@@ -2253,21 +2257,25 @@ module mkSplitLSQ(SplitLSQ);
                         doAssert(ld_memFunc[i] == Ld,
                                  "only load resp can be wrong path");
                     end
+                    doAssert(!ld_atCommit_wrongSpec[i], "cannot be at commit");
                 end
             endaction
             endfunction
             joinActions(map(killLdQ, ldIdxVec));
 
-            // clear wrong path SQ entries
+            // clear wrong path SQ entries. NOTE that inst at commit should not
+            // be killed in case of kill all
             Vector#(StQSize, StQTag) stIdxVec = genWith(fromInteger);
             function Bool isStNeedKill(StQTag i);
-                return killAll || st_specBits_wrongSpec[i][specTag] == 1;
+                return (killAll && !st_atCommit_wrongSpec[i]) ||
+                       st_specBits_wrongSpec[i][specTag] == 1;
             endfunction
             Vector#(StQSize, Bool) stNeedKill = map(isStNeedKill, stIndexVec);
             function Action killStQ(StQTag i);
             action
                 if(stNeedKill[i]) begin
                     st_valid_wrongSpec[i] <= False;
+                    doAssert(!st_atCommit_wrongSpec[i], "cannot be at commit");
                 end
             endaction
             endfunction

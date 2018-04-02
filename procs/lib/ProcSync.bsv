@@ -39,7 +39,6 @@ import MMIOPlatform::*;
 interface ProcIndInv;
     method ActionValue#(Data) to_host;
     method ActionValue#(void) bootRomInitResp;
-    method ActionValue#(Tuple2#(CoreId, VerificationPacket)) debug_verify;
     method ActionValue#(Tuple2#(CoreId, ProcPerfResp)) perfResp;
     method ActionValue#(CoreId) terminate;
 endinterface
@@ -53,10 +52,6 @@ instance Connectable#(ProcIndInv, ProcIndication);
         rule doBootRomInitResp;
             let v <- inv.bootRomInitResp;
             ind.bootRomInitResp;
-        endrule
-        rule doVerify;
-            let {c, v} <- inv.debug_verify;
-            ind.debug_verify(zeroExtend(c), v);
         endrule
         rule doPerf;
             let {c, p} <- inv.perfResp;
@@ -83,9 +78,6 @@ module mkProcIndInvSync#(
     SyncFIFOIfc#(void) bootRomInitQ <- mkSyncFifo(
         1, userClk, userRst, portalClk, portalRst
     );
-    SyncFIFOIfc#(Tuple2#(CoreId, VerificationPacket)) verifyQ <- mkSyncFifo(
-        1, userClk, userRst, portalClk, portalRst
-    );
     SyncFIFOIfc#(Tuple2#(CoreId, ProcPerfResp)) perfQ <- mkSyncFifo(
         1, userClk, userRst, portalClk, portalRst
     );
@@ -103,10 +95,6 @@ module mkProcIndInvSync#(
     endrule
 
     for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
-        rule sendVerify;
-            let v <- inv[i].debug_verify;
-            verifyQ.enq(tuple2(fromInteger(i), v));
-        endrule
         rule sendPerf;
             let v <- inv[i].perfResp;
             perfQ.enq(tuple2(fromInteger(i), v));
@@ -128,9 +116,7 @@ endmodule
 interface ProcReq;
     method Action start(
         Addr startpc,
-        Addr toHostAddr, Addr fromHostAddr,
-        Bit#(64) verification_packets_to_ignore,
-        Bool send_synchronization_packets
+        Addr toHostAddr, Addr fromHostAddr
     );
     method Action from_host(Data v);
     method Action bootRomInitReq(Bit#(16) index, Data v);
@@ -146,7 +132,7 @@ module mkProcReqSync#(
     Clock userClk <- exposeCurrentClock;
     Reset userRst <- exposeCurrentReset;
     SyncFIFOIfc#(
-        Tuple5#(Addr, Addr, Addr, Bit#(64), Bool)
+        Tuple3#(Addr, Addr, Addr)
     ) startQ <- mkSyncFifo(1, portalClk, portalRst, userClk, userRst);
     SyncFIFOIfc#(Data) hostQ <- mkSyncFifo(
         1, portalClk, portalRst, userClk, userRst
@@ -160,9 +146,9 @@ module mkProcReqSync#(
 
     rule doStart;
         // broad cast to each core and MMIO platform
-        let {pc, toHost, fromHost, ignore, sync} <- toGet(startQ).get;
+        let {pc, toHost, fromHost} <- toGet(startQ).get;
         for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
-            req[i].start(pc, toHost, fromHost, ignore, sync);
+            req[i].start(pc, toHost, fromHost);
         end
         mmio.start(toHost, fromHost);
         // check addr alignment
@@ -190,15 +176,9 @@ module mkProcReqSync#(
 
     method Action start(
         Addr startpc,
-        Addr toHostAddr, Addr fromHostAddr,
-        Bit#(64) verification_packets_to_ignore,
-        Bool send_synchronization_packets
+        Addr toHostAddr, Addr fromHostAddr
     );
-        startQ.enq(tuple5(startpc,
-                          toHostAddr, fromHostAddr,
-                          verification_packets_to_ignore,
-                          send_synchronization_packets));
-        $display("[ProcSync] start");
+        startQ.enq(tuple3(startpc, toHostAddr, fromHostAddr));
     endmethod
     method Action bootRomInitReq(Bit#(16) index, Data v);
         bootRomInitQ.enq(tuple2(truncate(index), v));
