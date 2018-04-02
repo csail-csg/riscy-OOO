@@ -89,9 +89,6 @@ typedef struct {
 } RenameErrInfo deriving(Bits, Eq, FShow);
 
 interface CommitStage;
-    // verification packets
-    method Action initVerify(Bool sendSyncPack, Bit#(64) skippedPack, Bit#(64) packToIgore);
-    method ActionValue#(VerificationPacket) debug_verify;
     // performance
     method Data getPerf(ComStagePerfType t); 
     // deadlock check
@@ -526,89 +523,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             end
         end
 `endif
-
-`ifdef VERIFICATION_PACKETS
-        // FIXME: currently no verify packet
-        /*
-        let inst = x.inst;
-        let data = x.result_data;
-        let dst = x.arch_reg_dst;
-        let packet = VerificationPacket{
-            skipped_packets: skippedVerificationPackets,
-            pc: pc,
-            addr: pc+1, // FIXME: WHAT DO WE PUT HERE? was nextPc
-            data1: data,
-            data2: data,
-            instruction: inst,
-            // dst: ({pack(isValid(dst)),pack(fromMaybe(?,dst).indx)}),
-            dst: pack(dst),
-            trap: False,
-            trap_type: 0
-        };
-
-        if (isValid(trap)) begin
-            packet.trap = True;
-            packet.trap_type = (case (fromMaybe(?,trap)) matches
-                tagged Exception .e: (zeroExtend(pack(e)));
-                tagged Interrupt .i: (zeroExtend(pack(i)) | 8'h80);
-            endcase);
-        end
-
-        if (iType == Ld || iType == St || iType == Lr || iType == Sc || iType == Amo) begin
-            packet.addr = addr;
-        end
-
-        if (iType == Csr) begin
-            packet.addr = zeroExtend(pack(fromMaybe(?, csr))); // FIXME: csr_dst
-            packet.data2 = csrData;
-        end
-
-        // figure out if this is a synchronization packet
-        Bool synchronization_packet = False;
-        if (trap matches tagged Valid (tagged Interrupt .i) &&& (i == HostInterrupt || i == TimerInterrupt)) begin
-            synchronization_packet = True;
-        end else if (isValid(csr)) begin
-            case (fromMaybe(?,csr))
-                CSRmtime, CSRstime, CSRstimew, CSRtime, CSRtimew, CSRcycle, CSRcyclew, CSRinstret, CSRinstretw, CSRmip, CSRmfromhost:
-                    synchronization_packet = True;
-            endcase
-        end
-
-        if ((synchronization_packet && sendSynchronizationPackets) || (verificationPacketsToIgnore == 0)) begin
-            verifyFifo.enq(packet);
-            skippedVerificationPackets <= 0;
-        end else begin
-            skippedVerificationPackets <= skippedVerificationPackets + 1;
-        end
-        if ((verificationPacketsToIgnore != 0) && (verificationPacketsToIgnore != '1)) begin
-            verificationPacketsToIgnore <= verificationPacketsToIgnore - 1;
-        end
-        */
-`endif
     endrule
 
-
-    method Action initVerify(Bool sendSyncPack, Bit#(64) skippedPack, Bit#(64) packToIgore);
-`ifdef VERIFICATION_PACKETS
-        sendSynchronizationPackets <= sendSyncPack;
-        skippedVerificationPackets <= skippedPack;
-        verificationPacketsToIngore <= packToIgore;
-`else
-        noAction;
-`endif
-    endmethod
-
-`ifdef VERIFICATION_PACKETS
-    method ActionValue#(VerificationPacket) debug_verify;
-        if (verbose) $display("Sending to host: ", verifyFifo.first.pc);
-        verifyFifo.deq;
-        return verifyFifo.first;
-    endmethod
-`else
-    method ActionValue#(VerificationPacket) debug_verify if(False);
-        return ?;
-    endmethod
-`endif
 
     method Data getPerf(ComStagePerfType t);
         return (case(t)

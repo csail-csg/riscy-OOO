@@ -29,8 +29,7 @@ interface ProcRequest;
     method Action start(
         Bit#(64) startpc,
         Bit#(64) toHostAddr, Bit#(64) fromHostAddr,
-        Bit#(64) verification_packets_to_ignore,
-        Bool send_synchronization_packets
+        Bit#(8) dramLatency
     );
     method Action from_host(Bit#(64) v);
     // Boot rom is 8B aligned, index is in terms of 8B block
@@ -42,7 +41,6 @@ interface ProcIndication;
     method Action resetDone();
     method Action to_host(Bit#(64) v);
     method Action bootRomInitResp();
-    method Action debug_verify(Bit#(8) core, VerificationPacket packet);
     method Action perfResp(Bit#(8) core, ProcPerfResp r); // performance
     method Action terminate(Bit#(8) core); // exit signal
 endinterface

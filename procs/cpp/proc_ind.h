@@ -146,9 +146,6 @@ public:
     void waitReset();
     void waitBootRomInit();
     virtual void resetDone();
-    virtual void debug_verify(uint8_t core, VerificationPacket packet) {
-        fprintf(stderr, "Verification not implemented\n");
-    }
     virtual void to_host(uint64_t v);
     virtual void bootRomInitResp();
     virtual void perfResp(uint8_t core, ProcPerfResp resp);

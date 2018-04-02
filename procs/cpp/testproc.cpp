@@ -52,6 +52,7 @@
 
 // system config
 static uint32_t core_num = 1; // default to 1 core
+static int mem_latency = 120; // default to 120 cycles
 
 // File for output
 static FILE *debug_file = 0;
@@ -62,11 +63,6 @@ FILE *perf_fp = stderr; // performance counters output file
 static ProcRequestProxy *procRequestProxy = 0;
 static ProcIndication   *procIndication = 0;
 static PerfStats perf_stats;
-
-// tandem verify params
-static uint64_t verification_packets_skipped = 0;
-static uint64_t verification_packets_printed = 0;
-static bool synchronization_packets_sent = true;
 
 // host dma request & indications
 static HostDmaRequestProxy *hostDmaRequestProxy = 0;
@@ -142,13 +138,14 @@ int runHtifTest() {
     addr_t tohost_addr = riscy_htif->get_tohost_addr();
     addr_t fromhost_addr = riscy_htif->get_fromhost_addr();
     fprintf(stderr, "startpc %llx, total %d cores, "
-            "toHost addr %llx, fromHost addr %llx\n",
+            "toHost addr %llx, fromHost addr %llx\n, "
+            "mem latency %d\n",
             (long long unsigned)startpc, (int)core_num,
-            (long long unsigned)tohost_addr, (long long unsigned)fromhost_addr);
+            (long long unsigned)tohost_addr, (long long unsigned)fromhost_addr,
+            mem_latency);
     procRequestProxy->start(startpc,
                             tohost_addr, fromhost_addr,
-                            verification_packets_skipped,
-                            synchronization_packets_sent);
+                            mem_latency);
 
     // wait for result
     int result = procIndication->waitResult();
@@ -197,28 +194,18 @@ int main(int argc, char * const *argv) {
             assembly_test_mode = true;
             // shift argc and argv accordingly
             argc--; argv++;
-        } else if (argc > 2 && strcmp(argv[1],"--print-from") == 0) {
-            // first argument was "--print-from"
-            // this enables printing the trace starting at the next argument
-            verification_packets_skipped = (uint64_t) atoi(argv[2]);
-            verification_packets_printed = 100000;
-            //print_mode = true;
-            // shift argc and argv accordingly
-            argc-=2; argv+=2;
-        } else if (argc > 2 && strcmp(argv[1],"--skip") == 0) {
-            // first argument was "--skip"
-            // this enables skipping some verification packets
-            verification_packets_skipped = (uint64_t) atoi(argv[2]);
-            // shift argc and argv accordingly
-            argc-=2; argv+=2;
         } else if (argc > 1 && strcmp(argv[1],"--just-run") == 0) {
-            verification_packets_skipped = (uint64_t) -1;
-            synchronization_packets_sent = false;
+            // legacy option
             argc-=1; argv+=1;
         } else if (argc > 2 && strcmp(argv[1],"--mem-size") == 0) {
             // first argument was "--mem-size"
             // second argument should be memory size in MB
             mem_sz = (size_t)(atoi(argv[2])) * 1024 * 1024;
+            // shift argc and argv accordingly
+            argc-=2; argv+=2;
+        } else if (argc > 2 && strcmp(argv[1],"--mem-lat") == 0) {
+            // mem latency
+            mem_latency = atoi(argv[2]);
             // shift argc and argv accordingly
             argc-=2; argv+=2;
         } else if(argc > 2 && strcmp(argv[1],"--deadlock-check-after") == 0) {

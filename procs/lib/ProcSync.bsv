@@ -34,12 +34,12 @@ import Performance::*;
 import Core::*;
 import SyncFifo::*;
 import MMIOPlatform::*;
+import DramLLC::*;
 
 // indication methods that are truly in use by processor
 interface ProcIndInv;
     method ActionValue#(Data) to_host;
     method ActionValue#(void) bootRomInitResp;
-    method ActionValue#(Tuple2#(CoreId, VerificationPacket)) debug_verify;
     method ActionValue#(Tuple2#(CoreId, ProcPerfResp)) perfResp;
     method ActionValue#(CoreId) terminate;
 endinterface
@@ -53,10 +53,6 @@ instance Connectable#(ProcIndInv, ProcIndication);
         rule doBootRomInitResp;
             let v <- inv.bootRomInitResp;
             ind.bootRomInitResp;
-        endrule
-        rule doVerify;
-            let {c, v} <- inv.debug_verify;
-            ind.debug_verify(zeroExtend(c), v);
         endrule
         rule doPerf;
             let {c, p} <- inv.perfResp;
@@ -83,9 +79,6 @@ module mkProcIndInvSync#(
     SyncFIFOIfc#(void) bootRomInitQ <- mkSyncFifo(
         1, userClk, userRst, portalClk, portalRst
     );
-    SyncFIFOIfc#(Tuple2#(CoreId, VerificationPacket)) verifyQ <- mkSyncFifo(
-        1, userClk, userRst, portalClk, portalRst
-    );
     SyncFIFOIfc#(Tuple2#(CoreId, ProcPerfResp)) perfQ <- mkSyncFifo(
         1, userClk, userRst, portalClk, portalRst
     );
@@ -103,10 +96,6 @@ module mkProcIndInvSync#(
     endrule
 
     for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
-        rule sendVerify;
-            let v <- inv[i].debug_verify;
-            verifyQ.enq(tuple2(fromInteger(i), v));
-        endrule
         rule sendPerf;
             let v <- inv[i].perfResp;
             perfQ.enq(tuple2(fromInteger(i), v));
@@ -119,7 +108,6 @@ module mkProcIndInvSync#(
 
     method to_host = toGet(hostQ).get;
     method bootRomInitResp = toGet(bootRomInitQ).get;
-    method debug_verify = toGet(verifyQ).get;
     method perfResp = toGet(perfQ).get;
     method terminate = toGet(terminateQ).get;
 endmodule
@@ -129,8 +117,7 @@ interface ProcReq;
     method Action start(
         Addr startpc,
         Addr toHostAddr, Addr fromHostAddr,
-        Bit#(64) verification_packets_to_ignore,
-        Bool send_synchronization_packets
+        DramLatency latency
     );
     method Action from_host(Data v);
     method Action bootRomInitReq(Bit#(16) index, Data v);
@@ -140,13 +127,13 @@ endinterface
 // this module should be under user clock domain
 module mkProcReqSync#(
     Vector#(CoreNum, CoreReq) req,
-    MMIOPlatform mmio,
+    MMIOPlatform mmio, DramLLC dramLLC,
     Clock portalClk, Reset portalRst
 )(ProcReq);
     Clock userClk <- exposeCurrentClock;
     Reset userRst <- exposeCurrentReset;
     SyncFIFOIfc#(
-        Tuple5#(Addr, Addr, Addr, Bit#(64), Bool)
+        Tuple4#(Addr, Addr, Addr, DramLatency)
     ) startQ <- mkSyncFifo(1, portalClk, portalRst, userClk, userRst);
     SyncFIFOIfc#(Data) hostQ <- mkSyncFifo(
         1, portalClk, portalRst, userClk, userRst
@@ -160,11 +147,12 @@ module mkProcReqSync#(
 
     rule doStart;
         // broad cast to each core and MMIO platform
-        let {pc, toHost, fromHost, ignore, sync} <- toGet(startQ).get;
+        let {pc, toHost, fromHost, latency} <- toGet(startQ).get;
         for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
-            req[i].start(pc, toHost, fromHost, ignore, sync);
+            req[i].start(pc, toHost, fromHost);
         end
         mmio.start(toHost, fromHost);
+        dramLLC.setLatency(latency);
         // check addr alignment
         doAssert(toHost[2:0] == 0, "tohost addr must be 8B aligned");
         doAssert(fromHost[2:0] == 0, "fromhost addr must be 8B aligned");
@@ -191,14 +179,11 @@ module mkProcReqSync#(
     method Action start(
         Addr startpc,
         Addr toHostAddr, Addr fromHostAddr,
-        Bit#(64) verification_packets_to_ignore,
-        Bool send_synchronization_packets
+        DramLatency latency
     );
-        startQ.enq(tuple5(startpc,
+        startQ.enq(tuple4(startpc,
                           toHostAddr, fromHostAddr,
-                          verification_packets_to_ignore,
-                          send_synchronization_packets));
-        $display("[ProcSync] start");
+                          latency));
     endmethod
     method Action bootRomInitReq(Bit#(16) index, Data v);
         bootRomInitQ.enq(tuple2(truncate(index), v));

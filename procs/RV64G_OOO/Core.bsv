@@ -84,9 +84,7 @@ import Bypass::*;
 interface CoreReq;
     method Action start(
         Addr startpc,
-        Addr toHostAddr, Addr fromHostAddr,
-        Bit#(64) verification_packets_to_ignore,
-        Bool send_synchronization_packets
+        Addr toHostAddr, Addr fromHostAddr
     );
     method Action perfReq(PerfLocation loc, PerfType t);
 endinterface
@@ -672,12 +670,8 @@ module mkCore#(CoreId coreId)(Core);
     interface CoreReq coreReq;
         method Action start(
             Bit#(64) startpc,
-            Addr toHostAddr, Addr fromHostAddr,
-            Bit#(64) verification_packets_to_ignore,
-            Bool send_synchronization_packets
+            Addr toHostAddr, Addr fromHostAddr
         );
-            commitStage.initVerify(send_synchronization_packets, 0,
-                                   verification_packets_to_ignore);
             fetchStage.start(startpc);
             started <= True;
             mmio.setHtifAddrs(toHostAddr, fromHostAddr);
