@@ -90,7 +90,7 @@ interface FpuMulDivExeInput;
     // CSR file
     method Data csrf_rd(CSR csr);
     // ROB
-    method Action rob_setExecuted(InstTag t, Bit#(5) fflags, RobInstState new_state);
+    method Action rob_setExecuted(InstTag t, Bit#(5) fflags);
 
     // global broadcast methods
     // write reg file & set both conservative and aggressive sb & wake up inst
@@ -214,12 +214,12 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
             inIfc.writeRegFile(valid_dst.indx, data);
         end
         // update the instruction in the reorder buffer.
-        inIfc.rob_setExecuted(tag, fflags, Executed);
+        inIfc.rob_setExecuted(tag, fflags);
         // since FPU op has no spec tag, this doFinish rule is ordered before
         // other rules that calls incorrectSpec, and BSV compiler creates
         // cycles in scheduling. We manually creates a conflict between this
         // rule and incorrectSpec to break the cycle
-        inIfc.conflictWrongSpec;
+        //inIfc.conflictWrongSpec;
     endaction
     endfunction
 

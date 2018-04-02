@@ -45,14 +45,19 @@ typedef struct {
     IType iType;
     Maybe#(Trap) trap;
     RobInstState state;
+    Bool claimedPhyReg;
+    Bool ldKilled;
+    Bool memAccessAtCommit;
+    Bool lsqAtCommitNotified;
+    Bool nonMMIOStDone;
+    Bool epochIncremented;
     SpecBits specBits;
-    Maybe#(SpecTag) specTag;
-    // store buffer
+    // info about LSQ/TLB
     Bool stbEmpty;
+    Bool stqEmpty;
+    Bool tlbNoPendingReq;
     // CSR info: previlige mode
     Bit#(2) prv;
-    // htif
-    Bool htifStall;
 } CommitStuck deriving(Bits, Eq, FShow);
 
 interface CommitInput;
@@ -111,19 +116,6 @@ typedef struct {
     Trap trap;
 } CommitTrap deriving(Bits, Eq, FShow);
 
-typedef struct {
-    IType iType; // for sret & mrts
-    Addr nextPc;
-    Maybe#(SpecTag) specTag;
-    InstTag instTag;
-} CommitRedirect deriving(Bits, Eq, FShow);
-
-typedef union tagged {
-    void Invalid;
-    Tuple2#(CSR, Data) CsrInst; // csr index + data
-    Bit#(5) FpuInst; // fflags
-} CommitWrCsrf deriving(Bits, Eq, FShow);
-
 module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Bool verbose = True;
 
@@ -131,6 +123,17 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     ReorderBufferSynth rob = inIfc.robIfc;
     RegRenamingTable regRenamingTable = inIfc.rtIfc;
     CsrFile csrf = inIfc.csrfIfc;
+
+    // wires to set atCommit in LSQ: avoid scheduling cycle. Using wire should
+    // be fine, because LSQ does not need to see atCommit signal immediately
+    Vector#(SupSize, RWire#(LdStQTag)) setLSQAtCommit <- replicateM(mkRWire);
+
+    for(Integer i = 0; i< valueof(SupSize); i = i+1) begin
+        (* fire_when_enabled, no_implicit_conditions *)
+        rule doSetLSQAtCommit(setLSQAtCommit[i].wget matches tagged Valid .tag);
+            inIfc.lsqSetAtCommit[i].put(tag);
+        endrule
+    end
 
     // commit stage performance counters
 `ifdef PERF_COUNT
@@ -172,11 +175,17 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             iType: x.iType,
             trap: x.trap,
             state: x.rob_inst_state,
+            claimedPhyReg: x.claimed_phy_reg,
+            ldKilled: x.ldKilled,
+            memAccessAtCommit: x.memAccessAtCommit,
+            lsqAtCommitNotified: x.lsqAtCommitNotified,
+            nonMMIOStDone: x.nonMMIOStDone,
+            epochIncremented: x.epochIncremented,
             specBits: x.spec_bits,
-            specTag: x.spec_tag,
-            stbEmpty: inIfc.stbEmpty && inIfc.stqEmpty,
-            prv: csrf.decodeInfo.prv,
-            htifStall: False
+            stbEmpty: inIfc.stbEmpty,
+            stqEmpty: inIfc.stqEmpty,
+            tlbNoPendingReq: inIfc.tlbNoPendingReq,
+            prv: csrf.decodeInfo.prv
         };
     endfunction
 
@@ -202,6 +211,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     endrule
 `endif
 
+`ifdef RENAME_DEBUG
     // rename debug
     Reg#(Bool) renameDebugStarted <- mkConfigReg(False);
     Reg#(Maybe#(RenameErrInfo)) renameErrInfo <- mkConfigReg(Invalid);
@@ -213,6 +223,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         renameErrQ.enq(info);
         renameDebugStarted <= False;
     endrule
+`endif
 
     // we commit trap in two cycles: first cycle deq ROB and flush; second
     // cycle handles trap, redirect and handles system consistency
@@ -252,7 +263,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         !isValid(commitTrap) &&&
         rob.deqPort[0].deq_data.trap matches tagged Valid .trap
     );
-        rob.deqPort[0].deq_data;
+        rob.deqPort[0].deq;
         let x = rob.deqPort[0].deq_data;
         if(verbose) $display("[doCommitTrap] ", fshow(x));
 
@@ -261,7 +272,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         if(x.ppc_vaddr_csrData matches tagged VAddr .va) begin
             vaddr = va;
         end
-        commitTrap <= Valid (CommiTrap {
+        commitTrap <= Valid (CommitTrap {
             trap: trap,
             pc: x.pc,
             addr: vaddr
@@ -300,7 +311,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         commitTrap <= Invalid;
 
         // notify commit of interrupt (so MMIO pRq may be handled)
-        if(trap matches tagged Interrupt .inter) begin
+        if(trap.trap matches tagged Interrupt .inter) begin
             inIfc.commitCsrInstOrInterrupt;
         end
 
@@ -324,13 +335,13 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         !isValid(rob.deqPort[0].deq_data.trap) &&
         rob.deqPort[0].deq_data.ldKilled
     );
-        rob.deqPort[0].deq_data;
+        rob.deqPort[0].deq;
         let x = rob.deqPort[0].deq_data;
         if(verbose) $display("[doCommitKilledLd] ", fshow(x));
 
         // kill everything, redirect, and increment epoch
         inIfc.killAll;
-        inIfc.redirect(x.pc);
+        inIfc.redirectPc(x.pc);
         inIfc.incrementEpoch;
 
         // the killed Ld should have claimed phy reg, we should not commit it;
@@ -356,20 +367,20 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         rob.deqPort[0].deq_data.rob_inst_state == Executed &&
         isSystem(rob.deqPort[0].deq_data.iType)
     );
-        rob.deqPort[0].deq_data;
+        rob.deqPort[0].deq;
         let x = rob.deqPort[0].deq_data;
         if(verbose) $display("[doCommitSystemInst] ", fshow(x));
 
         // we claim a phy reg for every inst, so commit its renaming
-        regRenamingTable.commit[i].commit;
+        regRenamingTable.commit[0].commit;
 
-        if(iType == Csr) begin
+        if(x.iType == Csr) begin
             // notify commit of CSR (so MMIO pRq may be handled)
             inIfc.commitCsrInstOrInterrupt;
             // write CSR
             let csr_idx = validValue(x.csr);
             Data csr_data = ?;
-            if(x.ppc_vaddr_csrData matches tagged Valid CSRData .d) begin
+            if(x.ppc_vaddr_csrData matches tagged CSRData .d) begin
                 csr_data = d;
             end
             else begin
@@ -381,10 +392,10 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         // redirect (Sret and Mret redirect pc is got from CSRF)
         Addr next_pc = x.ppc_vaddr_csrData matches tagged PPC .ppc ? ppc : (x.pc + 4);
         doAssert(next_pc == x.pc + 4, "ppc must be pc + 4");
-        if(r.iType == Sret) begin
+        if(x.iType == Sret) begin
             next_pc <- csrf.sret;
         end
-        else if(r.iType == Mret) begin
+        else if(x.iType == Mret) begin
             next_pc <- csrf.mret;
         end
         inIfc.redirectPc(next_pc);
@@ -402,7 +413,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         if(inIfc.doStats) begin
             comRedirectCnt.incr(1);
             // inst count stats
-            instCnt.incr(zeroExtend(1));
+            instCnt.incr(1);
             if(csrf.decodeInfo.prv == 0) begin
                 userInstCnt.incr(1);
             end
@@ -417,19 +428,21 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
         // checks
         doAssert(x.epochIncremented, "must have already incremented epoch");
-        doAssert((x.iType == CSR) == isValid(x.csr), "only CSR has valid csr idx");
+        doAssert((x.iType == Csr) == isValid(x.csr), "only CSR has valid csr idx");
         doAssert(x.fflags == 0 && !x.will_dirty_fpu_state, "cannot dirty FPU");
         doAssert(x.spec_bits == 0, "cannot have spec bits");
         doAssert(x.claimed_phy_reg, "must have claimed phy reg");
-        if(!claimed_phy_reg && canSetRenameErr) begin
+`ifdef RENAME_DEBUG
+        if(!x.claimed_phy_reg && canSetRenameErr) begin
             renameErrInfo <= Valid (RenameErrInfo {
-                err: NonTrapCommit,
+                err: NonTrapCommitLackClaim,
                 pc: x.pc,
                 iType: x.iType,
                 trap: x.trap,
                 specBits: x.spec_bits
             });
         end
+`endif
     endrule
 
     // Lr/Sc/Amo/MMIO cannot proceed to executed until we notify LSQ that it
@@ -447,7 +460,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         if(verbose) $display("[notifyLSQCommit] ", fshow(x), "; ", fshow(inst_tag));
 
         // notify LSQ, and record in ROB that notification is done
-        inIfc.lsqSetAtCommit[0].put(x.lsqTag);
+        setLSQAtCommit[0].wset(x.lsqTag);
         rob.setLSQAtCommitNotified(inst_tag);
     endrule
 
@@ -498,18 +511,20 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
                     // every inst here should have been renamed, commit renaming
                     regRenamingTable.commit[i].commit;
+                    doAssert(x.claimed_phy_reg, "should have renamed");
+
+`ifdef RENAME_DEBUG
                     // send debug msg for rename error
-                    if(!claimed_phy_reg && !isValid(renameError)) begin
+                    if(!x.claimed_phy_reg && !isValid(renameError)) begin
                         renameError = Valid (RenameErrInfo {
-                            err: NonTrapCommit,
-                            pc: pc,
-                            iType: iType,
-                            trap: trap,
-                            specTag: spec_tag,
+                            err: NonTrapCommitLackClaim,
+                            pc: x.pc,
+                            iType: x.iType,
+                            trap: x.trap,
                             specBits: x.spec_bits
                         });
-                        doAssert(False, "should have renamed");
                     end
+`endif
 
                     // cumulate writes to FPU csr
                     fflags = fflags | x.fflags;
@@ -517,7 +532,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
                     // for non-mmio st, notify SQ that store is committed
                     if(x.nonMMIOStDone) begin
-                        inIfc.lsqSetAtCommit[i].put(x.lsqTag);
+                        setLSQAtCommit[i].wset(x.lsqTag);
                     end
 
                     // inst commit counter
@@ -528,7 +543,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
 `ifdef PERF_COUNT
                     // performance counter
-                    case(iType)
+                    case(x.iType)
                         Br: brCnt = brCnt + 1;
                         J : jmpCnt = jmpCnt + 1;
                         Jr: jrCnt = jrCnt + 1;
@@ -540,7 +555,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
         // write FPU csr
         if(csrf.fpuInstNeedWr(fflags, will_dirty_fpu_state)) begin
-            csr.fpuInstWr(fflags);
+            csrf.fpuInstWr(fflags);
         end
 
         // incr inst cnt
@@ -602,8 +617,15 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     interface commitUserInstStuck = nullGet;
 `endif
 
+`ifdef RENAME_DEBUG
     method Action startRenameDebug if(!renameDebugStarted);
         renameDebugStarted <= True;
     endmethod
     interface renameErr = toGet(renameErrQ);
+`else
+    method Action startRenameDebug;
+        noAction;
+    endmethod
+    interface renameErr = nullGet;
+`endif
 endmodule

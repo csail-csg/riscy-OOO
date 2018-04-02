@@ -63,11 +63,6 @@ static ProcRequestProxy *procRequestProxy = 0;
 static ProcIndication   *procIndication = 0;
 static PerfStats perf_stats;
 
-// tandem verify params
-static uint64_t verification_packets_skipped = 0;
-static uint64_t verification_packets_printed = 0;
-static bool synchronization_packets_sent = true;
-
 // host dma request & indications
 static HostDmaRequestProxy *hostDmaRequestProxy = 0;
 static HostDmaIndication *hostDmaIndication = 0;
@@ -145,10 +140,7 @@ int runHtifTest() {
             "toHost addr %llx, fromHost addr %llx\n",
             (long long unsigned)startpc, (int)core_num,
             (long long unsigned)tohost_addr, (long long unsigned)fromhost_addr);
-    procRequestProxy->start(startpc,
-                            tohost_addr, fromhost_addr,
-                            verification_packets_skipped,
-                            synchronization_packets_sent);
+    procRequestProxy->start(startpc, tohost_addr, fromhost_addr);
 
     // wait for result
     int result = procIndication->waitResult();
@@ -197,23 +189,8 @@ int main(int argc, char * const *argv) {
             assembly_test_mode = true;
             // shift argc and argv accordingly
             argc--; argv++;
-        } else if (argc > 2 && strcmp(argv[1],"--print-from") == 0) {
-            // first argument was "--print-from"
-            // this enables printing the trace starting at the next argument
-            verification_packets_skipped = (uint64_t) atoi(argv[2]);
-            verification_packets_printed = 100000;
-            //print_mode = true;
-            // shift argc and argv accordingly
-            argc-=2; argv+=2;
-        } else if (argc > 2 && strcmp(argv[1],"--skip") == 0) {
-            // first argument was "--skip"
-            // this enables skipping some verification packets
-            verification_packets_skipped = (uint64_t) atoi(argv[2]);
-            // shift argc and argv accordingly
-            argc-=2; argv+=2;
         } else if (argc > 1 && strcmp(argv[1],"--just-run") == 0) {
-            verification_packets_skipped = (uint64_t) -1;
-            synchronization_packets_sent = false;
+            // legacy option
             argc-=1; argv+=1;
         } else if (argc > 2 && strcmp(argv[1],"--mem-size") == 0) {
             // first argument was "--mem-size"

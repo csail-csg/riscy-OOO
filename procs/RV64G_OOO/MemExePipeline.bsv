@@ -640,7 +640,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display("[doDeqLdQ_Lr_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
         doAssert(lsqDeqLd.memFunc == Lr && !lsqDeqLd.isMMIO, "must be non-MMIO Lr");
-        doAssert(!isValid(lsqDeqLd.fault) && !isValid(lsqDeqLd.killed), "no fualt or kill");
+        doAssert(!isValid(lsqDeqLd.fault) && !lsqDeqLd.killed, "no fualt or kill");
     endrule
 
     // issue MMIO Ld without fault when
@@ -648,7 +648,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // (2) WEAK: if .rl bit is set, SB is empty
     rule doDeqLdQ_MMIO_issue(
         !isValid(lsqDeqLd.fault) && !lsqDeqLd.killed
-        lsqDeqLd.isMMIO
+        && lsqDeqLd.isMMIO
         && waitLrScAmoMMIOResp == Invalid
 `ifndef TSO_MM
         && (!lsqDeqLd.rel || stb.isEmpty)
@@ -692,7 +692,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display("[doDeqLdQ_MMIO_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
         doAssert(lsqDeqLd.memFunc == Ld && lsqDeqLd.isMMIO, "must be MMIO Ld");
-        doAssert(!isValid(lsqDeqLd.fault) && !isValid(lsqDeqLd.killed), "no fualt or kill");
+        doAssert(!isValid(lsqDeqLd.fault) && !lsqDeqLd.killed, "no fualt or kill");
     endrule
 
     rule doDeqLdQ_MMIO_fault(
@@ -709,7 +709,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display("[doDeqLdQ_MMIO_fault] ", fshow(lsqDeqLd));
         // check
         doAssert(lsqDeqLd.memFunc == Ld && lsqDeqLd.isMMIO, "must be MMIO Ld");
-        doAssert(!isValid(lsqDeqLd.fault) && !isValid(lsqDeqLd.killed), "no fualt or kill");
+        doAssert(!isValid(lsqDeqLd.fault) && !lsqDeqLd.killed, "no fualt or kill");
     endrule
 
     // deq StQ
@@ -839,9 +839,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     );
         // set wait bit
         waitLrScAmoMMIOResp <= MMIO (WaitMMIOResp {
-            instTag: lsqDeqSt.instTag,
-            isLd: False,
-            specTag: validValue(lsqDeqSt.specTag)
+            isLd: False
         });
         // send to MMIO
         let req = MMIOCRq {

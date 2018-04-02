@@ -84,15 +84,12 @@ import Bypass::*;
 interface CoreReq;
     method Action start(
         Addr startpc,
-        Addr toHostAddr, Addr fromHostAddr,
-        Bit#(64) verification_packets_to_ignore,
-        Bool send_synchronization_packets
+        Addr toHostAddr, Addr fromHostAddr
     );
     method Action perfReq(PerfLocation loc, PerfType t);
 endinterface
 
 interface CoreIndInv;
-    method ActionValue#(VerificationPacket) debug_verify;
     method ActionValue#(ProcPerfResp) perfResp;
     method ActionValue#(void) terminate;
 endinterface
@@ -484,7 +481,7 @@ module mkCore#(CoreId coreId)(Core);
     // 1. break scheduling cycles
     // 2. XXX since csrf is configReg now, we should not let this rule fire together with doCommit
     // because we read csrf here and write csrf in doCommit
-    (* preempts = "prepareCachesAndTlbs, commitStage.doCommitTrap" *)
+    (* preempts = "prepareCachesAndTlbs, commitStage.doCommitTrap_handle" *)
     (* preempts = "prepareCachesAndTlbs, commitStage.doCommitSystemInst" *)
     rule prepareCachesAndTlbs(flush_reservation || flush_tlbs || update_vm_info);
         if (flush_reservation) begin

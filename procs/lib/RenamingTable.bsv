@@ -82,6 +82,7 @@ typedef struct {
 
 // actions in case of wrongSpec
 typedef struct {
+    Bool killAll;
     SpecTag specTag;
 } RTWrongSpec deriving(Bits, Eq, FShow);
 

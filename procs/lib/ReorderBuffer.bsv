@@ -151,7 +151,6 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
 
     Integer sb_deq_port = 0;
     Integer sb_wrongSpec_port = 0;
-    Integer sb_setLd_port = 0; // write spec_bits
     Integer sb_enq_port = 1; // write spec_bits
     Integer sb_correctSpec_port = 2; // write spec_bits
 
@@ -286,13 +285,11 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         rob_inst_state[state_deqLSQ_port] <= Executed;
         // record trap
         doAssert(!isValid(trap[trap_deqLSQ_port]), "cannot have trap");
-        trap[trap_deqLSQ_port] <= Valid (Exception (e));
+        if(cause matches tagged Valid .e) begin
+            trap[trap_deqLSQ_port] <= Valid (Exception (e));
+        end
         // record ld misspeculation
         ldKilled[ldKill_deqLSQ_port] <= ld_killed;
-    endmethod
-
-    method Action setLdSpecBit(SpecTag ldSpecTag);
-        spec_bits[sb_setLd_port][ldSpecTag] <= 1;
     endmethod
 
     method Bool dependsOn_wrongSpec(SpecTag tag);
@@ -311,7 +308,7 @@ interface ROB_SpeculationUpdate;
     // (i.e. any such entry has spec_bits[spec_tag] == 1, so valid bit is reset)
     // notice that inst_tag itself may be killed! (e.g. a Ld killed by older Ld/St)
     // also note that inst_tag itself may be already dequeued just in this cycle
-    method Action incorrectSpeculation(SpecTag spec_tag, InstTag inst_tag);
+    method Action incorrectSpeculation(Bool kill_all, SpecTag spec_tag, InstTag inst_tag);
     method Action correctSpeculation(SpecBits mask);
 endinterface
 
@@ -438,7 +435,7 @@ module mkSupReorderBuffer#(
 
     // firstEnq/DeqWay: which FIFO of row, valid, etc. that enq/deq port 0 should use
     Reg#(SupWaySel) firstEnqWay <- mkReg(0);
-    Ehr#(2, SupWaySel) firstDeqWay_ehr <- mkReg(0);
+    Ehr#(2, SupWaySel) firstDeqWay_ehr <- mkEhr(0);
     Reg#(SupWaySel) firstDeqWay = firstDeqWay_ehr[0];
     Reg#(SupWaySel) firstDeqWay_wrongSpec = firstDeqWay_ehr[1];
 
@@ -516,6 +513,7 @@ module mkSupReorderBuffer#(
     endrule
 
     // process wrongSpec: clear valid bits & compute update for enq regs
+    (* fire_when_enabled, no_implicit_conditions *)
     rule canon_wrongSpec(wrongSpecEn.wget matches tagged Valid .x);
         if(x.killAll) begin
             // kill everything
@@ -642,7 +640,7 @@ module mkSupReorderBuffer#(
                 fshow(specTag), " ; ",
                 fshow(killInstTag), " ; ",
                 fshow(firstEnqWay), " ; ",
-                fshow(firstDeqWay), " ; ",
+                fshow(firstDeqWay_wrongSpec), " ; ",
                 fshow(readVReg(enqP)), " ; ",
                 fshow(deqPVec), " ; ",
                 fshow(validVec), " ; ",

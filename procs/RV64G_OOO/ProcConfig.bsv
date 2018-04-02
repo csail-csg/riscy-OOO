@@ -78,8 +78,8 @@
     `define ROB_SIZE 48
 
     // speculation
-    `define NUM_EPOCHS 16
-    `define NUM_SPEC_TAGS 32
+    `define NUM_EPOCHS 12
+    `define NUM_SPEC_TAGS 12
 
     // LSQ
     `define LDQ_SIZE 18
@@ -103,7 +103,7 @@
 
     // speculation
     `define NUM_EPOCHS 16
-    `define NUM_SPEC_TAGS 32
+    `define NUM_SPEC_TAGS 16
 
     // LSQ
     `define LDQ_SIZE 24
@@ -127,7 +127,7 @@
 
     // speculation
     `define NUM_EPOCHS 16
-    `define NUM_SPEC_TAGS 32
+    `define NUM_SPEC_TAGS 16
 
     // LSQ
     `define LDQ_SIZE 24
@@ -151,7 +151,7 @@
 
     // speculation
     `define NUM_EPOCHS 16
-    `define NUM_SPEC_TAGS 64
+    `define NUM_SPEC_TAGS 32
 
     // LSQ
     `define LDQ_SIZE 48
@@ -175,7 +175,7 @@
 
     // speculation
     `define NUM_EPOCHS 16
-    `define NUM_SPEC_TAGS 64
+    `define NUM_SPEC_TAGS 32
 
     // LSQ
     `define LDQ_SIZE 48

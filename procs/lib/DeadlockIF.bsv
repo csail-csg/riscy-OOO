@@ -49,25 +49,29 @@ interface DeadlockIndication;
     method Action renameInstStuck(
         Bit#(8) core, Bit#(64) pc, Bit#(8) fetchMainEp,
         Bool fetchWaitRedirect, Bool fetchWaitFlush,
-        Bit#(8) emCurEp, Bit#(8) emCheckedEp, Bool emWaitRedirect,
-        Bool htifStall
+        Bit#(8) emCurEp, Bit#(8) emCheckedEp
     );
     method Action renameCorrectPathStuck(
         Bit#(8) core, Bit#(64) pc, Bit#(8) fetchMainEp,
         Bool fetchWaitRedirect, Bool fetchWaitFlush,
-        Bit#(8) emCurEp, Bit#(8) emCheckedEp, Bool emWaitRedirect,
-        Bool htifStall
+        Bit#(8) emCurEp, Bit#(8) emCheckedEp
     );
     method Action commitInstStuck(
         Bit#(8) core, Bit#(64) pc, Bit#(5) iType,
         Bool isException, Bool isInterrupt, Bit#(4) trapVal,
-        Bit#(2) state, Bit#(64) specBits, Bool specTagValid ,Bit#(6) specTag,
-        Bool stbEmpty, Bit#(2) prv, Bool htifStall
+        Bit#(1) state, Bool claimedPhyReg, Bool ldKilled,
+        Bool memAccessAtCommit, Bool lsqAtCommitNotified,
+        Bool nonMMIOStDone, Bool epochIncremented,
+        Bit#(32) specBits, Bool stbEmpty, Bool stqEmpty,
+        Bool tlbNoPendingReq, Bit#(2) prv
     );
     method Action commitUserInstStuck(
         Bit#(8) core, Bit#(64) pc, Bit#(5) iType,
         Bool isException, Bool isInterrupt, Bit#(4) trapVal,
-        Bit#(2) state, Bit#(64) specBits, Bool specTagValid, Bit#(6) specTag,
-        Bool stbEmpty, Bit#(2) prv, Bool htifStall
+        Bit#(1) state, Bool claimedPhyReg, Bool ldKilled,
+        Bool memAccessAtCommit, Bool lsqAtCommitNotified,
+        Bool nonMMIOStDone, Bool epochIncremented,
+        Bit#(32) specBits, Bool stbEmpty, Bool stqEmpty,
+        Bool tlbNoPendingReq, Bit#(2) prv
     );
 endinterface

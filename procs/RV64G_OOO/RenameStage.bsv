@@ -51,7 +51,6 @@ import SplitLSQ::*;
 typedef struct {
     FetchDebugState fetch;
     EpochDebugState epoch;
-    Bool htifStall;
 } RenameStuck deriving(Bits, Eq, FShow);
 
 interface RenameInput;
@@ -125,8 +124,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 
     let renameStuck = RenameStuck {
         fetch: fetchStage.getFetchState,
-        epoch: epochManager.getEpochState,
-        htifStall: False
+        epoch: epochManager.getEpochState
     };
 
     (* fire_when_enabled *)
@@ -256,7 +254,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 lsqAtCommitNotified: False,
                                 nonMMIOStDone: False,
                                 epochIncremented: True, // we have incremented epoch
-                                spec_bits: specTagManager.currentSpecBits,
+                                spec_bits: specTagManager.currentSpecBits
                                };
         rob.enqPort[0].enq(y);
         // record if we issue an interrupt

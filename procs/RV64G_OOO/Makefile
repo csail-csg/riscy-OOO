@@ -36,11 +36,12 @@ USE_XILINX_FPU ?= true
 CORE_NUM ?= 1
 # TSO or WEAK
 TSO_MM ?= false
-# default check cache deadlock
+# default check cache deadlock and rename error
 CHECK_DEADLOCK ?= true
+RENAME_DEBUG ?= true
 
 # clk frequency depends on core size
-ifneq (,$(filter $(CORE_SIZE),TINY SMALL)) SMALL_WIDE))
+ifneq (,$(filter $(CORE_SIZE),TINY SMALL))
 USER_CLK_PERIOD ?= 24
 else ifneq (,$(filter $(CORE_SIZE),SMALL_WIDE LARGE))
 USER_CLK_PERIOD ?= 32

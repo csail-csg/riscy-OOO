@@ -133,7 +133,7 @@ interface AluExeInput;
     // ROB
     method Addr rob_getPC(InstTag t);
     method Addr rob_getPredPC(InstTag t);
-    method Action rob_setExecuted(InstTag t, Maybe#(Data) csrData, ControlFlow cf, RobInstState new_state);
+    method Action rob_setExecuted(InstTag t, Maybe#(Data) csrData, ControlFlow cf);
     // Fetch stage
     method Action fetch_train_predictors(FetchTrainBP train);
 
@@ -304,8 +304,7 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
         inIfc.rob_setExecuted(
             x.tag,
             x.csrData,
-            x.controlFlow,
-            Executed
+            x.controlFlow
         );
 
         // handle spec tags for branch predictions
@@ -317,10 +316,10 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
             // must be a branch, train branch predictor
             doAssert(x.iType == Jr || x.iType == Br, "only jr and br can mispredict");
             inIfc.fetch_train_predictors(FetchTrainBP {
-                pc: x.controlFlow.pc
+                pc: x.controlFlow.pc,
                 nextPc: x.controlFlow.nextPc,
                 iType: x.iType,
-                talken: x.controlFlow.taken,
+                taken: x.controlFlow.taken,
                 dpTrain: x.dpTrain,
                 mispred: True
             });

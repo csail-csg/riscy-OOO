@@ -107,7 +107,6 @@ module mkProcIndInvSync#(
 
     method to_host = toGet(hostQ).get;
     method bootRomInitResp = toGet(bootRomInitQ).get;
-    method debug_verify = toGet(verifyQ).get;
     method perfResp = toGet(perfQ).get;
     method terminate = toGet(terminateQ).get;
 endmodule
