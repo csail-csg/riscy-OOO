@@ -65,5 +65,5 @@ typedef struct {
 `ifdef BSIM
 function Action doAssert(Bool b, String s) = action if(!b) $fdisplay(stderr, "\n%m: ASSERT FAIL!!"); dynamicAssert(b, s); endaction;
 `else
-function Action doAssert(Bool b, String s) = noAction;
+function Action doAssert(Bool b, String s) = dynamicAssert(b, s);
 `endif

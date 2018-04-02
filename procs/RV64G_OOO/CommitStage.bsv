@@ -561,10 +561,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         // incr inst cnt
         csrf.incInstret(comInstCnt);
 
+`ifdef RENAME_DEBUG
         // set rename error
         if(canSetRenameErr && isValid(renameError)) begin
             renameErrInfo <= renameError;
         end
+`endif
 
 `ifdef CHECK_DEADLOCK
         commitInst.send; // ROB head is removed
