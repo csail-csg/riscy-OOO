@@ -123,7 +123,7 @@ interface DCoCache;
     method Action flush;
     method Bool flush_done;
     method Action resetLinkAddr;
-    interface Perf#(L1PerfType) perf;
+    interface Perf#(L1DPerfType) perf;
 
     interface ChildCacheToParent#(L1Way, void) to_parent;
 
@@ -135,10 +135,10 @@ endinterface
 module mkDCoCache#(L1ProcResp#(DProcReqId) procResp)(DCoCache);
     let cache <- mkDCacheWrapper(procResp);
 
-    // TODO perf counters
-    Fifo#(1, L1PerfType) perfReqQ <- mkCFFifo;
+    // perf counters
+    Fifo#(1, L1DPerfType) perfReqQ <- mkCFFifo;
 `ifdef PERF_COUNT
-    Fifo#(1, PerfResp#(L1PerfType)) perfRespQ <- mkCFFifo;
+    Fifo#(1, PerfResp#(L1DPerfType)) perfRespQ <- mkCFFifo;
 
     rule doPerf;
         let t <- toGet(perfReqQ).get;
@@ -166,7 +166,7 @@ module mkDCoCache#(L1ProcResp#(DProcReqId) procResp)(DCoCache);
         method Action req(L1PerfType r);
             perfReqQ.enq(r);
         endmethod
-        method ActionValue#(PerfResp#(L1PerfType)) resp;
+        method ActionValue#(PerfResp#(L1DPerfType)) resp;
 `ifdef PERF_COUNT
             perfRespQ.deq;
             return perfRespQ.first;
@@ -253,7 +253,7 @@ interface ICoCache;
     interface Server#(Addr, Vector#(ISupSz, Maybe#(Instruction))) to_proc;
     method Action flush;
     method Bool flush_done;
-    interface Perf#(L1PerfType) perf;
+    interface Perf#(L1IPerfType) perf;
 
     interface ChildCacheToParent#(L1Way, void) to_parent;
 
@@ -270,9 +270,9 @@ module mkICoCache(ICoCache);
 
     let cache <- mkIBankWrapper;
 
-    Fifo#(1, L1PerfType) perfReqQ <- mkCFFifo;
+    Fifo#(1, L1IPerfType) perfReqQ <- mkCFFifo;
 `ifdef PERF_COUNT
-    Fifo#(1, PerfResp#(L1PerfType)) perfRespQ <- mkCFFifo;
+    Fifo#(1, PerfResp#(L1IPerfType)) perfRespQ <- mkCFFifo;
 
     rule doPerf;
         let t <- toGet(perfReqQ).get;
@@ -298,7 +298,7 @@ module mkICoCache(ICoCache);
         method Action req(L1PerfType r);
             perfReqQ.enq(r);
         endmethod
-        method ActionValue#(PerfResp#(L1PerfType)) resp;
+        method ActionValue#(PerfResp#(L1IPerfType)) resp;
 `ifdef PERF_COUNT
             perfRespQ.deq;
             return perfRespQ.first;

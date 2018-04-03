@@ -110,6 +110,7 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
             for(Integer j = 0; j < valueof(CoreNum); j = j+1) begin
                 core[j].recvDoStats(doStats);
             end
+            llc.perf.setStatus(doStats);
         endrule
     end
 
@@ -121,10 +122,10 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
         coreIndInv[i] = core[i].coreIndInv;
     end
     ProcReq procReqIfc <- mkProcReqSync(
-        coreReq, mmioPlatform, portalClk, portalRst
+        coreReq, mmioPlatform, llc, portalClk, portalRst
     );
     ProcIndInv procIndInvIfc <- mkProcIndInvSync(
-        coreIndInv, mmioPlatform, portalClk, portalRst
+        coreIndInv, mmioPlatform, llc, portalClk, portalRst
     );
 
     // deadlock methods cross clock domain

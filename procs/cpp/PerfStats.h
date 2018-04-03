@@ -66,9 +66,9 @@ struct PerfCounter {
 };
 
 class PerfStats {
-private:
+protected:
     typedef std::map<PerfIndex, PerfCounter, PerfIndexLess> CntMap;
-    CntMap cnts; // counters
+    CntMap cnts; // all counters
 
     uint8_t cur_core; // current core being queried
 
@@ -85,69 +85,10 @@ private:
 
 public:
     PerfStats() {
-
         // init sem
         sem_init(&query_sem, 0, 0);
-
-        // create counter mapping
+        // init counter mapping
         cnts.clear();
-
-        // ICache
-        init(ICache, LdCnt, "I$ Ld num");
-        init(ICache, LdMissCnt, "I$ Ld miss num");
-        //init(ICache, LdMissLat, "I$ Ld miss total latency");
-
-        // DCache
-        init(DCache, LdCnt, "D$ Ld num");
-        init(DCache, LdMissCnt, "D$ Ld miss num");
-        //init(DCache, LdMissLat, "D$ Ld miss total latency");
-        init(DCache, StCnt, "D$ St num");
-        init(DCache, StMissCnt, "D$ St miss num");
-        //init(DCache, StMissLat, "D$ St miss total latency");
-        init(DCache, AmoCnt, "D$ Amo num");
-        init(DCache, AmoMissCnt, "D$ Amo miss num");
-        //init(DCache, AmoMissLat, "D$ Amo miss total latency");
-
-        // ITlb
-        init(ITlb, L1TlbAccessCnt, "ITlb access num");
-        init(ITlb, L1TlbMissCnt, "ITlb miss num");
-        //init(ITlb, L1TlbMissLat, "ITlb miss total latency");
-
-        // DTlb
-        init(DTlb, L1TlbAccessCnt, "DTlb access num");
-        init(DTlb, L1TlbMissCnt, "DTlb miss num");
-        //init(DTlb, L1TlbMissLat, "DTlb miss total latency");
-        
-        // L2Tlb
-        init(L2Tlb, L2TlbInstMissCnt, "L2Tlb inst access miss num");
-        init(L2Tlb, L2TlbDataMissCnt, "L2Tlb data access miss num");
-
-        // DecStage
-        init(DecStage, DecRedirectBr, "Dec stage redirect branch num");
-        init(DecStage, DecRedirectJmp, "Dec stage redirect jump num");
-        init(DecStage, DecRedirectJr, "Dec stage redirect jump reg num");
-        init(DecStage, DecRedirectOther, "Dec stage redirect other num");
-
-        // ExeStage
-        init(ExeStage, SupRenameCnt, "times of superscalar correct path rename");
-        init(ExeStage, ExeRedirectBr, "Exe stage redirect branch num");
-        init(ExeStage, ExeRedirectJr, "Exe stage redirect jump reg num");
-        init(ExeStage, ExeRedirectOther, "Exe stage redirect other num");
-        init(ExeStage, ExeKillLd, "Exe stage kill load num");
-        init(ExeStage, ExeTlbExcep, "Exe stage TLB exception num");
-
-        // ComStage
-        init(ComStage, CycleCnt, "cycles");
-        init(ComStage, InstCnt, "instructions");
-        init(ComStage, UserInstCnt, "user instructions");
-        init(ComStage, SupComUserCnt, "times of superscalar user commit");
-        init(ComStage, ComBrCnt, "branch num");
-        init(ComStage, ComJmpCnt, "jump num");
-        init(ComStage, ComJrCnt, "jump reg num");
-        init(ComStage, ComRedirect, "Com stage system inst redirect num");
-        init(ComStage, ExcepCnt, "exception num");
-        init(ComStage, InterruptCnt, "interrupt num");
-        init(ComStage, FlushTlbCnt, "flush TLB num");
     }
 
     void set_req_perf(std::function<void(uint8_t, PerfLocation, PerfType)> f) {
@@ -193,3 +134,82 @@ public:
         }
     }
 };
+
+class CorePerfStats : public PerfStats {
+public:
+    CorePerfStats() {
+        // ICache
+        init(ICache, L1ILdCnt, "I$ Ld num");
+        init(ICache, L1ILdMissCnt, "I$ Ld miss num");
+        init(ICache, L1ILdMissLat, "I$ Ld miss total latency");
+
+        // DCache
+        init(DCache, L1DLdCnt, "D$ Ld num");
+        init(DCache, L1DLdMissCnt, "D$ Ld miss num");
+        init(DCache, L1DLdMissLat, "D$ Ld miss total latency");
+        init(DCache, L1DStCnt, "D$ St num");
+        init(DCache, L1DStMissDataCnt, "D$ St miss data num");
+        init(DCache, L1DStMissPermCnt, "D$ St miss permission num");
+        init(DCache, L1DStMissLat, "D$ St miss total latency");
+        init(DCache, L1DAmoCnt, "D$ Amo num");
+        init(DCache, L1DAmoMissDataCnt, "D$ Amo miss data num");
+        init(DCache, L1DAmoMissPermCnt, "D$ Amo miss permission num");
+        init(DCache, L1DAmoMissLat, "D$ Amo miss total latency");
+
+        // ITlb
+        init(ITlb, L1TlbAccessCnt, "ITlb access num");
+        init(ITlb, L1TlbMissCnt, "ITlb miss num");
+        init(ITlb, L1TlbMissLat, "ITlb miss total latency");
+
+        // DTlb
+        init(DTlb, L1TlbAccessCnt, "DTlb access num");
+        init(DTlb, L1TlbMissCnt, "DTlb miss num");
+        init(DTlb, L1TlbMissLat, "DTlb miss total latency");
+        
+        // L2Tlb
+        init(L2Tlb, L2TlbInstMissCnt, "L2Tlb inst access miss num");
+        init(L2Tlb, L2TlbInstMissLat, "L2Tlb inst access miss total latency");
+        init(L2Tlb, L2TlbDataMissCnt, "L2Tlb data access miss num");
+        init(L2Tlb, L2TlbDataMissLat, "L2Tlb data access miss total latency");
+
+        // DecStage
+        init(DecStage, DecRedirectBr, "Dec stage redirect branch num");
+        init(DecStage, DecRedirectJmp, "Dec stage redirect jump num");
+        init(DecStage, DecRedirectJr, "Dec stage redirect jump reg num");
+        init(DecStage, DecRedirectOther, "Dec stage redirect other num");
+
+        // ExeStage
+        init(ExeStage, SupRenameCnt, "times of superscalar correct path rename");
+        init(ExeStage, ExeRedirectBr, "Exe stage redirect branch num");
+        init(ExeStage, ExeRedirectJr, "Exe stage redirect jump reg num");
+        init(ExeStage, ExeRedirectOther, "Exe stage redirect other num");
+        init(ExeStage, ExeKillLdByLdSt, "Exe stage kill load num (by Ld/St)");
+        init(ExeStage, ExeKillLdByCache, "Exe stage kill load num (by cache)");
+        init(ExeStage, ExeTlbExcep, "Exe stage TLB exception num");
+
+        // ComStage
+        init(ComStage, CycleCnt, "cycles");
+        init(ComStage, InstCnt, "instructions");
+        init(ComStage, UserInstCnt, "user instructions");
+        init(ComStage, SupComUserCnt, "times of superscalar user commit");
+        init(ComStage, ComBrCnt, "branch num");
+        init(ComStage, ComJmpCnt, "jump num");
+        init(ComStage, ComJrCnt, "jump reg num");
+        init(ComStage, ComRedirect, "Com stage system inst redirect num");
+        init(ComStage, ExcepCnt, "exception num");
+        init(ComStage, InterruptCnt, "interrupt num");
+        init(ComStage, FlushTlbCnt, "flush TLB num");
+    }
+};
+
+class UncorePerfStats : public PerfStats {
+public:
+    UncorePerfStats() {
+        // LLC
+        init(LLC, LLCDmaMemLdCnt, "LLC DMA mem load num");
+        init(LLC, LLCDmaMemLdLat, "LLC DMA mem load total latency");
+        init(LLC, LLCNormalMemLdCnt, "LLC normal mem load num");
+        init(LLC, LLCNormalMemLdLat, "LLC normal mem load total latency");
+    }
+};
+

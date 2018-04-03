@@ -65,7 +65,8 @@ protected:
     htif_riscy_t *riscy_htif;
 
     // performance
-    PerfStats *perf_stats;
+    CorePerfStats *core_perf_stats;
+    UncorePerfStats *uncore_perf_stats;
     
     // handle ctrl-C
     sighandler_t handle_signal;
@@ -107,7 +108,8 @@ public:
         uint32_t core_cnt,
         FILE *dbg_f,
         PrintBuffer *buff,
-        PerfStats *perf,
+        CorePerfStats *core_perf,
+        UncorePerfStats *uncore_perf,
         sighandler_t sig_hdl,
         size_t mem_size,
         char *cmd,
@@ -120,7 +122,8 @@ public:
         debug_file(dbg_f),
         print_buff(buff),
         riscy_htif(0),
-        perf_stats(perf),
+        core_perf_stats(core_perf),
+        uncore_perf_stats(uncore_perf),
         handle_signal(sig_hdl),
         to_host_handler(this),
         mem_sz(mem_size),
@@ -162,12 +165,21 @@ public:
         uint32_t core_cnt,
         FILE *dbg_f,
         PrintBuffer *buff,
-        PerfStats *perf,
+        CorePerfStats *core_perf,
+        UncorePerfStats *uncore_perf,
         sighandler_t sig_hdl,
         size_t mem_size,
         char *cmd,
         int cmd_delay
-    ) : ProcIndication(id, core_cnt, dbg_f, buff, perf,
-                       sig_hdl, mem_size, cmd, cmd_delay) {}
+    ) : ProcIndication(id,
+                       core_cnt,
+                       dbg_f,
+                       buff,
+                       core_perf,
+                       uncore_perf,
+                       sig_hdl,
+                       mem_size,
+                       cmd,
+                       cmd_delay) {}
 };
 

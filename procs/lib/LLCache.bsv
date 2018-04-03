@@ -75,15 +75,73 @@ module mkLLPipeline(
     return m;
 endmodule
 
-typedef LLBank#(LgLLBankNum, LLChildNum, LLWayNum, LLIndexSz, LLTagSz, LLCRqNum, LLCRqId, LLCDmaReqId) LLCache;
-typedef MemFifoClient#(LdMemRqId#(LLCRqMshrIdx), void) LLCMemFifoClient;
+typedef LLBank#(LgLLBankNum, LLChildNum, LLWayNum, LLIndexSz, LLTagSz, LLCRqNum, LLCRqId, LLCDmaReqId) LLBankWrapper;
+//typedef MemFifoClient#(LdMemRqId#(LLCRqMshrIdx), void) LLCMemFifoClient;
 typedef LLCRqStuck#(LLChildNum, LLCRqId, LLCDmaReqId) LLCStuck;
+
+interface LLCache;
+    interface ParentCacheToChild#(LLCRqId, LLChild) to_child;
+    interface DmaServer#(LLCDmaReqId) dma;
+    interface MemFifoClient#(LdMemRqId#(LLCRqMshrIdx), void) to_mem;
+    // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
+    interface Get#(LLCStuck) cRqStuck;
+    // performance
+    interface Perf#(LLCPerfType) perf;
+endinterface
 
 (* synthesize *)
 module mkLLCache(LLCache);
 `ifdef DEBUG_DMA
     staticAssert(False, "DEBUG_DMA should not be defined");
 `endif
-    let m <- mkLLBank(mkLastLvCRqMshr, mkLLPipeline);
-    return m;
+
+    LLBankWrapper cache <- mkLLBank(mkLastLvCRqMshr, mkLLPipeline);
+
+    // perf counters
+    Fifo#(1, LLCPerfType) perfReqQ <- mkCFFifo;
+`ifdef PERF_COUNT
+    Fifo#(1, PerfResp#(LLCPerfType)) perfRespQ <- mkCFFifo;
+
+    rule doPerf;
+        let t <- toGet(perfReqQ).get;
+        let d = cache.getPerfData(t);
+        perfRespQ.enq(PerfResp {
+            pType: t,
+            data: d
+        });
+    endrule
+`endif
+
+    interface to_child = cache.to_child;
+    interface dma = cache.dma;
+    interface to_mem = cache.to_mem;
+    interface cRqStuck = cache.cRqStuck;
+
+    interface Perf perf;
+        method Action setStatus(Bool stats);
+            cache.setPerfStatus(stats);
+        endmethod
+        method Action req(L1PerfType r);
+            perfReqQ.enq(r);
+        endmethod
+        method ActionValue#(PerfResp#(LLCPerfType)) resp;
+`ifdef PERF_COUNT
+            perfRespQ.deq;
+            return perfRespQ.first;
+`else
+            perfReqQ.deq;
+            return PerfResp {
+                pType: perfReqQ.first,
+                data: 0
+            };
+`endif
+        endmethod
+        method Bool respValid;
+`ifdef PERF_COUNT
+            return perfRespQ.notEmpty;
+`else
+            return perfReqQ.notEmpty;
+`endif
+        endmethod
+    endinterface
 endmodule

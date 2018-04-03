@@ -61,7 +61,8 @@ FILE *perf_fp = stderr; // performance counters output file
 // proc requests & indications
 static ProcRequestProxy *procRequestProxy = 0;
 static ProcIndication   *procIndication = 0;
-static PerfStats perf_stats;
+static CorePerfStats core_perf_stats;
+static UncorePerfStats uncore_perf_stats;
 
 // host dma request & indications
 static HostDmaRequestProxy *hostDmaRequestProxy = 0;
@@ -148,12 +149,16 @@ int runHtifTest() {
 
     // performance result
     for(uint32_t i = 0; i < core_num; i++) {
-        perf_stats.reset(); // clear old data
+        core_perf_stats.reset(); // clear old data
         fprintf(perf_fp, "getting performance results for core %d\n", i);
-        perf_stats.get_all_perf(i);
-        perf_stats.print(perf_fp);
+        core_perf_stats.get_all_perf(i);
+        core_perf_stats.print(perf_fp);
         fprintf(perf_fp, "\n");
     }
+    uncore_perf_stats.reset();
+    fprintf(perf_fp, "getting performance results for uncore\n");
+    uncore_perf_stats.get_all_perf(core_num); // uncore id = core num
+    uncore_perf_stats.print(perf_fp);
     if(perf_fp != stderr && perf_fp != stdout) {
         fclose(perf_fp);
     }
@@ -256,16 +261,23 @@ int main(int argc, char * const *argv) {
                                                     core_num,
                                                     debug_file,
                                                     print_buff,
-                                                    &perf_stats,
+                                                    &core_perf_stats,
+                                                    &uncore_perf_stats,
                                                     &handle_signal,
                                                     mem_sz,
                                                     shell_cmd,
                                                     cmd_delay_sec);
     } else {
         procIndication = new ProcIndication(IfcNames_ProcIndicationH2S,
-                                            core_num, debug_file, print_buff,
-                                            &perf_stats, &handle_signal,
-                                            mem_sz, shell_cmd, cmd_delay_sec);
+                                            core_num,
+                                            debug_file,
+                                            print_buff,
+                                            &core_perf_stats,
+                                            &uncore_perf_stats,
+                                            &handle_signal,
+                                            mem_sz,
+                                            shell_cmd,
+                                            cmd_delay_sec);
     }
     procRequestProxy = new ProcRequestProxy(IfcNames_ProcRequestS2H);
 
@@ -311,7 +323,8 @@ int main(int argc, char * const *argv) {
     // set all other call backs & pointers...
     procIndication->set_riscy_htif(riscy_htif);
     procIndication->set_htif_args(&htif_args);
-    perf_stats.set_req_perf(req_perf_counter);
+    core_perf_stats.set_req_perf(req_perf_counter);
+    uncore_perf_stats.set_req_perf(req_perf_counter);
     hostDmaIndication->set_req_proxy(hostDmaRequestProxy);
     // start mtohost handler thread
     procIndication->spawn_to_host_handler();

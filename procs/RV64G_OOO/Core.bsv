@@ -513,6 +513,7 @@ module mkCore#(CoreId coreId)(Core);
         dTlb.perf.setStatus(stats);
         l2Tlb.perf.setStatus(stats);
         fetchStage.perf.setStatus(stats);
+        lsq.setPerfStatus(stats);
 
         if(stats && !doStats) begin
             $display("[stats] enabled");
@@ -571,7 +572,8 @@ module mkCore#(CoreId coreId)(Core);
         Data data = (case(pType)
             SupRenameCnt: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
-            ExeKillLd, ExeTlbExcep: coreFix.memExeIfc.getPerf(pType);
+            ExeTlbExcep: coreFix.memExeIfc.getPerf(pType);
+            ExeKillLdByLdSt, ExeKillLdByCache: lsq.getPerfData(pType);
             default: 0;
         endcase);
         exePerfRespQ.enq(PerfResp {

@@ -35,6 +35,7 @@ import Fifo::*;
 import Cntrs::*;
 import SafeCounter::*;
 import CacheUtils::*;
+import LatencyTimer::*;
 
 // currently blocking
 typedef `TLB_SIZE ITlbSize;
@@ -114,12 +115,16 @@ module mkITlb(ITlb::ITlb);
     Reg#(Bool) doStats <- mkConfigReg(False);
     Count#(Data) accessCnt <- mkCount(0);
     Count#(Data) missCnt <- mkCount(0);
+    Count#(Data) missLat <- mkCount(0);
+
+    LatencyTimer#(1, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
 
     rule doPerf;
         let t <- toGet(perfReqQ).get;
         Data d = (case(t)
             L1TlbAccessCnt: (accessCnt);
             L1TlbMissCnt: (missCnt);
+            L1TlbMissLat: (missLat);
             default: (0);
         endcase);
         perfRespQ.enq(PerfResp {
@@ -185,6 +190,13 @@ module mkITlb(ITlb::ITlb);
         end
         // miss resolved
         miss <= Invalid;
+
+`ifdef PERF_COUNT
+        if(doStats) begin
+            let lat <- latTimer.done(0);
+            missLat.incr(zeroExtend(lat));
+        end
+`endif
     endrule
 
     // we check no pending req only at Commit when Fetch1 stage has been
@@ -266,6 +278,7 @@ module mkITlb(ITlb::ITlb);
 `ifdef PERF_COUNT
                         if(doStats) begin
                             missCnt.incr(1);
+                            latTimer.start(0);
                         end
 `endif
                     end
