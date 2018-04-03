@@ -33,8 +33,6 @@ import HasSpecBits::*;
 import SpecFifo::*;
 import StoreBuffer::*;
 import Exec::*;
-import Performance::*;
-import Cntrs::*;
 
 // I don't want to export auxiliary functions, so manually export all types
 export LdQMemFunc(..);
@@ -426,9 +424,6 @@ interface SplitLSQ;
     method Bool stqEmpty;
     // Speculation
     interface SpeculationUpdate specUpdate;
-    // performance
-    method Action setPerfStatus(Bool stats);
-    method Data getPerfData(ExeStagePerfType t);
 endinterface
 
 // --- auxiliary types and functions ---
@@ -895,12 +890,6 @@ module mkSplitLSQ(SplitLSQ);
     RWire#(void) wrongSpec_deqSt_conflict <- mkRWire;
     RWire#(void) wrongSpec_verify_conflict <- mkRWire;
     RWire#(void) wrongSpec_wakeBySB_conflict <- mkRWire;
-
-`ifdef PERF_COUNT
-    Reg#(Bool) doStats <- mkConfigReg(False);
-    Count#(Data) killByLdStCnt <- mkCount(0);
-    Count#(Data) killByCacheCnt <- mkCount(0);
-`endif
 
     function LdQTag getNextLdPtr(LdQTag t);
         return t == fromInteger(valueOf(LdQSize) - 1) ? 0 : t + 1;
@@ -1616,11 +1605,6 @@ module mkSplitLSQ(SplitLSQ);
                 // when the Ld called incorrectSpeculation, it will kill
                 // itself, and set waitWPResp if it is still executing at
                 // that time
-`ifdef PERF_COUNT
-                if(doStats) begin
-                    killByLdStCnt.incr(1);
-                end
-`endif
             end
         end
 
@@ -2191,11 +2175,6 @@ module mkSplitLSQ(SplitLSQ);
             // when the Ld called incorrectSpeculation, it will kill
             // itself, and set waitWPResp if it is still executing at
             // that time
-`ifdef PERF_COUNT
-            if(doStats) begin
-                killByCacheCnt.incr(1);
-            end
-`endif
         end
 
         // make conflict with incorrect spec
@@ -2371,22 +2350,4 @@ module mkSplitLSQ(SplitLSQ);
             wrongSpec_wakeBySB_conflict.wset(?);
         endmethod
     endinterface
-
-    method Action setPerfStatus(Bool stats);
-`ifdef PERF_COUNT
-        doStats <= stats;
-`else
-        noAction;
-`endif
-    endmethod 
-
-    method Data getPerfData(ExePerfType t);
-        return (case(t)
-`ifdef PERF_COUNT
-            ExeKillLdByLdSt: (killByLdStCnt);
-            ExeKillLdByCache: (killByCacheCnt);
-`endif
-            default: 0;
-        endcase);
-    endmethod
 endmodule

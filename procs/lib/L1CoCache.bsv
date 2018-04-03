@@ -163,7 +163,7 @@ module mkDCoCache#(L1ProcResp#(DProcReqId) procResp)(DCoCache);
         method Action setStatus(Bool stats);
             cache.setPerfStatus(stats);
         endmethod
-        method Action req(L1PerfType r);
+        method Action req(L1DPerfType r);
             perfReqQ.enq(r);
         endmethod
         method ActionValue#(PerfResp#(L1DPerfType)) resp;
@@ -295,7 +295,7 @@ module mkICoCache(ICoCache);
         method Action setStatus(Bool stats);
             cache.setPerfStatus(stats);
         endmethod
-        method Action req(L1PerfType r);
+        method Action req(L1IPerfType r);
             perfReqQ.enq(r);
         endmethod
         method ActionValue#(PerfResp#(L1IPerfType)) resp;

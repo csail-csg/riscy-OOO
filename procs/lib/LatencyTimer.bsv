@@ -3,13 +3,16 @@ import Types::*;
 
 // a timer to track latency of multiple misses
 
+// To prevent assert failure, start() and done() methods should be called even
+// when performance stats is not on
+
 interface LatencyTimer#(numeric type num, numeric type timeWidth);
     method Action start(Bit#(TLog#(num)) idx);
     method ActionValue#(Bit#(timeWidth)) done(Bit#(TLog#(num)) idx);
 endinterface
 
 module mkLatencyTimer(LatencyTimer#(num, timeWidth)) provisos(
-    Add#(1, a__, num),
+    //Add#(1, a__, num),
     Alias#(idxT, Bit#(TLog#(num))),
     Alias#(timeT, Bit#(timeWidth))
 );
@@ -19,11 +22,12 @@ module mkLatencyTimer(LatencyTimer#(num, timeWidth)) provisos(
     RWire#(idxT) startEn <- mkRWire;
     RWire#(idxT) doneEn <- mkRWire;
 
+    (* fire_when_enabled, no_implicit_conditions *)
     rule canon;
         Vector#(num, timeT) timerNext = timer;
         Vector#(num, Bool) startedNext = started;
         // apply done
-        if(doneEn matches tagged Valid .i) begin
+        if(doneEn.wget matches tagged Valid .i) begin
             startedNext[i] = False;
             doAssert(started[i], "timer must be valid");
         end
@@ -35,10 +39,10 @@ module mkLatencyTimer(LatencyTimer#(num, timeWidth)) provisos(
             end
         end
         // apply start
-        if(startEn matches tagged Valid .i) begin
+        if(startEn.wget matches tagged Valid .i) begin
             timerNext[i] = 0;
             startedNext[i] = True;
-            doAssert(!timer[i], "timer must be invalid");
+            doAssert(!started[i], "timer must be invalid");
         end
         // update states
         timer <= timerNext;

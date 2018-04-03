@@ -46,6 +46,7 @@ import RenameDebugIF::*;
 import RenameDebugSync::*;
 import DramCommon::*;
 import DramLLC::*;
+import Performance::*;
 
 interface Proc;
     // processor request & indication in use, in portal clk domain

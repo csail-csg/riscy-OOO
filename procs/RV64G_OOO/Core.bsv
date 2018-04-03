@@ -90,7 +90,6 @@ interface CoreReq;
 endinterface
 
 interface CoreIndInv;
-    method ActionValue#(VerificationPacket) debug_verify;
     method ActionValue#(ProcPerfResp) perfResp;
     method ActionValue#(void) terminate;
 endinterface
@@ -513,7 +512,6 @@ module mkCore#(CoreId coreId)(Core);
         dTlb.perf.setStatus(stats);
         l2Tlb.perf.setStatus(stats);
         fetchStage.perf.setStatus(stats);
-        lsq.setPerfStatus(stats);
 
         if(stats && !doStats) begin
             $display("[stats] enabled");
@@ -572,8 +570,7 @@ module mkCore#(CoreId coreId)(Core);
         Data data = (case(pType)
             SupRenameCnt: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
-            ExeTlbExcep: coreFix.memExeIfc.getPerf(pType);
-            ExeKillLdByLdSt, ExeKillLdByCache: lsq.getPerfData(pType);
+            ExeTlbExcep, ExeKillLdByLdSt, ExeKillLdByCache: coreFix.memExeIfc.getPerf(pType);
             default: 0;
         endcase);
         exePerfRespQ.enq(PerfResp {

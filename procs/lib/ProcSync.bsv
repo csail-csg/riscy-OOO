@@ -34,13 +34,14 @@ import Performance::*;
 import Core::*;
 import SyncFifo::*;
 import MMIOPlatform::*;
-import DramLLC::*;
+import LLCache::*;
+import Performance::*;
 
 // indication methods that are truly in use by processor
 interface ProcIndInv;
     method ActionValue#(Data) to_host;
     method ActionValue#(void) bootRomInitResp;
-    method ActionValue#(Tuple2#(CoreId, ProcPerfResp)) perfResp;
+    method ActionValue#(Tuple2#(Bit#(8), ProcPerfResp)) perfResp;
     method ActionValue#(CoreId) terminate;
 endinterface
 
@@ -99,11 +100,11 @@ module mkProcIndInvSync#(
     rule sendLLCPerf;
         let r <- llc.perf.resp;
         // core id of uncore = core num
-        perfQ.enq(fromInteger(valueof(CoreNum)), ProcPerfResp {
+        perfQ.enq(tuple2(fromInteger(valueof(CoreNum)), ProcPerfResp {
             loc: LLC,
             pType: zeroExtend(pack(r.pType)),
             data: r.data
-        });
+        }));
     endrule
 
     for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin

@@ -158,16 +158,20 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Count#(Data) dataMissCnt <- mkCount(0);
     Count#(Data) dataMissLat <- mkCount(0);
 
-    LatencyTimer#(1, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
+    LatencyTimer#(2, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
 
     function Action incrMissLat(TlbChild child);
+    action
         let lat <- latTimer.done(0);
-        if(child == I) begin
-            instMissLat.incr(zeroExtend(lat));
+        if(doStats) begin
+            if(child == I) begin
+                instMissLat.incr(zeroExtend(lat));
+            end
+            else begin
+                dataMissLat.incr(zeroExtend(lat));
+            end
         end
-        else begin
-            dataMissLat.incr(zeroExtend(lat));
-        end
+    endaction
     endfunction
 
     rule doPerf;
@@ -290,6 +294,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // XXX we keep the 4KB array resp (not deq), because page walk
             // is done in a blocking way
 `ifdef PERF_COUNT
+            latTimer.start(0);
             if(doStats) begin
                 if(cRq.child == I) begin
                     instMissCnt.incr(1);
@@ -297,7 +302,6 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 else begin
                     dataMissCnt.incr(1);
                 end
-                latTimer.start(0);
             end
 `endif
         end

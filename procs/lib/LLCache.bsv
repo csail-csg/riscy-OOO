@@ -23,8 +23,10 @@
 
 `include "ProcConfig.bsv"
 
+import GetPut::*;
 import Assert::*;
 import CacheUtils::*;
+import Fifo::*;
 import Types::*;
 import ProcTypes::*;
 import CCTypes::*;
@@ -33,6 +35,7 @@ import LLCRqMshr::*;
 import LLBank::*;
 import L1CoCache::*;
 import LLCDmaConnect::*;
+import Performance::*;
 
 // Last-Level: 1MB per core, no more than 2MB
 typedef TMin#(15, TAdd#(14, TLog#(CoreNum))) LgLLLineNum;
@@ -121,7 +124,7 @@ module mkLLCache(LLCache);
         method Action setStatus(Bool stats);
             cache.setPerfStatus(stats);
         endmethod
-        method Action req(L1PerfType r);
+        method Action req(LLCPerfType r);
             perfReqQ.enq(r);
         endmethod
         method ActionValue#(PerfResp#(LLCPerfType)) resp;

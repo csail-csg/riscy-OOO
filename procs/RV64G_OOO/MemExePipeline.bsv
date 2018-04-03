@@ -291,7 +291,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
 `ifdef PERF_COUNT
     // load mispeculation
-    Count#(Data) exeKillLdCnt <- mkCount(0);
+    Count#(Data) exeKillLdByLdStCnt <- mkCount(0);
+    Count#(Data) exeKillLdByCacheCnt <- mkCount(0);
     // address translate exception
     Count#(Data) exeTlbExcepCnt <- mkCount(0);
 `endif
@@ -551,12 +552,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display(rule_name, " ", fshow(en), "; ", fshow(pc));
         // check specTag valid
         doAssert(isValid(en.specTag), "killed Ld must have spec tag");
-`ifdef PERF_COUNT
-        // performance counter
-        if(inIfc.doStats) begin
-            exeKillLdCnt.incr(1);
-        end
-`endif
     endaction
     endfunction
         
@@ -564,6 +559,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // get load to kill from LSQ
         LSQKillLdInfo en <- lsq.getLdKilledByLdSt;
         killLd(en, "[doKillLdByLdSt]");
+`ifdef PERF_COUNT
+        // performance counter
+        if(inIfc.doStats) begin
+            exeKillLdByLdStCnt.incr(1);
+        end
+`endif
     endrule
 
 `ifdef TSO_MM
@@ -571,6 +572,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // get load to kill from LSQ
         LSQKillLdInfo en <- lsq.getLdKilledByCache;
         killLd(en, "[doKillLdByCache]");
+`ifdef PERF_COUNT
+        // performance counter
+        if(inIfc.doStats) begin
+            exeKillLdByCacheCnt.incr(1);
+        end
+`endif
     endrule
 `endif
 
@@ -1060,7 +1067,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     method Data getPerf(ExeStagePerfType t);
         return (case(t)
 `ifdef PERF_COUNT
-            ExeKillLd: exeKillLdCnt;
+            ExeKillLdByLdSt: exeKillLdByLdStCnt;
+            ExeKillLdByCache: exeKillLdByCacheCnt;
             ExeTlbExcep: exeTlbExcepCnt;
 `endif
             default: 0;
