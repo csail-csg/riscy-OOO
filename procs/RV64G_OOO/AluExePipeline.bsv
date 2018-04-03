@@ -23,6 +23,8 @@
 
 `include "ProcConfig.bsv"
 import Vector::*;
+import FIFO::*;
+import GetPut::*;
 import BuildVector::*;
 import Cntrs::*;
 import Types::*;
@@ -82,6 +84,15 @@ typedef struct {
     // speculation
     Maybe#(SpecTag) spec_tag;
 } AluExeToFinish deriving(Bits, Eq, FShow);
+
+typedef struct {
+    Addr pc;
+    Addr nextPc;
+    IType iType;
+    Bool taken;
+    DirPredTrainInfo dpTrain;
+    Bool mispred;
+} AluExeTrainBP deriving(Bits, Eq, FShow);
 
 // XXX currently ALU/Br should not have any exception, so we don't have cause feild above
 // TODO FIXME In future, if branch target is unaligned to 4 bytes, we may have exception
@@ -169,6 +180,9 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
     // index to send bypass, ordering doesn't matter
     Integer exeSendBypassPort = 0;
     Integer finishSendBypassPort = 1;
+
+    // train BP in a new cycle
+    FIFO#(AluExeTrainBP) trainBPQ <- mkFIFO;
 
 `ifdef PERF_COUNT
     // performance counters
@@ -310,10 +324,14 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
             inIfc.redirect_action(x.controlFlow.nextPc, x.spec_tag, x.tag);
             // must be a branch, train branch predictor
             doAssert(x.iType == Jr || x.iType == Br, "only jr and br can mispredict");
-            inIfc.fetch_train_predictors(
-                x.controlFlow.pc, x.controlFlow.nextPc, x.iType,
-                x.controlFlow.taken, x.dpTrain, True
-            );
+            trainBPQ.enq(AluExeTrainBP {
+                pc: x.controlFlow.pc,
+                nextPc: x.controlFlow.nextPc,
+                iType: x.iType,
+                taken: x.controlFlow.taken,
+                dpTrain: x.dpTrain,
+                mispred: True
+            });
 `ifdef PERF_COUNT
             // performance counter
             if(inIfc.doStats) begin
@@ -333,14 +351,24 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
             // train branch predictor if needed 
             // since we can only do 1 training in a cycle, split the rule
             // XXX not training JAL, reduce chance of conflicts
-            (* split *)
-            if(x.iType == Jr || x.iType == Br) (* nosplit *) begin
-                inIfc.fetch_train_predictors(
-                    x.controlFlow.pc, x.controlFlow.nextPc, x.iType,
-                    x.controlFlow.taken, x.dpTrain, False
-                );
+            if(x.iType == Jr || x.iType == Br) begin
+                trainBPQ.enq(AluExeTrainBP {
+                    pc: x.controlFlow.pc,
+                    nextPc: x.controlFlow.nextPc,
+                    iType: x.iType,
+                    taken: x.controlFlow.taken,
+                    dpTrain: x.dpTrain,
+                    mispred: False
+                });
             end
         end
+    endrule
+
+    rule doTrainBP;
+        let x <- toGet(trainBPQ).get;
+        inIfc.fetch_train_predictors(
+            x.pc, x.nextPc, x.iType, x.taken, x.dpTrain, x.mispred
+        );
     endrule
 
     interface recvBypass = map(getRecvBypassIfc, bypassWire);
