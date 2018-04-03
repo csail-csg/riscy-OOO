@@ -27,7 +27,10 @@ import BRAMFIFO::*;
 import GetPut::*;
 import ClientServer::*;
 import FShow::*;
+import Vector::*;
+import RegFile::*;
 
+import Ehr::*;
 import Types::*;
 import ProcTypes::*;
 import CacheUtils::*;
@@ -36,20 +39,16 @@ import DramCommon::*;
 import MMIOAddrs::*;
 import LLCache::*;
 
-export DramLLC(..);
 export mkDramLLC;
 
-interface DramLLC;
-    interface Client#(DramUserReq, DramUserData) toDram;
-    method Action setLatency(DramLatency lat);
-endinterface
-
 typedef Bit#(TLog#(DramMaxReqs)) DramReqIdx;
+typedef Bit#(TLog#(DramLatency)) DramTimer;
 
 module mkDramLLC#(
     MemFifoClient#(idT, childT) llc
-)(DramLLC) provisos(
+)(Client#(DramUserReq, DramUserData)) provisos(
     Bits#(idT, a__), Bits#(childT, b__),
+    FShow#(ToMemMsg#(idT, childT)), FShow#(MemRsMsg#(idT, childT)),
     Add#(SizeOf#(Line), 0, DramUserDataSz) // make sure Line sz = Dram data sz
 );
     Bool verbose = True;
@@ -62,17 +61,17 @@ module mkDramLLC#(
     FIFO#(DramUserData) dramRespQ <- mkFIFO;
 
     // FIFO of reads in DRAM
-    FIFO#(DramReqIdx) pendRdQ <- mkSizedBRAMFIFO(valueof(DramLLCMaxReads));
+    FIFO#(DramReqIdx) pendRdQ <- mkSizedFIFO(valueof(DramMaxReads));
 
     // MSHRs to keep in-flight read and write requests
-    Vector#(DramMaxReqs, Ehr#(2, Bool))        valid      <- replicateM(mkEhr(False));
-    Vector#(DramMaxReqs, Ehr#(1, idT))         reqId      <- replicateM(mkEhr(?));
-    Vector#(DramMaxReqs, Ehr#(1, childT))      reqChild   <- replicateM(mkEhr(?));
-    Vector#(DramMaxReqs, Ehr#(1, Bool))        reqIsLd    <- replicateM(mkEhr(?));
-    Vector#(DramMaxReqs, Ehr#(2, DramLatency)) remainTime <- replicateM(mkEhr(?));
-    Vector#(DramMaxReqs, Ehr#(2, Bool))        dataReady  <- replicateM(mkEhr(?));
-    Vector#(DramMaxReqs, Ehr#(2, Bool))        responding <- replicateM(mkEhr(?));
-    RegFile#(DramReqIdx, DramUserData)         respData   <- mkRegFile(0, fromInteger(valueof(DramMaxReqs) - 1));
+    Vector#(DramMaxReqs, Ehr#(2, Bool))      valid      <- replicateM(mkEhr(False));
+    Vector#(DramMaxReqs, Ehr#(1, idT))       reqId      <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(1, childT))    reqChild   <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(1, Bool))      reqIsLd    <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(2, DramTimer)) remainTime <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(2, Bool))      dataReady  <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(2, Bool))      responding <- replicateM(mkEhr(?));
+    RegFile#(DramReqIdx, DramUserData)       respData   <- mkRegFile(0, fromInteger(valueof(DramMaxReqs) - 1));
 
     let valid_sendResp = getVEhrPort(valid, 0); // write
     let valid_findResp = getVEhrPort(valid, 1);
@@ -113,26 +112,26 @@ module mkDramLLC#(
     Reg#(DramReqIdx) initFreeQIdx <- mkReg(0);
     Reg#(Bool) freeQInited <- mkReg(False);
 
-    // DRAM latncy
-    Reg#(DramLatency) latency <- mkRegU;
-    Reg#(Bool) latencyInited <- mkReg(False);
+    // DRAM latncy: the real latency is latency+2, so subtract 2 here
+    DramTimer latency = fromInteger(valueof(DramLatency) - 2);
 
-    Bool inited = freeQInited && latencyInited;
+    Bool inited = freeQInited;
 
     rule doInitFreeQ(!freeQInited);
         freeQ.enq(initFreeQIdx);
         initFreeQIdx <= initFreeQIdx + 1;
         if(initFreeQIdx == fromInteger(valueof(DramMaxReqs) - 1)) begin
             freeQInited <= True;
+            if(verbose) $display("[DRAMLLC doInitFreeQ] freeQ init done");
         end
     endrule
 
     (* fire_when_enabled, no_implicit_conditions *)
     rule decLatency(inited);
         for(Integer i = 0; i < valueof(DramMaxReqs); i = i+1) begin
-            DramLatency lat = remainLatency_decLat[i];
+            DramTimer lat = remainTime_decLat[i];
             if(lat > 0) begin
-                remainLatency_decLat[i] <= lat - 1;
+                remainTime_decLat[i] <= lat - 1;
             end
         end
     endrule
@@ -185,7 +184,7 @@ module mkDramLLC#(
             end
         endcase
         // req DRAM and pend read FIFO
-        dramReq.enq(dramReq);
+        dramReqQ.enq(dramReq);
         if(isLd) begin
             pendRdQ.enq(idx);
         end
@@ -194,7 +193,7 @@ module mkDramLLC#(
         reqId_req[idx] <= id;
         reqChild_req[idx] <= child;
         reqIsLd_req[idx] <= isLd;
-        remainLatency_req[idx] <= latency;
+        remainTime_req[idx] <= latency;
         dataReady_req[idx] <= False;
         responding_req[idx] <= False;
         if(verbose) begin
@@ -261,16 +260,6 @@ module mkDramLLC#(
         freeQ.enq(idx);
     endrule
 
-    interface Client toDram;
-        interface Get request = toGet(dramReqQ);
-        interface Put response = toPut(dramRespQ);
-    endinterface
-
-    method Action setLatency(DramLatency x) if(!latencyInited);
-        // The real latency is latency+2, so subtract 2 here
-        let lat = x > 2 ? x - 2 : 0;
-        latency <= lat;
-        latencyInited <= True;
-        if(verbose) $display("[DramLLC setLatency] %d", lat);
-    endmethod
+    interface Get request = toGet(dramReqQ);
+    interface Put response = toPut(dramRespQ);
 endmodule

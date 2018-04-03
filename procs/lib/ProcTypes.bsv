@@ -75,9 +75,10 @@ typedef union tagged {
     StQTag St;
 } LdStQTag deriving(Bits, Eq, FShow);
 
-typedef Bit#(8) DramLatency;
-typedef `DRAMLLC_MAX_READS DramLLCMaxReads;
 typedef `DRAM_MAX_REQS DramMaxReqs;
+typedef `DRAM_MAX_READS DramMaxReads;
+typedef `DRAM_MAX_WRITES DramMaxWrites;
+typedef `DRAM_LATENCY DramLatency;
 
 typedef Bit#(`LOG_DEADLOCK_CYCLES) DeadlockTimer;
 

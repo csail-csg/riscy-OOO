@@ -63,7 +63,10 @@
 `define LOG_L1_WAYS 3 // 8 ways
 `define LOG_LLC_WAYS 4 // 16 ways
 
-`define DRAMLLC_MAX_READS TExp#(`LOG_LLC_WAYS) // max reads in DRAM, match LLC ways
+`define DRAM_MAX_READS TExp#(`LOG_LLC_WAYS) // max reads in DRAM, match LLC ways
+`define DRAM_MAX_WRITES 16 // write buffer size in AWS DRAM controller
+`define DRAM_MAX_REQS 24
+`define DRAM_LATENCY 120 // model a constant dram latency
 
 //
 // ==== CORE SIZE ====

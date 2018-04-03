@@ -28,8 +28,7 @@ interface ProcRequest;
     method Action reset();
     method Action start(
         Bit#(64) startpc,
-        Bit#(64) toHostAddr, Bit#(64) fromHostAddr,
-        Bit#(8) dramLatency
+        Bit#(64) toHostAddr, Bit#(64) fromHostAddr
     );
     method Action from_host(Bit#(64) v);
     // Boot rom is 8B aligned, index is in terms of 8B block

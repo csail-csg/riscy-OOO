@@ -116,8 +116,7 @@ endmodule
 interface ProcReq;
     method Action start(
         Addr startpc,
-        Addr toHostAddr, Addr fromHostAddr,
-        DramLatency latency
+        Addr toHostAddr, Addr fromHostAddr
     );
     method Action from_host(Data v);
     method Action bootRomInitReq(Bit#(16) index, Data v);
@@ -127,13 +126,13 @@ endinterface
 // this module should be under user clock domain
 module mkProcReqSync#(
     Vector#(CoreNum, CoreReq) req,
-    MMIOPlatform mmio, DramLLC dramLLC,
+    MMIOPlatform mmio,
     Clock portalClk, Reset portalRst
 )(ProcReq);
     Clock userClk <- exposeCurrentClock;
     Reset userRst <- exposeCurrentReset;
     SyncFIFOIfc#(
-        Tuple4#(Addr, Addr, Addr, DramLatency)
+        Tuple3#(Addr, Addr, Addr)
     ) startQ <- mkSyncFifo(1, portalClk, portalRst, userClk, userRst);
     SyncFIFOIfc#(Data) hostQ <- mkSyncFifo(
         1, portalClk, portalRst, userClk, userRst
@@ -147,12 +146,11 @@ module mkProcReqSync#(
 
     rule doStart;
         // broad cast to each core and MMIO platform
-        let {pc, toHost, fromHost, latency} <- toGet(startQ).get;
+        let {pc, toHost, fromHost} <- toGet(startQ).get;
         for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
             req[i].start(pc, toHost, fromHost);
         end
         mmio.start(toHost, fromHost);
-        dramLLC.setLatency(latency);
         // check addr alignment
         doAssert(toHost[2:0] == 0, "tohost addr must be 8B aligned");
         doAssert(fromHost[2:0] == 0, "fromhost addr must be 8B aligned");
@@ -178,12 +176,10 @@ module mkProcReqSync#(
 
     method Action start(
         Addr startpc,
-        Addr toHostAddr, Addr fromHostAddr,
-        DramLatency latency
+        Addr toHostAddr, Addr fromHostAddr
     );
-        startQ.enq(tuple4(startpc,
-                          toHostAddr, fromHostAddr,
-                          latency));
+        startQ.enq(tuple3(startpc,
+                          toHostAddr, fromHostAddr));
     endmethod
     method Action bootRomInitReq(Bit#(16) index, Data v);
         bootRomInitQ.enq(tuple2(truncate(index), v));

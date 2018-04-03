@@ -52,7 +52,6 @@
 
 // system config
 static uint32_t core_num = 1; // default to 1 core
-static int mem_latency = 120; // default to 120 cycles
 
 // File for output
 static FILE *debug_file = 0;
@@ -138,14 +137,11 @@ int runHtifTest() {
     addr_t tohost_addr = riscy_htif->get_tohost_addr();
     addr_t fromhost_addr = riscy_htif->get_fromhost_addr();
     fprintf(stderr, "startpc %llx, total %d cores, "
-            "toHost addr %llx, fromHost addr %llx\n, "
-            "mem latency %d\n",
+            "toHost addr %llx, fromHost addr %llx\n",
             (long long unsigned)startpc, (int)core_num,
-            (long long unsigned)tohost_addr, (long long unsigned)fromhost_addr,
-            mem_latency);
+            (long long unsigned)tohost_addr, (long long unsigned)fromhost_addr);
     procRequestProxy->start(startpc,
-                            tohost_addr, fromhost_addr,
-                            mem_latency);
+                            tohost_addr, fromhost_addr);
 
     // wait for result
     int result = procIndication->waitResult();
@@ -201,11 +197,6 @@ int main(int argc, char * const *argv) {
             // first argument was "--mem-size"
             // second argument should be memory size in MB
             mem_sz = (size_t)(atoi(argv[2])) * 1024 * 1024;
-            // shift argc and argv accordingly
-            argc-=2; argv+=2;
-        } else if (argc > 2 && strcmp(argv[1],"--mem-lat") == 0) {
-            // mem latency
-            mem_latency = atoi(argv[2]);
             // shift argc and argv accordingly
             argc-=2; argv+=2;
         } else if(argc > 2 && strcmp(argv[1],"--deadlock-check-after") == 0) {

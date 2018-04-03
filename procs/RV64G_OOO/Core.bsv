@@ -688,8 +688,6 @@ module mkCore#(CoreId coreId)(Core);
     endinterface
 
     interface CoreIndInv coreIndInv;
-        method debug_verify = commitStage.debug_verify;
-
         method ActionValue#(ProcPerfResp) perfResp;
 `ifdef PERF_COUNT
             perfRespQ.deq;

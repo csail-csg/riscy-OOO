@@ -26,9 +26,10 @@ import DDR3Common::*;
 import DDR3Controller::*;
 import AWSDramCommon::*;
 import AWSDramController::*;
+import ProcTypes::*;
 
 // VC707 1GB DDR3 instance
-typedef 128 DDR3MaxReadNum;
+typedef DramMaxReads DDR3MaxReadNum;
 typedef 10 DDR3SimDelay;
 
 typedef DDR3_1GB_User#(DDR3MaxReadNum, DDR3SimDelay) DDR3UserWrapper;
@@ -41,8 +42,8 @@ module mkDDR3Wrapper#(Clock sys_clk, Reset sys_rst)(DDR3FullWrapper);
 endmodule
 
 // AWS DRAM instance
-typedef 16 AWSDramMaxReadNum;
-typedef 16 AWSDramMaxWriteNum;
+typedef DramMaxReads AWSDramMaxReadNum;
+typedef DramMaxWrites AWSDramMaxWriteNum;
 typedef 10 AWSDramSimDelay;
 
 typedef AWSDramUser#(
@@ -60,6 +61,5 @@ typedef AWSDramFull#(
 (* synthesize *)
 module mkAWSDramWrapper#(Clock dramAxiClk, Reset dramAxiRst)(AWSDramFullWrapper);
     let m <- mkAWSDramController(dramAxiClk, dramAxiRst);
-    //let m <- mkAWSDramBlockController(dramAxiClk, dramAxiRst);
     return m;
 endmodule
