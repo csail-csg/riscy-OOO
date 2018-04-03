@@ -37,12 +37,10 @@ typedef enum {
     L1DLdMissCnt,
     L1DLdMissLat,
     L1DStCnt,
-    L1DStMissDataCnt,
-    L1DStMissPermCnt,
+    L1DStMissCnt,
     L1DStMissLat,
     L1DAmoCnt,
-    L1DAmoMissDataCnt,
-    L1DAmoMissPermCnt,
+    L1DAmoMissCnt,
     L1DAmoMissLat
 } L1DPerfType deriving(Bits, Eq, FShow);
 

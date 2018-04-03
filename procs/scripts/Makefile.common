@@ -91,6 +91,9 @@ CONNECTALFLAGS += --bscflags=" -D CORE_$(CORE_SIZE) "
 # core num
 CONNECTALFLAGS += --bscflags=" -D NUM_CORES=$(CORE_NUM) "
 
+# cache size
+CONNECTALFLAGS += --bscflags=" -D CACHE_$(CACHE_SIZE) "
+
 # mem model
 ifeq ($(TSO_MM),true)
 CONNECTALFLAGS += --bscflags=" -D TSO_MM "

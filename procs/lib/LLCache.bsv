@@ -37,8 +37,8 @@ import L1CoCache::*;
 import LLCDmaConnect::*;
 import Performance::*;
 
-// Last-Level: 1MB per core, no more than 2MB
-typedef TMin#(15, TAdd#(14, TLog#(CoreNum))) LgLLLineNum;
+// Last-Level
+typedef `LOG_LLC_LINES LgLLLineNum;
 typedef `LOG_LLC_WAYS LgLLWayNum;
 typedef TExp#(LgLLWayNum) LLWayNum;
 typedef 0 LgLLBankNum;

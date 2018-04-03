@@ -148,12 +148,10 @@ public:
         init(DCache, L1DLdMissCnt, "D$ Ld miss num");
         init(DCache, L1DLdMissLat, "D$ Ld miss total latency");
         init(DCache, L1DStCnt, "D$ St num");
-        init(DCache, L1DStMissDataCnt, "D$ St miss data num");
-        init(DCache, L1DStMissPermCnt, "D$ St miss permission num");
+        init(DCache, L1DStMissCnt, "D$ St miss num");
         init(DCache, L1DStMissLat, "D$ St miss total latency");
         init(DCache, L1DAmoCnt, "D$ Amo num");
-        init(DCache, L1DAmoMissDataCnt, "D$ Amo miss data num");
-        init(DCache, L1DAmoMissPermCnt, "D$ Amo miss permission num");
+        init(DCache, L1DAmoMissCnt, "D$ Amo miss num");
         init(DCache, L1DAmoMissLat, "D$ Amo miss total latency");
 
         // ITlb
