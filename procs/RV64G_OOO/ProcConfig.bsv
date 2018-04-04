@@ -93,6 +93,18 @@
 
 `endif
 
+`ifdef CACHE_MC
+
+    // L1
+    `define LOG_L1_LINES 9 // 32KB
+    `define LOG_L1_WAYS 2 // 4 ways
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+`endif
+
 //
 // ==== CORE SIZE ====
 //
@@ -106,8 +118,8 @@
     `define ROB_SIZE 48
 
     // speculation
-    `define NUM_EPOCHS 16
-    `define NUM_SPEC_TAGS 32
+    `define NUM_EPOCHS 12
+    `define NUM_SPEC_TAGS 24
 
     // LSQ
     `define LDQ_SIZE 18

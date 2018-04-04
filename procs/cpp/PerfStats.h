@@ -181,8 +181,15 @@ public:
         init(ExeStage, ExeRedirectBr, "Exe stage redirect branch num");
         init(ExeStage, ExeRedirectJr, "Exe stage redirect jump reg num");
         init(ExeStage, ExeRedirectOther, "Exe stage redirect other num");
-        init(ExeStage, ExeKillLdByLdSt, "Exe stage kill load num (by Ld/St)");
-        init(ExeStage, ExeKillLdByCache, "Exe stage kill load num (by cache)");
+        init(ExeStage, ExeLdKillByLd, "Exe stage kill load num by Ld");
+        init(ExeStage, ExeLdKillBySt, "Exe stage kill load num by St)");
+        init(ExeStage, ExeLdKillByCache, "Exe stage kill load num by cache");
+        init(ExeStage, ExeLdStallByLd, "Exe stage stall load num by LdQ");
+        init(ExeStage, ExeLdStallBySt, "Exe stage stall load num by StQ");
+        init(ExeStage, ExeLdStallBySB, "Exe stage stall load num by SB");
+        init(ExeStage, ExeLdQFullCycles, "Exe stage LdQ full cycles");
+        init(ExeStage, ExeStQFullCycles, "Exe stage StQ full cycles");
+        init(ExeStage, ExeROBFullCycles, "Exe stage ROB full cycles");
         init(ExeStage, ExeTlbExcep, "Exe stage TLB exception num");
 
         // ComStage

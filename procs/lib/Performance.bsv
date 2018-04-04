@@ -76,8 +76,15 @@ typedef enum {
     ExeRedirectBr,
     ExeRedirectJr,
     ExeRedirectOther,
-    ExeKillLdByLdSt,
-    ExeKillLdByCache,
+    ExeLdKillByLd,
+    ExeLdKillBySt,
+    ExeLdKillByCache,
+    ExeLdStallByLd,
+    ExeLdStallBySt,
+    ExeLdStallBySB,
+    ExeLdQFullCycles,
+    ExeStQFullCycles,
+    ExeROBFullCycles,
     ExeTlbExcep
 } ExeStagePerfType deriving(Bits, Eq, FShow);
 

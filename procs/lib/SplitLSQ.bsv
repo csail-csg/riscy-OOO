@@ -41,6 +41,7 @@ export LdQDeqEntry(..);
 export StQDeqEntry(..);
 export LSQUpdateAddrResult(..);
 export LSQForwardResult(..);
+export LSQStallSource(..);
 export LSQIssueLdResult(..);
 export LSQIssueLdInfo(..);
 export LSQKillLdInfo(..);
@@ -273,9 +274,10 @@ typedef struct {
     Data data; // align with dword, not final result written to reg file
 } LSQForwardResult deriving(Bits, Eq, FShow);
 
+typedef enum {Ld, St, SB} LSQStallSource deriving(Bits, Eq, FShow);
 typedef union tagged {
     void ToCache;
-    void Stall;
+    LSQStallSource Stall;
     LSQForwardResult Forward;
 } LSQIssueLdResult deriving(Bits, Eq, FShow);
 
@@ -288,6 +290,7 @@ typedef struct {
 typedef struct {
     InstTag instTag;
     Maybe#(SpecTag) specTag;
+    Bool killByLd;
 } LSQKillLdInfo deriving(Bits, Eq, FShow);
 
 typedef struct {
@@ -424,6 +427,9 @@ interface SplitLSQ;
     method Bool stqEmpty;
     // Speculation
     interface SpeculationUpdate specUpdate;
+    // for performance
+    method Bool stqFull_ehrPort0;
+    method Bool ldqFull_ehrPort0;
 endinterface
 
 // --- auxiliary types and functions ---
@@ -509,7 +515,11 @@ module mkLSQIssueLdQ(LSQIssueLdQ);
 endmodule
 
 // killQ of LSQ tags should be killed
-typedef SpecFifo_SB_deq_enq_SB_deq_wrong_C_enq#(2, LdQTag) LSQKillLdQ;
+typedef struct {
+    LdQTag tag;
+    Bool killByLd;
+} LSQKillLd deriving(Bits, Eq, FShow);
+typedef SpecFifo_SB_deq_enq_SB_deq_wrong_C_enq#(2, LSQKillLd) LSQKillLdQ;
 (* synthesize *)
 module mkLSQKillLdQ(LSQKillLdQ);
     let m <- mkSpecFifo_SB_deq_enq_SB_deq_wrong_C_enq(True);
@@ -1587,7 +1597,10 @@ module mkSplitLSQ(SplitLSQ);
             if(findOldestLd(killLds) matches tagged Valid .killTag) begin
                 ld_killed_updAddr[killTag] <= True;
                 killByLdStQ.enq(ToSpecFifo {
-                    data: killTag,
+                    data: LSQKillLd {
+                        tag: killTag,
+                        killByLd: lsqTag matches tagged Ld .unused ? True : False
+                    },
                     spec_bits: ld_specBits_updAddr[killTag]
                 });
                 if(verbose) begin
@@ -1650,7 +1663,7 @@ module mkSplitLSQ(SplitLSQ);
         doAssert(!ld_waitWPResp_issue[tag], "issuing Ld cannot wait for WP resp");
 
         // issue result
-        LSQIssueLdResult issRes = Stall;
+        LSQIssueLdResult issRes = Stall (St);
 
         // common thing for TSO and WEAK: valid SQ entry older than the load
         Maybe#(StQVirTag) precedingSt = olderStVirTags[tag];
@@ -1698,7 +1711,7 @@ module mkSplitLSQ(SplitLSQ);
             case(st_memFunc[stTag])
                 Sc, Amo: begin
                     // cannot forward, stall the load
-                    issRes = Stall;
+                    issRes = Stall (St);
                     ld_depStQDeq_issue[tag] <= Valid (stTag);
                 end
                 St: begin
@@ -1715,7 +1728,7 @@ module mkSplitLSQ(SplitLSQ);
                     end
                     else begin
                         // cannot forward, stall
-                        issRes = Stall;
+                        issRes = Stall (St);
                         ld_depStQDeq_issue[tag] <= Valid (stTag);
                     end
                 end
@@ -1791,7 +1804,7 @@ module mkSplitLSQ(SplitLSQ);
                                    (isValid(ldTagOlderSt) && 
                                     validValue(ldTagOlderSt) >= stVTag))) begin
             // stalled by Ld, Lr or acquire fence in LQ
-            issRes = Stall;
+            issRes = Stall (Ld);
             if(ld_acq[ldTag]) begin
                 ld_depLdQDeq_issue[tag] <= matchLdTag;
             end
@@ -1810,7 +1823,7 @@ module mkSplitLSQ(SplitLSQ);
             // bypass or stall by SQ
             if(st_acq[stTag]) begin
                 // stall by acquire fence in SQ
-                issRes = Stall;
+                issRes = Stall (St);
                 ld_depStQDeq_issue[tag] <= matchStTag;
             end
             else begin
@@ -1818,7 +1831,7 @@ module mkSplitLSQ(SplitLSQ);
                 case(st_memFunc[stTag])
                     Sc, Amo: begin
                         // cannot forward, stall
-                        issRes = Stall;
+                        issRes = Stall (St);
                         ld_depStQDeq_issue[tag] <= matchStTag;
                     end
                     St: begin
@@ -1836,7 +1849,7 @@ module mkSplitLSQ(SplitLSQ);
                         end
                         else begin
                             // cannot forward, stall
-                            issRes = Stall;
+                            issRes = Stall (St);
                             ld_depStQDeq_issue[tag] <= matchStTag;
                         end
                     end
@@ -1862,7 +1875,7 @@ module mkSplitLSQ(SplitLSQ);
             else if(sbRes.matchIdx matches tagged Valid .idx) begin
                 // SB has matching entry, but cannot fully forward, wait for SB
                 // deq
-                issRes = Stall;
+                issRes = Stall (SB);
                 ld_depSBDeq_issue[tag] <= Valid (idx);
             end
             else begin
@@ -1875,7 +1888,8 @@ module mkSplitLSQ(SplitLSQ);
         end
 
         // if the Ld is issued, remove dependences on this issue
-        if(issRes != Stall) begin
+        Bool not_stall = issRes matches tagged Stall .unused ? False : True;
+        if(not_stall) begin
             function Action setReady(LdQTag i);
             action
                 // no need to check valid here, we can write anything to
@@ -1914,7 +1928,9 @@ module mkSplitLSQ(SplitLSQ);
             $display("[LSQ - getLdKilledByLdSt] ", fshow(killByLdStQ.first));
         end
         killByLdStQ.deq;
-        let tag = killByLdStQ.first.data;
+        LSQKillLd kill = killByLdStQ.first.data;
+        LdQTag tag = kill.tag;
+        Bool byLd = kill.killByLd;
         doAssert(
             ld_valid_getKill[tag] &&
             ld_computed_getKill[tag] &&
@@ -1925,7 +1941,8 @@ module mkSplitLSQ(SplitLSQ);
         );
         return LSQKillLdInfo {
             instTag: ld_instTag[tag],
-            specTag: ld_specTag_getKill[tag]
+            specTag: ld_specTag_getKill[tag],
+            killByLd: byLd
         };
     endmethod
 
@@ -1935,7 +1952,7 @@ module mkSplitLSQ(SplitLSQ);
             $display("[LSQ - getLdKilledByCache] ", fshow(killByCacheQ.first));
         end
         killByCacheQ.deq;
-        let tag = killByCacheQ.first.data;
+        let tag = killByCacheQ.first.data.tag;
         doAssert(
             ld_valid_getKill[tag] &&
             ld_computed_getKill[tag] &&
@@ -1946,7 +1963,8 @@ module mkSplitLSQ(SplitLSQ);
         );
         return LSQKillLdInfo {
             instTag: ld_instTag[tag],
-            specTag: ld_specTag_getKill[tag]
+            specTag: ld_specTag_getKill[tag],
+            killByLd: False
         };
     endmethod
 `endif
@@ -2157,7 +2175,10 @@ module mkSplitLSQ(SplitLSQ);
         if(findOldestLd(killLds) matches tagged Valid .killTag) begin
             ld_killed_evict[killTag] <= True;
             killByCacheQ.enq(ToSpecFifo {
-                data: killTag,
+                data: LSQKillLd {
+                    tag:killTag,
+                    killByLd: False
+                },
                 spec_bits: ld_specBits_evict[killTag]
             });
             if(verbose) begin
@@ -2350,4 +2371,12 @@ module mkSplitLSQ(SplitLSQ);
             wrongSpec_wakeBySB_conflict.wset(?);
         endmethod
     endinterface
+
+    method Bool stqFull_ehrPort0;
+        return st_enqP == st_deqP && st_valid[st_enqP][0];
+    endmethod
+
+    method Bool ldqFull_ehrPort0;
+        return ld_enqP == ld_deqP[0] && ld_valid[ld_enqP][0];
+    endmethod
 endmodule
