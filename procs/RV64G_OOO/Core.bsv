@@ -589,7 +589,7 @@ module mkCore#(CoreId coreId)(Core);
             SupRenameCnt: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
             ExeTlbExcep,
-            ExeLdKillByLd, ExeLdKilySt, ExeKillLdByCache,
+            ExeLdKillByLd, ExeLdKillBySt, ExeLdKillByCache,
             ExeLdStallByLd, ExeLdStallBySt, ExeLdStallBySB: coreFix.memExeIfc.getPerf(pType);
             ExeLdQFullCycles: exeLdQFullCycles;
             ExeStQFullCycles: exeStQFullCycles;

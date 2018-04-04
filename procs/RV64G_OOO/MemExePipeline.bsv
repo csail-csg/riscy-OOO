@@ -621,7 +621,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             reqLdQ.enq(tuple2(zeroExtend(info.tag), info.paddr));
         end
         else begin
-            if(issueRes matches tagged Stall .source) begin
+            if(issRes matches tagged Stall .source) begin
 `ifdef PERF_COUNT
                 // performance counter
                 if(inIfc.doStats) begin

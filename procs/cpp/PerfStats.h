@@ -182,7 +182,7 @@ public:
         init(ExeStage, ExeRedirectJr, "Exe stage redirect jump reg num");
         init(ExeStage, ExeRedirectOther, "Exe stage redirect other num");
         init(ExeStage, ExeLdKillByLd, "Exe stage kill load num by Ld");
-        init(ExeStage, ExeLdKillBySt, "Exe stage kill load num by St)");
+        init(ExeStage, ExeLdKillBySt, "Exe stage kill load num by St");
         init(ExeStage, ExeLdKillByCache, "Exe stage kill load num by cache");
         init(ExeStage, ExeLdStallByLd, "Exe stage stall load num by LdQ");
         init(ExeStage, ExeLdStallBySt, "Exe stage stall load num by StQ");
