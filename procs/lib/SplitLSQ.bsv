@@ -2293,7 +2293,7 @@ module mkSplitLSQ(SplitLSQ);
             // neither killed nor verified. If such entry does not exists, then
             // verifyP should be the same as new enqP.
             function Bool unkilledUnverified(StQTag i);
-                return st_valid_wrongSpec[i] && stNeedKill[i] &&
+                return st_valid_wrongSpec[i] && !stNeedKill[i] &&
                        !st_verified_wrongSpec[i];
             endfunction
             Vector#(StQSize, Bool) unverifiedSts = map(unkilledUnverified,
