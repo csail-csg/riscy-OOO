@@ -27,16 +27,29 @@ import FShow::*;
 
 // query performance counters in each stage/module
 typedef enum {
-    LdCnt,
-    LdMissCnt,
-    LdMissLat,
-    StCnt,
-    StMissCnt,
-    StMissLat,
-    AmoCnt,
-    AmoMissCnt,
-    AmoMissLat
-} L1PerfType deriving(Bits, Eq, FShow);
+    L1ILdCnt,
+    L1ILdMissCnt,
+    L1ILdMissLat
+} L1IPerfType deriving(Bits, Eq, FShow);
+
+typedef enum {
+    L1DLdCnt,
+    L1DLdMissCnt,
+    L1DLdMissLat,
+    L1DStCnt,
+    L1DStMissCnt,
+    L1DStMissLat,
+    L1DAmoCnt,
+    L1DAmoMissCnt,
+    L1DAmoMissLat
+} L1DPerfType deriving(Bits, Eq, FShow);
+
+typedef enum {
+    LLCDmaMemLdCnt,
+    LLCDmaMemLdLat,
+    LLCNormalMemLdCnt,
+    LLCNormalMemLdLat
+} LLCPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
     L1TlbAccessCnt,
@@ -46,7 +59,9 @@ typedef enum {
 
 typedef enum {
     L2TlbInstMissCnt,
-    L2TlbDataMissCnt
+    L2TlbInstMissLat,
+    L2TlbDataMissCnt,
+    L2TlbDataMissLat
 } L2TlbPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
@@ -61,7 +76,15 @@ typedef enum {
     ExeRedirectBr,
     ExeRedirectJr,
     ExeRedirectOther,
-    ExeKillLd,
+    ExeLdKillByLd,
+    ExeLdKillBySt,
+    ExeLdKillByCache,
+    ExeLdStallByLd,
+    ExeLdStallBySt,
+    ExeLdStallBySB,
+    ExeLdQFullCycles,
+    ExeStQFullCycles,
+    ExeROBFullCycles,
     ExeTlbExcep
 } ExeStagePerfType deriving(Bits, Eq, FShow);
 
@@ -105,7 +128,8 @@ typedef enum {
     L2Tlb,
     DecStage,
     ExeStage,
-    ComStage
+    ComStage,
+    LLC
 } PerfLocation deriving(Bits, Eq, FShow);
 
 typedef struct {

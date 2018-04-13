@@ -375,6 +375,9 @@ module mkCore#(CoreId coreId)(Core);
     Reg#(Bool) doStats = coreFix.doStatsIfc; // whether data is collected
 `ifdef PERF_COUNT
     // OOO execute stag (in AluExePipeline and MemExePipeline)
+    Count#(Data) exeLdQFullCycles <- mkCount(0);
+    Count#(Data) exeStQFullCycles <- mkCount(0);
+    Count#(Data) exeROBFullCycles <- mkCount(0);
 
     // commit stage (many in CommitStage.bsv)
     // cycle
@@ -512,8 +515,23 @@ module mkCore#(CoreId coreId)(Core);
 
 `ifdef PERF_COUNT
     // incr cycle count
+    (* fire_when_enabled, no_implicit_conditions *)
     rule incCycleCnt(doStats);
         cycleCnt.incr(1);
+    endrule
+
+    // incr buffer full cycles
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule incLdQFull(doStats && lsq.ldqFull_ehrPort0);
+        exeLdQFullCycles.incr(1);
+    endrule
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule incStQFull(doStats && lsq.stqFull_ehrPort0);
+        exeStQFullCycles.incr(1);
+    endrule
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule incROBFull(doStats && rob.isFull_ehrPort0);
+        exeROBFullCycles.incr(1);
     endrule
 
     // broadcast whether we should collect data
@@ -584,7 +602,12 @@ module mkCore#(CoreId coreId)(Core);
         Data data = (case(pType)
             SupRenameCnt: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
-            ExeKillLd, ExeTlbExcep: coreFix.memExeIfc.getPerf(pType);
+            ExeTlbExcep,
+            ExeLdKillByLd, ExeLdKillBySt, ExeLdKillByCache,
+            ExeLdStallByLd, ExeLdStallBySt, ExeLdStallBySB: coreFix.memExeIfc.getPerf(pType);
+            ExeLdQFullCycles: exeLdQFullCycles;
+            ExeStQFullCycles: exeStQFullCycles;
+            ExeROBFullCycles: exeROBFullCycles;
             default: 0;
         endcase);
         exePerfRespQ.enq(PerfResp {

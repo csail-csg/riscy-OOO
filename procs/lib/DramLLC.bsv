@@ -25,81 +25,241 @@ import Assert::*;
 import FIFO::*;
 import BRAMFIFO::*;
 import GetPut::*;
+import ClientServer::*;
 import FShow::*;
+import Vector::*;
+import RegFile::*;
 
+import Ehr::*;
 import Types::*;
+import ProcTypes::*;
 import CacheUtils::*;
 import CCTypes::*;
 import DramCommon::*;
+import MMIOAddrs::*;
 import LLCache::*;
 
+export mkDramLLC;
+
+typedef Bit#(TLog#(DramMaxReqs)) DramReqIdx;
+typedef Bit#(TLog#(DramLatency)) DramTimer;
+
 module mkDramLLC#(
-    DramUser#(dramReadNum, dramWriteNum, dramSimDelay, dramErrT) dram,
-    MemFifoClient#(idT, childT) llc,
-    Integer maxReadNum, Bool useBramFifo
-)(Empty) provisos(
-    Alias#(idT, LdMemRqId#(LLCRqMshrIdx)), // LLC Ld mem req ID
-    Alias#(childT, void), // single LLC as child of DRAM
+    MemFifoClient#(idT, childT) llc
+)(Client#(DramUserReq, DramUserData)) provisos(
+    Bits#(idT, a__), Bits#(childT, b__),
+    FShow#(ToMemMsg#(idT, childT)), FShow#(MemRsMsg#(idT, childT)),
     Add#(SizeOf#(Line), 0, DramUserDataSz) // make sure Line sz = Dram data sz
 );
     Bool verbose = True;
 
+    // rule ordering:
+    // sendResp < findResp < doDramResp < decLatency < doReq
+
+    // FIFOs to DRAM
+    FIFO#(DramUserReq) dramReqQ <- mkFIFO;
+    FIFO#(DramUserData) dramRespQ <- mkFIFO;
+
+    // FIFO of reads in DRAM
+    FIFO#(DramReqIdx) pendRdQ <- mkSizedFIFO(valueof(DramMaxReads));
+
+    // MSHRs to keep in-flight read and write requests
+    Vector#(DramMaxReqs, Ehr#(2, Bool))      valid      <- replicateM(mkEhr(False));
+    Vector#(DramMaxReqs, Ehr#(1, idT))       reqId      <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(1, childT))    reqChild   <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(1, Bool))      reqIsLd    <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(2, DramTimer)) remainTime <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(2, Bool))      dataReady  <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(2, Bool))      responding <- replicateM(mkEhr(?));
+    RegFile#(DramReqIdx, DramUserData)       respData   <- mkRegFile(0, fromInteger(valueof(DramMaxReqs) - 1));
+
+    let valid_sendResp = getVEhrPort(valid, 0); // write
+    let valid_findResp = getVEhrPort(valid, 1);
+    let valid_dramResp = getVEhrPort(valid, 1);
+    let valid_req      = getVEhrPort(valid, 1); // write
+
+    let reqId_sendResp = getVEhrPort(reqId, 0);
+    let reqId_req      = getVEhrPort(reqId, 0); // write
+
+    let reqChild_sendResp = getVEhrPort(reqChild, 0);
+    let reqChild_req      = getVEhrPort(reqChild, 0); // write
+
+    let reqIsLd_sendResp = getVEhrPort(reqIsLd, 0);
+    let reqIsLd_findResp = getVEhrPort(reqIsLd, 0);
+    let reqIsLd_dramResp = getVEhrPort(reqIsLd, 0);
+    let reqIsLd_req      = getVEhrPort(reqIsLd, 0); // write
+
+    let remainTime_sendResp = getVEhrPort(remainTime, 0);
+    let remainTime_findResp = getVEhrPort(remainTime, 0);
+    let remainTime_decLat   = getVEhrPort(remainTime, 0); // write
+    let remainTime_req      = getVEhrPort(remainTime, 1); // write
+
+    let dataReady_sendResp = getVEhrPort(dataReady, 0);
+    let dataReady_findResp = getVEhrPort(dataReady, 0);
+    let dataReady_dramResp = getVEhrPort(dataReady, 0); // write
+    let dataReady_req      = getVEhrPort(dataReady, 1); // write
+
+    let responding_sendResp = getVEhrPort(responding, 0);
+    let responding_findResp = getVEhrPort(responding, 0); // write
+    let responding_dramResp = getVEhrPort(responding, 1); // assert
+    let responding_req      = getVEhrPort(responding, 1); // write
+
+    // FIFO of idx to resp
+    FIFO#(DramReqIdx) respIdxQ <- mkFIFO;
+
+    // Free entry Q
+    FIFO#(DramReqIdx) freeQ <- mkSizedFIFO(valueof(DramMaxReqs));
+    Reg#(DramReqIdx) initFreeQIdx <- mkReg(0);
+    Reg#(Bool) freeQInited <- mkReg(False);
+
+    // DRAM latncy: the real latency is latency+2, so subtract 2 here
+    DramTimer latency = fromInteger(valueof(DramLatency) - 2);
+
+    Bool inited = freeQInited;
+
+    rule doInitFreeQ(!freeQInited);
+        freeQ.enq(initFreeQIdx);
+        initFreeQIdx <= initFreeQIdx + 1;
+        if(initFreeQIdx == fromInteger(valueof(DramMaxReqs) - 1)) begin
+            freeQInited <= True;
+            if(verbose) $display("[DRAMLLC doInitFreeQ] freeQ init done");
+        end
+    endrule
+
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule decLatency(inited);
+        for(Integer i = 0; i < valueof(DramMaxReqs); i = i+1) begin
+            DramTimer lat = remainTime_decLat[i];
+            if(lat > 0) begin
+                remainTime_decLat[i] <= lat - 1;
+            end
+        end
+    endrule
+
     function DramUserAddr getDramAddrFromLLC(Addr a);
-        return truncate(a >> valueof(TLog#(DramUserBESz)));
+        // when requesting DRAM, we need to subtract the main mem base from the
+        // requesting addr
+        Addr dramBase = {mainMemBaseAddr, 3'b0};
+        Addr addr = a - dramBase;
+        return truncate(addr >> valueof(TLog#(DramUserBESz)));
     endfunction
 
-    FIFO#(Tuple2#(idT, childT)) pendRdQ = ?;
-    if(useBramFifo) begin
-        pendRdQ <- mkSizedBRAMFIFO(maxReadNum);
-    end
-    else begin
-        pendRdQ <- mkSizedFIFO(maxReadNum);
-    end
-
-    rule doReq;
+    rule doReq(inited);
+        // get free entry
+        freeQ.deq;
+        let idx = freeQ.first;
+        doAssert(!valid_req[idx], "free entry must be invalid");
+        // get req from LLC
         llc.toM.deq;
-        case(llc.toM.first) matches
+        let req = llc.toM.first;
+        // figure out dram req, entry init values, etc.
+        DramUserReq dramReq = ?;
+        idT id = ?;
+        childT child = ?;
+        Bool isLd = False;
+        case(req) matches
             tagged Ld .ld: begin
-                let dramReq = DramUserReq {
+                dramReq = DramUserReq {
                     addr: getDramAddrFromLLC(ld.addr),
                     data: ?,
                     wrBE: 0
                 };
-                dram.req(dramReq);
-                pendRdQ.enq(tuple2(ld.id, ld.child));
-                if(verbose) begin
-                    $display("  [DramLLC doReq] Ld: ", fshow(ld), " ; ", fshow(dramReq));
-                end
+                id = ld.id;
+                child = ld.child;
+                isLd = True;
             end
             tagged Wb .wb: begin
-                let dramReq = DramUserReq {
+                dramReq = DramUserReq {
                     addr: getDramAddrFromLLC(wb.addr),
                     data: pack(wb.data),
                     wrBE: pack(wb.byteEn)
                 };
-                dram.req(dramReq);
-                if(verbose) begin
-                    $display("  [DramLLC doReq] St: ", fshow(wb), " ; ", fshow(dramReq));
-                end
                 doAssert(dramReq.wrBE != 0, "St req cannot have all 0 BE");
+                id = ?;
+                child = ?;
+                isLd = False;
             end
             default: begin
                 doAssert(False, "unknown LLC req");
             end
         endcase
-    endrule
-
-    rule doLdResp;
-        let data <- dram.rdResp;
-        let {id, child} <- toGet(pendRdQ).get;
-        MemRsMsg#(idT, childT) resp = MemRsMsg {
-            data: unpack(data),
-            child: child,
-            id: id
-        };
-        llc.rsFromM.enq(resp);
+        // req DRAM and pend read FIFO
+        dramReqQ.enq(dramReq);
+        if(isLd) begin
+            pendRdQ.enq(idx);
+        end
+        // set up entry
+        valid_req[idx] <= True;
+        reqId_req[idx] <= id;
+        reqChild_req[idx] <= child;
+        reqIsLd_req[idx] <= isLd;
+        remainTime_req[idx] <= latency;
+        dataReady_req[idx] <= False;
+        responding_req[idx] <= False;
         if(verbose) begin
-            $display("  [DramLLC doLdResp] ", fshow(resp));
+            $display("[DramLLC doReq] ", fshow(req), " ; ", fshow(idx), "; ", fshow(dramReq));
         end
     endrule
+
+    rule doDramResp(inited);
+        let data <- toGet(dramRespQ).get;
+        let idx <- toGet(pendRdQ).get;
+        respData.upd(idx, data);
+        dataReady_dramResp[idx] <= True;
+        if(verbose) begin
+            $display("[DramLLC doDramResp] ", fshow(idx), "; ", fshow(data));
+        end
+        doAssert(valid_dramResp[idx], "must be valid");
+        doAssert(reqIsLd_dramResp[idx], "must be load");
+        doAssert(!dataReady_dramResp[idx], "data not ready");
+        doAssert(!responding_dramResp[idx], "must not be responding");
+    endrule
+
+    rule findResp(inited);
+        function Bool readyToResp(DramReqIdx i);
+            return valid_findResp[i] && // valid
+                   remainTime_findResp[i] == 0 && // latency all elapsed
+                   !responding_findResp[i] && // have not scheduled for resp
+                   (reqIsLd_findResp[i] ? dataReady_findResp[i] : True); // for Ld, data is ready
+        endfunction
+        Vector#(DramMaxReqs, DramReqIdx) idxVec = genWith(fromInteger);
+        if(find(readyToResp, idxVec) matches tagged Valid .idx) begin
+            responding_findResp[idx] <= True; // record that entry has been scheduled for resp
+            respIdxQ.enq(idx);
+            if(verbose) begin
+                $display("[DramLLC findResp] ", fshow(idx));
+            end
+        end
+    endrule
+
+    rule sendResp(inited);
+        let idx <- toGet(respIdxQ).get;
+        doAssert(valid_sendResp[idx], "must be valid");
+        doAssert(responding_sendResp[idx], "must be responding");
+        doAssert(remainTime_sendResp[idx] == 0, "timer must be 0");
+        // send resp to LLC in case of a load
+        if(reqIsLd_sendResp[idx]) begin
+            MemRsMsg#(idT, childT) resp = MemRsMsg {
+                data: unpack(respData.sub(idx)),
+                child: reqChild_sendResp[idx],
+                id: reqId_sendResp[idx]
+            };
+            llc.rsFromM.enq(resp);
+            doAssert(dataReady_sendResp[idx], "data must be valid");
+            if(verbose) begin
+                $display("[DramLLC sendResp] Ld ", fshow(idx), "; ", fshow(resp));
+            end
+        end
+        else begin
+            if(verbose) begin
+                $display("[DramLLC sendResp] St ", fshow(idx));
+            end
+        end
+        // free entry
+        valid_sendResp[idx] <= False;
+        freeQ.enq(idx);
+    endrule
+
+    interface Get request = toGet(dramReqQ);
+    interface Put response = toPut(dramRespQ);
 endmodule

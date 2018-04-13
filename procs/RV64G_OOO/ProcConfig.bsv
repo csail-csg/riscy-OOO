@@ -60,10 +60,50 @@
 // because of internal flow control in MUL unit
 `define BOOKKEEPING_INT_MUL_SIZE TAdd#(`XILINX_INT_MUL_LATENCY, 2)
 
-`define LOG_L1_WAYS 3 // 8 ways
-`define LOG_LLC_WAYS 4 // 16 ways
+`define DRAM_MAX_READS TExp#(`LOG_LLC_WAYS) // max reads in DRAM, match LLC ways
+`define DRAM_MAX_WRITES 16 // write buffer size in AWS DRAM controller
+`define DRAM_MAX_REQS 24
+`define DRAM_LATENCY 120 // model a constant dram latency
 
-`define DRAMLLC_MAX_READS TExp#(`LOG_LLC_WAYS) // max reads in DRAM, match LLC ways
+//
+// ==== CACHE SIZE ====
+//
+
+`ifdef CACHE_SMALL
+
+    // L1
+    `define LOG_L1_LINES 8 // 16KB
+    `define LOG_L1_WAYS 3 // 8 ways
+
+    // LLC
+    `define LOG_LLC_LINES 12 // 256KB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+`endif
+
+`ifdef CACHE_LARGE
+
+    // L1
+    `define LOG_L1_LINES 9 // 32KB
+    `define LOG_L1_WAYS 3 // 8 ways
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+`endif
+
+`ifdef CACHE_MC
+
+    // L1
+    `define LOG_L1_LINES 9 // 32KB
+    `define LOG_L1_WAYS 2 // 4 ways
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+`endif
 
 //
 // ==== CORE SIZE ====

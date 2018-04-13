@@ -25,6 +25,8 @@ PROC := RV64G_OOO
 
 # core size
 CORE_SIZE ?= SMALL
+# cache size
+CACHE_SIZE ?= LARGE
 # always include perf counter
 PERF_COUNT := true
 # dram type in simulation: VC707 or AWSF1
@@ -51,8 +53,12 @@ else
 $(error unsupported CORE_SIZE)
 endif
 
+ifeq (,$(filter $(CACHE_SIZE),SMALL LARGE MC))
+$(error unsupported CACHE_SIZE)
+endif
+
 # directories
-BUILD_DIR := $(RISCY_HOME)/procs/build/$(PROC).core_$(CORE_NUM).$(CORE_SIZE)
+BUILD_DIR := $(RISCY_HOME)/procs/build/$(PROC).core_$(CORE_NUM).core_$(CORE_SIZE).cache_$(CACHE_SIZE)
 ifeq ($(TSO_MM),true)
 BUILD_DIR := $(BUILD_DIR).tso
 else

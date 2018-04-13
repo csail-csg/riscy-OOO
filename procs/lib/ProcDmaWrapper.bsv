@@ -27,6 +27,7 @@ import Connectable::*;
 import ConnectalConfig::*;
 import FIFO::*;
 import GetPut::*;
+import ClientServer::*;
 import HostInterface::*;
 import Vector::*;
 import StmtFSM::*;
@@ -47,7 +48,6 @@ import DDR3Common::*;
 import AWSDramCommon::*;
 import DramWrapper::*;
 import UserClkRst::*;
-import DramLLC::*;
 import HostDmaLLC::*;
 
 `ifdef USE_VC707_DRAM
@@ -133,10 +133,8 @@ module mkProcDmaWrapper#(
     endrule
 
     // connect to DDR3
-    mkDramLLC(
-        dram.user, proc.toDram, valueof(DramLLCMaxReads), False,
-        clocked_by userClk, reset_by userRst
-    );
+    mkConnection(proc.toDram.request.get, dram.user.req);
+    mkConnection(proc.toDram.response.put, dram.user.rdResp);
     
     // connect to deadlock
     mkConnection(deadlockInd, proc.deadlockIndInv);

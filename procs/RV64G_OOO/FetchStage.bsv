@@ -174,8 +174,9 @@ module mkFetchStage(FetchStage);
     let             dirPred      <- mkDirPredictor;
     ReturnAddrStack ras          <- mkRas;
     // Wire to train next addr pred (NAP)
-    RWire#(TrainNAP) napTrainByDec <- mkRWire;
     RWire#(TrainNAP) napTrainByExe <- mkRWire;
+    RWire#(TrainNAP) napTrainByDec <- mkRWire;
+    Fifo#(1, TrainNAP) napTrainByDecQ <- mkPipelineFifo; // cut off critical path
 
     // TLB and Cache connections
     ITlb iTlb <- mkITlb;
@@ -380,15 +381,44 @@ module mkFetchStage(FetchStage);
                             end
                             Maybe#(Addr) nextPc = decodeBrPred(in.pc, dInst, pred_taken);
 
-                            // return address stack
-                            if (dInst.iType == J && isValid(regs.dst)) begin
-                                // function call -- push return address to stack
-                                ras.pushAddress[i](in.pc + 4);
+                            // return address stack link reg is x1 or x5
+                            function Bool linkedR(Maybe#(ArchRIndx) register);
+                                Bool res = False;
+                                if (register matches tagged Valid .r &&& (r == tagged Gpr 1 || r == tagged Gpr 5)) begin
+                                    res = True;
+                                end
+                                return res;
+                            endfunction
+                            Bool dst_link = linkedR(regs.dst);
+                            Bool src1_link = linkedR(regs.src1);
+                            Addr push_addr = in.pc + 4;
+                            Addr pop_addr = ras.ras[i].first;
+                            if (dInst.iType == J && dst_link) begin
+                                // rs1 is invalid, i.e., not link: push
+                                ras.ras[i].popPush(False, Valid (push_addr));
                             end
-                            else if (dInst.iType == Jr) begin
-                                let new_ppc = ras.firstAddress[i];
-                                ras.popAddress[i];
-                                nextPc = tagged Valid new_ppc;
+                            else if (dInst.iType == Jr) begin // jalr 
+                                if (!dst_link && src1_link) begin  
+                                    // rd is link while rs1 is not: pop
+                                    nextPc = Valid (pop_addr);
+                                    ras.ras[i].popPush(True, Invalid);
+                                end
+                                else if (!src1_link && dst_link) begin
+                                    // rs1 is not link while rd is link: push
+                                    ras.ras[i].popPush(False, Valid (push_addr));
+                                end
+                                else if (dst_link && src1_link) begin
+                                    // both rd and rs1 are links
+                                    if (regs.src1 != regs.dst) begin
+                                        // not same reg: first pop, then push
+                                        nextPc = Valid (pop_addr);
+                                        ras.ras[i].popPush(True, Valid (push_addr));
+                                    end
+                                    else begin
+                                        // same reg: push
+                                        ras.ras[i].popPush(False, Valid (push_addr));
+                                    end
+                                end
                             end
 
                             if(verbose) begin
@@ -441,8 +471,8 @@ module mkFetchStage(FetchStage);
             end
             decode_epoch <= decode_epoch_local;
             // send training data for next addr pred
-            if(trainNAP matches tagged Valid .x) begin
-                napTrainByDec.wset(x);
+            if (trainNAP matches tagged Valid .x) begin
+                napTrainByDecQ.enq(x);
             end
 `ifdef PERF_COUNT
             // performance counter: check whether redirect happens
@@ -461,10 +491,20 @@ module mkFetchStage(FetchStage);
         end
     endrule
 
-    // train next addr pred
+    // train next addr pred: we use a wire to catch outputs of napTrainByDecQ.
+    // This prevents napTrainByDecQ from clogging doDecode rule when
+    // superscalar size is large
+    (* fire_when_enabled *)
+    rule setTrainNAPByDec;
+        napTrainByDecQ.deq;
+        napTrainByDec.wset(napTrainByDecQ.first);
+    endrule
+
     (* fire_when_enabled, no_implicit_conditions *)
     rule doTrainNAP(isValid(napTrainByDec.wget) || isValid(napTrainByExe.wget));
-        // give priority to train data from exe
+        // Give priority to train from exe. This is because exe has train data
+        // only when misprediction happens, i.e., train by dec is already at
+        // wrong path.
         TrainNAP train = fromMaybe(validValue(napTrainByDec.wget), napTrainByExe.wget);
         nextAddrPred.update(train.pc, train.nextPc, train.nextPc != train.pc + 4);
     endrule

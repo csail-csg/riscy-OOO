@@ -35,6 +35,7 @@ import Fifo::*;
 import Cntrs::*;
 import SafeCounter::*;
 import CacheUtils::*;
+import LatencyTimer::*;
 
 typedef `TLB_SIZE DTlbSize;
 
@@ -115,12 +116,16 @@ module mkDTlb(DTlb::DTlb);
     Reg#(Bool) doStats <- mkConfigReg(False);
     Count#(Data) accessCnt <- mkCount(0);
     Count#(Data) missCnt <- mkCount(0);
+    Count#(Data) missLat <- mkCount(0);
+
+    LatencyTimer#(2, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
 
     rule doPerf;
         let t <- toGet(perfReqQ).get;
         Data d = (case(t)
             L1TlbAccessCnt: (accessCnt);
             L1TlbMissCnt: (missCnt);
+            L1TlbMissLat: (missLat);
             default: (0);
         endcase);
         perfRespQ.enq(PerfResp {
@@ -190,6 +195,13 @@ module mkDTlb(DTlb::DTlb);
         end
         // miss resolved
         miss <= Invalid;
+
+`ifdef PERF_COUNT
+        let lat <- latTimer.done(0);
+        if(doStats) begin
+            missLat.incr(zeroExtend(lat));
+        end
+`endif
     endrule
 
     method Action flush if(!needFlush);
@@ -252,6 +264,7 @@ module mkDTlb(DTlb::DTlb);
                 });
                 if(verbose) $display("DTLB %m req (miss): ", fshow(r));
 `ifdef PERF_COUNT
+                latTimer.start(0);
                 if(doStats) begin
                     missCnt.incr(1);
                 end

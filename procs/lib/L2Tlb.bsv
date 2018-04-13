@@ -39,6 +39,7 @@ import SafeCounter::*;
 import CacheUtils::*;
 import SetAssocTlb::*;
 import L2SetAssocTlb::*;
+import LatencyTimer::*;
 
 // for SV39 only
 
@@ -153,13 +154,33 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Fifo#(1, PerfResp#(L2TlbPerfType)) perfRespQ <- mkCFFifo;
     Reg#(Bool) doStats <- mkConfigReg(False);
     Count#(Data) instMissCnt <- mkCount(0);
+    Count#(Data) instMissLat <- mkCount(0);
     Count#(Data) dataMissCnt <- mkCount(0);
+    Count#(Data) dataMissLat <- mkCount(0);
+
+    LatencyTimer#(2, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
+
+    function Action incrMissLat(TlbChild child);
+    action
+        let lat <- latTimer.done(0);
+        if(doStats) begin
+            if(child == I) begin
+                instMissLat.incr(zeroExtend(lat));
+            end
+            else begin
+                dataMissLat.incr(zeroExtend(lat));
+            end
+        end
+    endaction
+    endfunction
 
     rule doPerf;
         let t <- toGet(perfReqQ).get;
         Data d = (case(t)
             L2TlbInstMissCnt: (instMissCnt);
+            L2TlbInstMissLat: (instMissLat);
             L2TlbDataMissCnt: (dataMissCnt);
+            L2TlbDataMissLat: (dataMissLat);
             default: (0);
         endcase);
         perfRespQ.enq(PerfResp {
@@ -273,6 +294,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // XXX we keep the 4KB array resp (not deq), because page walk
             // is done in a blocking way
 `ifdef PERF_COUNT
+            latTimer.start(0);
             if(doStats) begin
                 if(cRq.child == I) begin
                     instMissCnt.incr(1);
@@ -301,6 +323,10 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // req is done
             pendReq <= Invalid;
             miss <= False;
+`ifdef PERF_COUNT
+            // incr miss latency
+            incrMissLat(cRq.child);
+`endif
         endaction
         endfunction
 
@@ -376,6 +402,10 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 // req is done, miss is resolved
                 pendReq <= Invalid;
                 miss <= False;
+`ifdef PERF_COUNT
+                // incr miss latency
+                incrMissLat(cRq.child);
+`endif
             end
         end
     endrule

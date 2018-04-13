@@ -34,12 +34,14 @@ import Performance::*;
 import Core::*;
 import SyncFifo::*;
 import MMIOPlatform::*;
+import LLCache::*;
+import Performance::*;
 
 // indication methods that are truly in use by processor
 interface ProcIndInv;
     method ActionValue#(Data) to_host;
     method ActionValue#(void) bootRomInitResp;
-    method ActionValue#(Tuple2#(CoreId, ProcPerfResp)) perfResp;
+    method ActionValue#(Tuple2#(Bit#(8), ProcPerfResp)) perfResp;
     method ActionValue#(CoreId) terminate;
 endinterface
 
@@ -55,7 +57,7 @@ instance Connectable#(ProcIndInv, ProcIndication);
         endrule
         rule doPerf;
             let {c, p} <- inv.perfResp;
-            ind.perfResp(zeroExtend(c), p);
+            ind.perfResp(c, p);
         endrule
         rule doTerminate;
             let c <- inv.terminate;
@@ -67,7 +69,7 @@ endinstance
 // this module should be under user clock domain
 module mkProcIndInvSync#(
     Vector#(CoreNum, CoreIndInv) inv,
-    MMIOPlatform mmio,
+    MMIOPlatform mmio, LLCache llc,
     Clock portalClk, Reset portalRst
 )(ProcIndInv);
     Clock userClk <- exposeCurrentClock;
@@ -78,7 +80,7 @@ module mkProcIndInvSync#(
     SyncFIFOIfc#(void) bootRomInitQ <- mkSyncFifo(
         1, userClk, userRst, portalClk, portalRst
     );
-    SyncFIFOIfc#(Tuple2#(CoreId, ProcPerfResp)) perfQ <- mkSyncFifo(
+    SyncFIFOIfc#(Tuple2#(Bit#(8), ProcPerfResp)) perfQ <- mkSyncFifo(
         1, userClk, userRst, portalClk, portalRst
     );
     SyncFIFOIfc#(CoreId) terminateQ <- mkSyncFifo(
@@ -89,9 +91,20 @@ module mkProcIndInvSync#(
         let v <- mmio.to_host;
         hostQ.enq(v);
     endrule
+
     rule sendBootRomInit;
         let v <- mmio.bootRomInitResp;
         bootRomInitQ.enq(?);
+    endrule
+
+    rule sendLLCPerf;
+        let r <- llc.perf.resp;
+        // core id of uncore = core num
+        perfQ.enq(tuple2(fromInteger(valueof(CoreNum)), ProcPerfResp {
+            loc: LLC,
+            pType: zeroExtend(pack(r.pType)),
+            data: r.data
+        }));
     endrule
 
     for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
@@ -99,6 +112,7 @@ module mkProcIndInvSync#(
             let v <- inv[i].perfResp;
             perfQ.enq(tuple2(fromInteger(i), v));
         endrule
+
         rule sendTerminate;
             let v <- inv[i].terminate;
             terminateQ.enq(fromInteger(i));
@@ -125,7 +139,7 @@ endinterface
 // this module should be under user clock domain
 module mkProcReqSync#(
     Vector#(CoreNum, CoreReq) req,
-    MMIOPlatform mmio,
+    MMIOPlatform mmio, LLCache llc,
     Clock portalClk, Reset portalRst
 )(ProcReq);
     Clock userClk <- exposeCurrentClock;
@@ -139,7 +153,7 @@ module mkProcReqSync#(
     SyncFIFOIfc#(Tuple2#(BootRomIndex, Data)) bootRomInitQ <- mkSyncFifo(
         1, portalClk, portalRst, userClk, userRst
     );
-    SyncFIFOIfc#(Tuple3#(CoreId, PerfLocation, PerfType)) perfQ <- mkSyncFifo(
+    SyncFIFOIfc#(Tuple3#(Bit#(8), PerfLocation, PerfType)) perfQ <- mkSyncFifo(
         1, portalClk, portalRst, userClk, userRst
     );
 
@@ -170,7 +184,13 @@ module mkProcReqSync#(
     rule doPerf;
         perfQ.deq;
         let {c, loc, t} = perfQ.first;
-        req[c].perfReq(loc, t);
+        if(c >= fromInteger(valueof(CoreNum))) begin
+            // uncore
+            llc.perf.req(unpack(truncate(t)));
+        end
+        else begin
+            req[c].perfReq(loc, t);
+        end
     endrule
 
     method Action start(
@@ -186,6 +206,6 @@ module mkProcReqSync#(
         hostQ.enq(v);
     endmethod
     method Action perfReq(Bit#(8) core, PerfLocation loc, PerfType t);
-        perfQ.enq(tuple3(truncate(core), loc, t));
+        perfQ.enq(tuple3(core, loc, t));
     endmethod
 endmodule

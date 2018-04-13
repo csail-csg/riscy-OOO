@@ -272,7 +272,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
 `ifdef PERF_COUNT
     // load mispeculation
-    Count#(Data) exeKillLdCnt <- mkCount(0);
+    Count#(Data) exeLdKillByLdCnt <- mkCount(0);
+    Count#(Data) exeLdKillByStCnt <- mkCount(0);
+    Count#(Data) exeLdKillByCacheCnt <- mkCount(0);
+    // load issue stall
+    Count#(Data) exeLdStallByLdCnt <- mkCount(0);
+    Count#(Data) exeLdStallByStCnt <- mkCount(0);
+    Count#(Data) exeLdStallBySBCnt <- mkCount(0);
     // address translate exception
     Count#(Data) exeTlbExcepCnt <- mkCount(0);
 `endif
@@ -514,7 +520,21 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             reqLdQ.enq(tuple2(zeroExtend(info.tag), info.paddr));
         end
         else begin
-            doAssert(issRes == Stall, "load is stalled");
+            if(issRes matches tagged Stall .source) begin
+`ifdef PERF_COUNT
+                // performance counter
+                if(inIfc.doStats) begin
+                    case(source)
+                        Ld: exeLdStallByLdCnt.incr(1);
+                        St: exeLdStallByStCnt.incr(1);
+                        SB: exeLdStallBySBCnt.incr(1);
+                    endcase
+                end
+`endif
+            end
+            else begin
+                doAssert(False, "load is stalled");
+            end
         end
     endaction
     endfunction
@@ -957,7 +977,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     method Data getPerf(ExeStagePerfType t);
         return (case(t)
 `ifdef PERF_COUNT
-            ExeKillLd: exeKillLdCnt;
+            ExeLdKillByLd: exeLdKillByLdCnt;
+            ExeLdKillBySt: exeLdKillByStCnt;
+            ExeLdKillByCache: exeLdKillByCacheCnt;
+            ExeLdStallByLd: exeLdStallByLdCnt;
+            ExeLdStallBySt: exeLdStallByStCnt;
+            ExeLdStallBySB: exeLdStallBySBCnt;
             ExeTlbExcep: exeTlbExcepCnt;
 `endif
             default: 0;

@@ -106,7 +106,12 @@ void ProcIndication::bootRomInitResp() {
 }
 
 void ProcIndication::perfResp(uint8_t core, ProcPerfResp resp) {
-    perf_stats->inform_resp(core, resp.loc, resp.pType, resp.data);
+    if(uint32_t(core) >= core_num) {
+        uncore_perf_stats->inform_resp(core, resp.loc, resp.pType, resp.data);
+    }
+    else {
+        core_perf_stats->inform_resp(core, resp.loc, resp.pType, resp.data);
+    }
 }
 
 void ProcIndication::terminate(uint8_t core) {
