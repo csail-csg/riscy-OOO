@@ -520,21 +520,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             reqLdQ.enq(tuple2(zeroExtend(info.tag), info.paddr));
         end
         else begin
-            if(issRes matches tagged Stall .source) begin
-`ifdef PERF_COUNT
-                // performance counter
-                if(inIfc.doStats) begin
-                    case(source)
-                        Ld: exeLdStallByLdCnt.incr(1);
-                        St: exeLdStallByStCnt.incr(1);
-                        SB: exeLdStallBySBCnt.incr(1);
-                    endcase
-                end
-`endif
-            end
-            else begin
-                doAssert(False, "load is stalled");
-            end
+            doAssert(issRes == Stall, "load is stalled");
         end
     endaction
     endfunction

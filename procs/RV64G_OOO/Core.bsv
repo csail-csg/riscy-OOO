@@ -521,14 +521,14 @@ module mkCore#(CoreId coreId)(Core);
     endrule
 
     // incr buffer full cycles
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule incLdQFull(doStats && lsq.ldqFull_ehrPort0);
-        exeLdQFullCycles.incr(1);
-    endrule
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule incStQFull(doStats && lsq.stqFull_ehrPort0);
-        exeStQFullCycles.incr(1);
-    endrule
+    //(* fire_when_enabled, no_implicit_conditions *)
+    //rule incLdQFull(doStats && lsq.ldqFull_ehrPort0);
+    //    exeLdQFullCycles.incr(1);
+    //endrule
+    //(* fire_when_enabled, no_implicit_conditions *)
+    //rule incStQFull(doStats && lsq.stqFull_ehrPort0);
+    //    exeStQFullCycles.incr(1);
+    //endrule
     (* fire_when_enabled, no_implicit_conditions *)
     rule incROBFull(doStats && rob.isFull_ehrPort0);
         exeROBFullCycles.incr(1);
