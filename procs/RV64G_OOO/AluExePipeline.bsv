@@ -85,15 +85,6 @@ typedef struct {
     Maybe#(SpecTag) spec_tag;
 } AluExeToFinish deriving(Bits, Eq, FShow);
 
-typedef struct {
-    Addr pc;
-    Addr nextPc;
-    IType iType;
-    Bool taken;
-    DirPredTrainInfo dpTrain;
-    Bool mispred;
-} AluExeTrainBP deriving(Bits, Eq, FShow);
-
 // XXX currently ALU/Br should not have any exception, so we don't have cause feild above
 // TODO FIXME In future, if branch target is unaligned to 4 bytes, we may have exception
 // and probably JR/JAL should NOT write dst reg when exception happens
@@ -186,9 +177,6 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
     // index to send bypass, ordering doesn't matter
     Integer exeSendBypassPort = 0;
     Integer finishSendBypassPort = 1;
-
-    // train BP in a new cycle
-    FIFO#(AluExeTrainBP) trainBPQ <- mkFIFO;
 
 `ifdef PERF_COUNT
     // performance counters
@@ -329,7 +317,7 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
             inIfc.redirect(x.controlFlow.nextPc, validValue(x.spec_tag), x.tag);
             // must be a branch, train branch predictor
             doAssert(x.iType == Jr || x.iType == Br, "only jr and br can mispredict");
-            trainBPQ.enq(AluExeTrainBP {
+            inIfc.fetch_train_predictors(FetchTrainBP {
                 pc: x.controlFlow.pc,
                 nextPc: x.controlFlow.nextPc,
                 iType: x.iType,
@@ -357,7 +345,7 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
             // since we can only do 1 training in a cycle, split the rule
             // XXX not training JAL, reduce chance of conflicts
             if(x.iType == Jr || x.iType == Br) begin
-                trainBPQ.enq(AluExeTrainBP {
+                inIfc.fetch_train_predictors(FetchTrainBP {
                     pc: x.controlFlow.pc,
                     nextPc: x.controlFlow.nextPc,
                     iType: x.iType,
@@ -367,13 +355,6 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
                 });
             end
         end
-    endrule
-
-    rule doTrainBP;
-        let x <- toGet(trainBPQ).get;
-        inIfc.fetch_train_predictors(
-            x.pc, x.nextPc, x.iType, x.taken, x.dpTrain, x.mispred
-        );
     endrule
 
     interface recvBypass = map(getRecvBypassIfc, bypassWire);
