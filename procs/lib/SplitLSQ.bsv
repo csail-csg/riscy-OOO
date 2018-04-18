@@ -1282,7 +1282,7 @@ module mkSplitLSQ(SplitLSQ);
     Wire#(Bool) st_can_enq_wire <- mkBypassWire;
     (* fire_when_enabled, no_implicit_conditions *)
     rule setForEnq;
-        ld_can_enq_wire <= !ld_valid[st_enqP][0];
+        ld_can_enq_wire <= !ld_valid[ld_enqP][0];
         st_can_enq_wire <= !st_valid[st_enqP][0];
     endrule
 
