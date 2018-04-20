@@ -367,8 +367,6 @@ interface SplitLSQ;
     );
     // Get the load to issue
     method ActionValue#(LSQIssueLdInfo) getIssueLd;
-    // Get the load killed by ld/st ordering
-    method ActionValue#(LSQKillLdInfo) getLdKilledByLdSt;
     // Get load resp
     method ActionValue#(LSQRespLdResult) respLd(LdQTag t, Data alignedData);
     // Deq LQ entry, and wakeup stalled loads. The guard checks the following:
@@ -414,8 +412,6 @@ interface SplitLSQ;
 `ifdef TSO_MM
     // Kill loads when a cache line is evicted (TSO only)
     method Action cacheEvict(LineAddr a);
-    // Get the load killed by cache eviction (TSO only)
-    method ActionValue#(LSQKillLdInfo) getLdKilledByCache;
 `else
     // Wake up younger loads when SB deq (only WEAK model has SB)
     method Action wakeupLdStalledBySB(SBIndex sbIdx);

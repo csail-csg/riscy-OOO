@@ -35,7 +35,12 @@ import StoreBuffer::*;
 import Exec::*;
 import SplitLSQ::*;
 
+export mkSerialLSQ;
+
 // --- auxiliary types and functions ---
+// virtual index: 0 -- (2 * size - 1)
+typedef Bit#(TLog#(TMul#(2, LdQSize))) LdQVirTag;
+typedef Bit#(TLog#(TMul#(2, StQSize))) StQVirTag;
 
 // get mem func
 function LdQMemFunc getLdQMemFunc(MemFunc f);
@@ -267,11 +272,6 @@ module mkSerialLSQ(SplitLSQ);
     let st_computed_updData = getVEhrPort(st_computed, 1); // assert
     let st_computed_enq     = getVEhrPort(st_computed, 1); // write
 
-    let st_verified_wrongSpec = getVEhrPort(st_verified, 0);
-    let st_verified_updAddr   = getVEhrPort(st_verified, 1); // assert
-    let st_verified_deqSt     = getVEhrPort(st_verified, 1);
-    let st_verified_enq       = getVEhrPort(st_verified, 1); // write
-
     let st_specBits_wrongSpec   = getVEhrPort(st_specBits, 0); // write
     let st_specBits_updAddr     = getVEhrPort(st_specBits, 0); // C with wrongSpec
     let st_specBits_deqSt       = getVEhrPort(st_specBits, 0); // C with wrongSpec
@@ -308,6 +308,64 @@ module mkSerialLSQ(SplitLSQ);
 
     function StQTag getNextStPtr(StQTag t);
         return t == fromInteger(valueOf(StQSize) - 1) ? 0 : t + 1;
+    endfunction
+
+    // Virtual tag
+    // Since enqP is not changed during all our associative searches, we map
+    // LQ/SQ index to virtual tags using enqP as pivot.
+    // The mapping is as follow:
+    // - valid entry i --> i < enqP ? i + QSize : i
+    // XXX This mapping is only for comparing valid entries (e.g., it may not
+    // work properly for enqP), so we must check entry valid before using
+    // virtual tags or do special calculation.
+    function LdQVirTag getLdVirTag(LdQTag i);
+        return i < ld_enqP ? zeroExtend(i) + fromInteger(valueof(LdQSize))
+                           : zeroExtend(i);
+    endfunction
+    function StQVirTag getStVirTag(StQTag i);
+        return i < st_enqP ? zeroExtend(i) + fromInteger(valueof(StQSize))
+                           : zeroExtend(i);
+    endfunction
+    // virtual tags for LQ/SQ indices to be reused in all associative searches
+    Vector#(LdQSize, LdQVirTag) ldVirTags = map(getLdVirTag,
+                                                genWith(fromInteger));
+    Vector#(StQSize, StQVirTag) stVirTags = map(getStVirTag,
+                                                genWith(fromInteger));
+
+    // find oldest LQ entry that satisfy a constraint (i.e. smallest tag)
+    function Maybe#(LdQTag) findOldestLd(Vector#(LdQSize, Bool) pred);
+        function LdQTag getOlder(LdQTag a, LdQTag b);
+            if(!pred[a]) begin
+                return b;
+            end
+            else if(!pred[b]) begin
+                return a;
+            end
+            else begin
+                return ldVirTags[a] < ldVirTags[b] ? a : b;
+            end
+        endfunction
+        Vector#(LdQSize, LdQTag) idxVec = genWith(fromInteger);
+        LdQTag tag = fold(getOlder, idxVec);
+        return pred[tag] ? Valid (tag) : Invalid;
+    endfunction
+
+    // find oldest SQ entry that satisfy a constraint (i.e. smallest tag)
+    function Maybe#(StQTag) findOldestSt(Vector#(StQSize, Bool) pred);
+        function StQTag getOlder(StQTag a, StQTag b);
+            if(!pred[a]) begin
+                return b;
+            end
+            else if(!pred[b]) begin
+                return a;
+            end
+            else begin
+                return stVirTags[a] < stVirTags[b] ? a : b;
+            end
+        endfunction
+        Vector#(StQSize, StQTag) idxVec = genWith(fromInteger);
+        StQTag tag = fold(getOlder, idxVec);
+        return pred[tag] ? Valid (tag) : Invalid;
     endfunction
 
 `ifdef BSIM
@@ -562,7 +620,7 @@ module mkSerialLSQ(SplitLSQ);
                      "updating entry must be valid");
             doAssert(!ld_computed_updAddr[tag] &&
                      !ld_executing_updAddr[tag] &&
-                     !ld_done_updAddr[tag]
+                     !ld_done_updAddr[tag],
                      "updating entry should not be " +
                      "computed or issuing or executed or done or killed");
 
@@ -578,8 +636,8 @@ module mkSerialLSQ(SplitLSQ);
             // sanity check
             doAssert(st_valid_updAddr[tag],
                      "updating entry must be valid");
-            doAssert(!st_computed_updAddr[tag] && !st_verified_updAddr[tag],
-                     "updating entry should not be computed or validated");
+            doAssert(!st_computed_updAddr[tag],
+                     "updating entry should not be computed");
 
             // write fault, computed paddr, shift be. NOTE computed is
             // true only when no fault.
@@ -639,7 +697,7 @@ module mkSerialLSQ(SplitLSQ);
 
         // issue load should be the oldest in LSQ, 
         doAssert(tag == ld_deqP_issue, "must be oldest load");
-        doAssert(!isValid(ld_olderSt_issue), "cannot have older store");
+        doAssert(!isValid(ld_olderSt_issue[tag]), "cannot have older store");
 
         // issue result
         LSQIssueLdResult issRes = Stall;
@@ -697,7 +755,7 @@ module mkSerialLSQ(SplitLSQ);
 `endif
              ld_memFunc[tag] == Ld &&
              !ld_isMMIO_issue[tag] &&
-             !isValid(ld_waitWPResp_issue[tag], noAction);
+             !ld_waitWPResp_issue[tag], noAction);
         let info = LSQIssueLdInfo {
             tag: tag,
             paddr: ld_paddr_issue[tag],
@@ -806,8 +864,6 @@ module mkSerialLSQ(SplitLSQ);
 
         // sanity check
         if(!isValid(st_fault_deqSt[deqP])) begin
-            doAssert(checkAddrAlign(st_paddr_deqSt[deqP], st_byteEn[deqP]),
-                     "addr BE should be naturally aligned");
             doAssert(st_specBits_deqSt[deqP] == 0,
                      "must have zero spec bits");
         end
@@ -894,9 +950,6 @@ module mkSerialLSQ(SplitLSQ);
             endfunction
             Vector#(StQSize, StQTag) stIdxVec = genWith(fromInteger);
             joinActions(map(correctSpecSt, stIdxVec));
-
-            // clear spec bits for issueQ
-            issueLdQ.specUpdate.correctSpeculation(mask);
         endmethod
 
         method Action incorrectSpeculation(Bool killAll, SpecTag specTag);
@@ -947,9 +1000,6 @@ module mkSerialLSQ(SplitLSQ);
             endaction
             endfunction
             joinActions(map(killStQ, stIdxVec));
-
-            // kill entries in issueQ
-            issueLdQ.specUpdate.incorrectSpeculation(killAll, specTag);
 
             // change enqP: make valid entries always consecutive: new enqP is
             // the oldest **VALID** entry that gets killed. If such entry does
