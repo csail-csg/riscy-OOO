@@ -40,6 +40,7 @@ import ReorderBuffer::*;
 import TlbTypes::*;
 import DTlb::*;
 import SplitLSQ::*;
+import SerialLSQ::*;
 import StoreBuffer::*;
 import HasSpecBits::*;
 import SpecFifo::*;
@@ -188,7 +189,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     StoreBuffer stb <- mkStoreBufferEhr;
 `endif
     // LSQ
-    SplitLSQ lsq <- mkSplitLSQ;
+    SplitLSQ lsq <- mkSerialLSQ; //mkSplitLSQ;
     // wire to issue Ld which just finish addr tranlation
     RWire#(LSQIssueLdInfo) issueLd <- mkRWire;
 
