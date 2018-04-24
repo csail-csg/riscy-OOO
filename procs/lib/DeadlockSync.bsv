@@ -158,7 +158,7 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
             let {isException, isInterrupt, trapVal} = decomposeTrap(s.trap);
             ind.commitInstStuck(
                 zeroExtend(c), s.pc, pack(s.iType), isException, isInterrupt, trapVal,
-                pack(s.state), s.claimedPhyReg, s.ldKilled, s.memAccessAtCommit,
+                pack(s.state), s.dispatched, s.claimedPhyReg, s.ldKilled, s.memAccessAtCommit,
                 s.lsqAtCommitNotified, s.nonMMIOStDone, s.epochIncremented,
                 zeroExtend(s.specBits), s.stbEmpty, s.stqEmpty, s.tlbNoPendingReq, s.prv
             );
@@ -169,7 +169,7 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
             let {isException, isInterrupt, trapVal} = decomposeTrap(s.trap);
             ind.commitUserInstStuck(
                 zeroExtend(c), s.pc, pack(s.iType), isException, isInterrupt, trapVal,
-                pack(s.state), s.claimedPhyReg, s.ldKilled, s.memAccessAtCommit,
+                pack(s.state), s.dispatched, s.claimedPhyReg, s.ldKilled, s.memAccessAtCommit,
                 s.lsqAtCommitNotified, s.nonMMIOStDone, s.epochIncremented,
                 zeroExtend(s.specBits), s.stbEmpty, s.stqEmpty, s.tlbNoPendingReq, s.prv
             );

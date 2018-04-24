@@ -40,7 +40,7 @@ import ReorderBuffer::*;
 import TlbTypes::*;
 import DTlb::*;
 import SplitLSQ::*;
-import SerialLSQ::*;
+//import SerialLSQ::*;
 import StoreBuffer::*;
 import HasSpecBits::*;
 import SpecFifo::*;
@@ -132,6 +132,7 @@ interface MemExeInput;
     method Addr rob_getPC(InstTag t);
     method Action rob_setExecuted_doFinishMem(InstTag t, Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
     method Action rob_setExecuted_deqLSQ(InstTag t, Maybe#(Exception) cause, Bool ld_killed);
+    method Action rob_setDispatched(InstTag t); // debug
     // MMIO
     method Bool isMMIOAddr(Addr a);
     method Action mmioReq(MMIOCRq r);
@@ -189,7 +190,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     StoreBuffer stb <- mkStoreBufferEhr;
 `endif
     // LSQ
-    SplitLSQ lsq <- mkSerialLSQ; //mkSplitLSQ;
+    SplitLSQ lsq <- mkSplitLSQ;
     // wire to issue Ld which just finish addr tranlation
     RWire#(LSQIssueLdInfo) issueLd <- mkRWire;
 
@@ -298,6 +299,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doAssert(!(x.data.mem_func == St && isValid(x.regs.dst)),
                  "St cannot have dst reg");
 
+        // set rob dispatched (debug)
+        inIfc.rob_setDispatched(x.tag)
+        
         // go to next stage
         dispToRegQ.enq(ToSpecFifo {
             data: MemDispatchToRegRead {
@@ -582,15 +586,17 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     LdQDeqEntry lsqDeqLd = lsq.firstLd;
 
     // deq fault/killed ld
-    rule doDeqLdQ_fault_killed(isValid(lsqDeqLd.fault) || lsqDeqLd.killed);
-        if(verbose) $display("[doDeqLdQ_fault_killed] ", fshow(lsqDeqLd));
+    rule doDeqLdQ_fault(isValid(lsqDeqLd.fault));
+        if(verbose) $display("[doDeqLdQ_fault] ", fshow(lsqDeqLd));
         lsq.deqLd;
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, lsqDeqLd.fault, lsqDeqLd.killed);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, lsqDeqLd.fault, False);
+        // check
+        doAssert(!lsqDeqLd.killed, "cannot be killed");
     endrule
 
-    // deq non-MMIO Ld without fault or kill
+    // deq non-MMIO Ld without fault (but may be killed)
     rule doDeqLdQ_Ld_Mem(
-        !isValid(lsqDeqLd.fault) && !lsqDeqLd.killed &&
+        !isValid(lsqDeqLd.fault) &&
         lsqDeqLd.memFunc == Ld && !lsqDeqLd.isMMIO
     );
         if(verbose) $display("[doDeqLdQ_Ld] ", fshow(lsqDeqLd));
@@ -598,7 +604,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // normal load should not have .rl, so no need to check SB empty
         doAssert(!lsqDeqLd.rel, "normal Ld cannot have .rl");
         // set ROB as Executed
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, False);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, lsqDeqLd.killed);
     endrule
 
     // issue non-MMIO Lr wihtout fault when
@@ -606,7 +612,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // (2) WEAK: SB does not match that addr
     // (3) WEAK: if .rl bit is set, SB is empty
     rule doDeqLdQ_Lr_issue(
-        !isValid(lsqDeqLd.fault) && !lsqDeqLd.killed
+        !isValid(lsqDeqLd.fault)
         && !lsqDeqLd.isMMIO
         && lsqDeqLd.memFunc == Lr
         && waitLrScAmoMMIOResp == Invalid
@@ -629,6 +635,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         };
         reqLrScAmoQ.enq(req);
         if(verbose) $display("[doDeqLdQ_Lr_issue] ", fshow(lsqDeqLd), "; ", fshow(req));
+        // check
+        doAssert(!lsqDeqLd.killed, "cannot be killed");
     endrule
 
     rule doDeqLdQ_Lr_deq(waitLrScAmoMMIOResp == Lr);
@@ -646,6 +654,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, False);
         if(verbose) $display("[doDeqLdQ_Lr_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
+        doAssert(!lsqDeqLd.killed, "cannot be killed");
         doAssert(lsqDeqLd.memFunc == Lr && !lsqDeqLd.isMMIO, "must be non-MMIO Lr");
         doAssert(!isValid(lsqDeqLd.fault) && !lsqDeqLd.killed, "no fualt or kill");
     endrule
@@ -654,7 +663,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // (1) not waiting for Lr/Sc/Amo/MMIO resp
     // (2) WEAK: if .rl bit is set, SB is empty
     rule doDeqLdQ_MMIO_issue(
-        !isValid(lsqDeqLd.fault) && !lsqDeqLd.killed
+        !isValid(lsqDeqLd.fault)
         && lsqDeqLd.isMMIO
         && waitLrScAmoMMIOResp == Invalid
 `ifndef TSO_MM
@@ -675,6 +684,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         inIfc.mmioReq(req);
         if(verbose) $display("[doDeqLdQ_MMIO_issue] ", fshow(lsqDeqLd), "; ", fshow(req));
         // check
+        doAssert(!lsqDeqLd.killed, "cannot be killed");
         doAssert(lsqDeqLd.memFunc == Ld, "LdQ MMIO is only Ld");
     endrule
 
@@ -698,6 +708,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, False);
         if(verbose) $display("[doDeqLdQ_MMIO_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
+        doAssert(!lsqDeqLd.killed, "cannot be killed");
         doAssert(lsqDeqLd.memFunc == Ld && lsqDeqLd.isMMIO, "must be MMIO Ld");
         doAssert(!isValid(lsqDeqLd.fault) && !lsqDeqLd.killed, "no fualt or kill");
     endrule
@@ -715,6 +726,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Valid (LoadAccessFault), False);
         if(verbose) $display("[doDeqLdQ_MMIO_fault] ", fshow(lsqDeqLd));
         // check
+        doAssert(!lsqDeqLd.killed, "cannot be killed");
         doAssert(lsqDeqLd.memFunc == Ld && lsqDeqLd.isMMIO, "must be MMIO Ld");
         doAssert(!isValid(lsqDeqLd.fault) && !lsqDeqLd.killed, "no fualt or kill");
     endrule

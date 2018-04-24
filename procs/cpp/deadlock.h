@@ -137,26 +137,27 @@ public:
     virtual void commitInstStuck(const uint8_t core, const uint64_t pc,
                                  const uint8_t iType, const int isException,
                                  const int isInterrupt, const uint8_t trapVal,
-                                 const uint8_t state, const int claimedPhyReg,
+                                 const uint8_t state, const int dispatched,
+                                 const int claimedPhyReg,
                                  const int ldKilled, const int memAccessAtCommit,
                                  const int lsqAtCommitNotified, const int nonMMIOStDone,
                                  const int epochIncremented, const uint32_t specBits,
                                  const int stbEmpty, const int stqEmpty,
                                  const int tlbNoPendingReq, const uint8_t prv) {
         fprintf(stderr, "  [DEADLOCK commitInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, claimedPhyReg %d, ldKilled %d, "
+                "isInterrupt %d, trapVal %d, state %d, dispatched %d, claimedPhyReg %d, ldKilled %d, "
                 "memAccessAtCommit %d, lsqAtCommitNotified %d, nonMMIOStDone %d, epochIncremented %d, "
                 "specBits %08x, stbEmpty %d, stqEmpty %d, tlbNoPendingReq %d, prv %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
+                (int)state, dispatched, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
                 nonMMIOStDone, epochIncremented, (unsigned)specBits, stbEmpty, stqEmpty,
                 tlbNoPendingReq, (int)prv);
         fprintf(log_fp, "  [DEADLOCK commitInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, claimedPhyReg %d, ldKilled %d, "
+                "isInterrupt %d, trapVal %d, state %d, dispatched %d, claimedPhyReg %d, ldKilled %d, "
                 "memAccessAtCommit %d, lsqAtCommitNotified %d, nonMMIOStDone %d, epochIncremented %d, "
                 "specBits %08x, stbEmpty %d, stqEmpty %d, tlbNoPendingReq %d, prv %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
+                (int)state, dispatched, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
                 nonMMIOStDone, epochIncremented, (unsigned)specBits, stbEmpty, stqEmpty,
                 tlbNoPendingReq, (int)prv);
         fflush(log_fp);
@@ -165,26 +166,27 @@ public:
     virtual void commitUserInstStuck(const uint8_t core, const uint64_t pc,
                                      const uint8_t iType, const int isException,
                                      const int isInterrupt, const uint8_t trapVal,
-                                     const uint8_t state, const int claimedPhyReg,
+                                     const uint8_t state, const int dispatched,
+                                     const int claimedPhyReg,
                                      const int ldKilled, const int memAccessAtCommit,
                                      const int lsqAtCommitNotified, const int nonMMIOStDone,
                                      const int epochIncremented, const uint32_t specBits,
                                      const int stbEmpty, const int stqEmpty,
                                      const int tlbNoPendingReq, const uint8_t prv) {
         fprintf(stderr, "  [DEADLOCK commitUserInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, claimedPhyReg %d, ldKilled %d, "
+                "isInterrupt %d, trapVal %d, state %d, dispatched %d, claimedPhyReg %d, ldKilled %d, "
                 "memAccessAtCommit %d, lsqAtCommitNotified %d, nonMMIOStDone %d, epochIncremented %d, "
                 "specBits %08x, stbEmpty %d, stqEmpty %d, tlbNoPendingReq %d, prv %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
+                (int)state, dispatched, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
                 nonMMIOStDone, epochIncremented, (unsigned)specBits, stbEmpty, stqEmpty,
                 tlbNoPendingReq, (int)prv);
         fprintf(log_fp, "  [DEADLOCK commitUserInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, claimedPhyReg %d, ldKilled %d, "
+                "isInterrupt %d, trapVal %d, state %d, dispatched %d, claimedPhyReg %d, ldKilled %d, "
                 "memAccessAtCommit %d, lsqAtCommitNotified %d, nonMMIOStDone %d, epochIncremented %d, "
                 "specBits %08x, stbEmpty %d, stqEmpty %d, tlbNoPendingReq %d, prv %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
+                (int)state, dispatched, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
                 nonMMIOStDone, epochIncremented, (unsigned)specBits, stbEmpty, stqEmpty,
                 tlbNoPendingReq, (int)prv);
         fflush(log_fp);

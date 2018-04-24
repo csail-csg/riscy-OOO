@@ -59,7 +59,8 @@ interface DeadlockIndication;
     method Action commitInstStuck(
         Bit#(8) core, Bit#(64) pc, Bit#(5) iType,
         Bool isException, Bool isInterrupt, Bit#(4) trapVal,
-        Bit#(1) state, Bool claimedPhyReg, Bool ldKilled,
+        Bit#(1) state, Bool dsipatched,
+        Bool claimedPhyReg, Bool ldKilled,
         Bool memAccessAtCommit, Bool lsqAtCommitNotified,
         Bool nonMMIOStDone, Bool epochIncremented,
         Bit#(32) specBits, Bool stbEmpty, Bool stqEmpty,
@@ -68,7 +69,8 @@ interface DeadlockIndication;
     method Action commitUserInstStuck(
         Bit#(8) core, Bit#(64) pc, Bit#(5) iType,
         Bool isException, Bool isInterrupt, Bit#(4) trapVal,
-        Bit#(1) state, Bool claimedPhyReg, Bool ldKilled,
+        Bit#(1) state, Bool dispatched,
+        Bool claimedPhyReg, Bool ldKilled,
         Bool memAccessAtCommit, Bool lsqAtCommitNotified,
         Bool nonMMIOStDone, Bool epochIncremented,
         Bit#(32) specBits, Bool stbEmpty, Bool stqEmpty,

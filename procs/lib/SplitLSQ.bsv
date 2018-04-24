@@ -43,7 +43,6 @@ export LSQUpdateAddrResult(..);
 export LSQForwardResult(..);
 export LSQIssueLdResult(..);
 export LSQIssueLdInfo(..);
-export LSQKillLdInfo(..);
 export LSQRespLdResult(..);
 export LSQHitInfo(..);
 export SplitLSQ(..);
@@ -288,11 +287,6 @@ typedef struct {
 } LSQIssueLdInfo deriving(Bits, Eq, FShow);
 
 typedef struct {
-    InstTag instTag;
-    Maybe#(SpecTag) specTag;
-} LSQKillLdInfo deriving(Bits, Eq, FShow);
-
-typedef struct {
     Bool wrongPath;
     Maybe#(PhyDst) dst;
     Data data;
@@ -373,10 +367,9 @@ interface SplitLSQ;
     // (1) valid
     // (2) one of the following is true:
     //     (a) fault
-    //     (b) killed -- deq method should mark waitWPResp if not done
-    //     (c) non-MMIO Ld, done and all older SQ entries have been dequeued or
-    //     verified
-    //     (d) MMIO or Lr, computed, atCommit, and no older SQ entry (this also
+    //     (b) non-MMIO Ld, done and all older SQ entries have been dequeued or
+    //     verified (the load may be killed)
+    //     (c) MMIO or Lr, computed, atCommit, and no older SQ entry (this also
     //     handles .rl associated with Lr)
     // NOTE: there is no pure fence in LQ right now
     // Outside world should do the following:
@@ -624,7 +617,7 @@ module mkSplitLSQ(SplitLSQ);
     Vector#(LdQSize, Ehr#(3, SpecBits))             ld_specBits        <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(TAdd#(1, SupSize), Bool)) ld_atCommit        <- replicateM(mkEhr(?));
     // wrong-path load filter (must init to all False)
-    Vector#(LdQSize, Ehr#(2, Bool))                 ld_waitWPResp      <- replicateM(mkEhr(False));
+    Vector#(LdQSize, Ehr#(1, Bool))                 ld_waitWPResp      <- replicateM(mkEhr(False));
     // enq/deq ptr
     Reg#(LdQTag)    ld_enqP <- mkReg(0);
     Ehr#(2, LdQTag) ld_deqP <- mkEhr(0);
@@ -769,12 +762,12 @@ module mkSplitLSQ(SplitLSQ);
 
     let ld_waitWPResp_hit       = getVEhrPort(ld_waitWPResp, 0);
     let ld_waitWPResp_findIss   = getVEhrPort(ld_waitWPResp, 0);
-    let ld_waitWPResp_deqLd     = getVEhrPort(ld_waitWPResp, 0); // write
-    let ld_waitWPResp_updAddr   = getVEhrPort(ld_waitWPResp, 1);
-    let ld_waitWPResp_issue     = getVEhrPort(ld_waitWPResp, 1); // assert
-    let ld_waitWPResp_enqIss    = getVEhrPort(ld_waitWPResp, 1); // assert
-    let ld_waitWPResp_resp      = getVEhrPort(ld_waitWPResp, 1); // write
-    let ld_waitWPResp_wrongSpec = getVEhrPort(ld_waitWPResp, 1); // write
+    let ld_waitWPResp_deqLd     = getVEhrPort(ld_waitWPResp, 0);
+    let ld_waitWPResp_updAddr   = getVEhrPort(ld_waitWPResp, 0);
+    let ld_waitWPResp_issue     = getVEhrPort(ld_waitWPResp, 0); // assert
+    let ld_waitWPResp_enqIss    = getVEhrPort(ld_waitWPResp, 0); // assert
+    let ld_waitWPResp_resp      = getVEhrPort(ld_waitWPResp, 0); // write
+    let ld_waitWPResp_wrongSpec = getVEhrPort(ld_waitWPResp, 0); // write
 
     Reg#(LdQTag) ld_deqP_deqLd  = ld_deqP[0]; // write
     Reg#(LdQTag) ld_deqP_verify = ld_deqP[0]; // in TSO, C with deqLd
@@ -1289,8 +1282,8 @@ module mkSplitLSQ(SplitLSQ);
             return False; // not valid
         end
         else begin
-            if(isValid(ld_fault_deqLd[deqP]) || ld_killed_deqLd[deqP]) begin
-                return True; // fault or killed
+            if(isValid(ld_fault_deqLd[deqP])) begin
+                return True; // fault
             end
             else begin
                 Bool no_older_st = !isValid(ld_olderSt_deqLd[deqP]);
@@ -1635,7 +1628,6 @@ module mkSplitLSQ(SplitLSQ);
                 doAssert(ld_computed_updAddr[killTag], "must be computed");
                 doAssert(!ld_isMMIO_updAddr[killTag], "cannot kill MMIO");
                 doAssert(ld_memFunc[killTag] == Ld, "can only kill Ld");
-                // XXX when the Ld is deq, set waitWPResp if it is not done
             end
         end
 
@@ -2012,14 +2004,13 @@ module mkSplitLSQ(SplitLSQ);
 
         // set waitWPResp in case Ld is killed but not done
         if(ld_killed_deqLd[deqP]) begin
-            doAssert(ld_memFunc[deqP] == Ld, "must be Ld");
+            doAssert(ld_memFunc[deqP] == Ld && !ld_isMMIO_deqLd[deqP],
+                     "must be non-MMIO Ld");
             doAssert(!isValid(ld_fault_deqLd[deqP]), "cannot have fault");
-            doAssert(ld_executing_deqLd[deqP], "must be executing");
+            doAssert(ld_executing_deqLd[deqP] && ld_done_deqLd[deqP],
+                     "must be done");
             doAssert(!ld_waitWPResp_deqLd[deqP],
                      "cannot wait for wrong path resp");
-            if(!ld_done_deqLd[deqP]) begin
-                ld_waitWPResp_deqLd[deqP] <= True;
-            end
         end
 
         // wakeup loads stalled by this entry
@@ -2142,7 +2133,6 @@ module mkSplitLSQ(SplitLSQ);
             doAssert(ld_computed_evict[killTag], "must be computed");
             doAssert(!ld_isMMIO_evict[killTag], "cannot kill MMIO");
             doAssert(ld_memFunc[killTag] == Ld, "can only kill Ld");
-            // XXX when the Ld is deq, set waitWPResp if it is not done
         end
 
         // make conflict with incorrect spec

@@ -45,6 +45,7 @@ typedef struct {
     IType iType;
     Maybe#(Trap) trap;
     RobInstState state;
+    Bool dispatched;
     Bool claimedPhyReg;
     Bool ldKilled;
     Bool memAccessAtCommit;
@@ -177,6 +178,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             iType: x.iType,
             trap: x.trap,
             state: x.rob_inst_state,
+            dispatched: x.dispatched,
             claimedPhyReg: x.claimed_phy_reg,
             ldKilled: x.ldKilled,
             memAccessAtCommit: x.memAccessAtCommit,

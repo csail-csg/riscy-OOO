@@ -136,6 +136,7 @@ interface AluExeInput;
     method Addr rob_getPC(InstTag t);
     method Addr rob_getPredPC(InstTag t);
     method Action rob_setExecuted(InstTag t, Maybe#(Data) csrData, ControlFlow cf);
+    method Action rob_setDispatched(InstTag t); // debug
     // Fetch stage
     method Action fetch_train_predictors(FetchTrainBP train);
 
@@ -194,6 +195,9 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
         if(x.regs.dst matches tagged Valid .dst) begin
             inIfc.setRegReadyAggr(dst.indx);
         end
+
+        // set rob dispatched (debug)
+        inIfc.rob_setDispatched(x.tag)
         
         // go to next stage
         dispToRegQ.enq(ToSpecFifo {

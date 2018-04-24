@@ -53,6 +53,7 @@ typedef struct {
     PPCVAddrCSRData  ppc_vaddr_csrData;
     Bit#(5)          fflags;
     Bool             will_dirty_fpu_state; // True means 2'b11 will be written to FS
+    Bool             dispatched; // debug state
     RobInstState     rob_inst_state; // was executed (i.e. can commit)
     LdStQTag         lsqTag; // tag for LSQ
     Bool             ldKilled; // mispeculative load
@@ -101,6 +102,10 @@ interface ReorderBufferRowEhr#(numeric type aluExeNum, numeric type fpuMulDivExe
     // perform), and non-MMIO St can become Executed (NOTE faulting
     // instructions are not Executed, they are set at deqLSQ time)
     method Action setExecuted_doFinishMem(Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
+    // set dispatched (debug)
+    interface Vector#(aluExeNum, Put#(void)) setDispatched_alu;
+    interface Vector#(fpuMulDivExeNum, Put#(void)) setDispatched_fpuMulDiv;
+    method Action setDispatched_mem;
     // get original PC/PPC before execution, EHR port 0 will suffice
     method Addr getOrigPC;
     method Addr getOrigPredPC;
@@ -142,6 +147,12 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Integer nonMMIOSt_finishMem_port = 0;
     Integer nonMMIOSt_enq_port = 1;
 
+    Integer disp_deq_port = 0;
+    function Integer disp_alu_port(Integer i) = i; // write
+    function Integer disp_fpuMulDiv_port(Integer i) = valueof(aluExeNum) + i; // write
+    Integer disp_mem_port = valueof(aluExeNum) + valueof(fpuMulDivExeNum);
+    Integer disp_enq_port = 1 + disp_mem_port;
+
     Integer state_deq_port = 0;
     function Integer state_finishAlu_port(Integer i) = i; // write state
     function Integer state_finishFpuMulDiv_port(Integer i) = valueof(aluExeNum) + i; // write state
@@ -162,6 +173,7 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Ehr#(TAdd#(2, aluExeNum), PPCVAddrCSRData)                      ppc_vaddr_csrData    <- mkEhr(?);
     Ehr#(TAdd#(1, fpuMulDivExeNum), Bit#(5))                        fflags               <- mkEhr(?);
     Reg#(Bool)                                                      will_dirty_fpu_state <- mkRegU;
+    Ehr#(TAdd#(2, TAdd#(fpuMulDivExeNum, aluExeNum)), Bool)         dispatched           <- mkEhr(?);
     Ehr#(TAdd#(3, TAdd#(fpuMulDivExeNum, aluExeNum)), RobInstState) rob_inst_state       <- mkEhr(?);
     Reg#(LdStQTag)                                                  lsqTag               <- mkRegU;
     Ehr#(2, Bool)                                                   ldKilled             <- mkEhr(?);
@@ -208,6 +220,24 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         endinterface);
     end
 
+    Vector#(aluExeNum, Put#(void)) aluSetDispatched;
+    for(Integer i = 0; i < valueof(aluExeNum); i = i+1) begin
+        aluSetDispatched[i] = (interface Put;
+            method Action put(void x);
+                dispatched[disp_alu_port(i)] <= True;
+            endmethod
+        endinterface);
+    end
+
+    Vector#(fpuMulDivExeNum, Put#(void)) fpuMulDivSetDispatched;
+    for(Integer i = 0; i < valueof(fpuMulDivExeNum); i = i+1) begin
+        fpuMulDivSetDispatched[i] = (interface Put;
+            method Action put(void x);
+                dispatched[disp_fpuMulDiv_port(i)] <= True;
+            endmethod
+        endinterface);
+    end
+
     method Addr getOrigPC = pc;
     method Addr getOrigPredPC = predPcWire;
 
@@ -231,6 +261,14 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         nonMMIOStDone[nonMMIOSt_finishMem_port] <= non_mmio_st_done;
     endmethod
 
+    interface setDispatched_alu = aluSetDispatched;
+
+    interface setDispatched_fpuMulDiv = fpuMulDivSetDispatched;
+
+    method Action setDispatched_mem;
+        dispatched[disp_mem_port] <= True;
+    endmethod
+
     method Action write_enq(ToReorderBuffer x);
         pc <= x.pc;
         iType <= x.iType;
@@ -240,6 +278,7 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         ppc_vaddr_csrData[pvc_enq_port] <= x.ppc_vaddr_csrData;
         fflags[fflags_enq_port] <= x.fflags;
         will_dirty_fpu_state <= x.will_dirty_fpu_state;
+        dispatched[disp_enq_port] <= False;
         rob_inst_state[state_enq_port] <= x.rob_inst_state;
         epochIncremented <= x.epochIncremented;
         spec_bits[sb_enq_port] <= x.spec_bits;
@@ -249,6 +288,7 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         lsqAtCommitNotified[lsqNotified_enq_port] <= False;
         nonMMIOStDone[nonMMIOSt_enq_port] <= False;
         // check
+        doAssert(!x.dispatched, "cannot be dispatched");
         doAssert(!x.ldKilled, "ld killed must be false");
         doAssert(!x.memAccessAtCommit, "mem access at commit must be false");
         doAssert(!x.lsqAtCommitNotified, "lsq notified must be false");
@@ -265,6 +305,7 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
             ppc_vaddr_csrData: ppc_vaddr_csrData[pvc_deq_port],
             fflags: fflags[fflags_deq_port],
             will_dirty_fpu_state: will_dirty_fpu_state,
+            dispatched: dispatched[disp_deq_port],
             rob_inst_state: rob_inst_state[state_deq_port],
             lsqTag: lsqTag,
             ldKilled: ldKilled[ldKill_deq_port],
@@ -374,6 +415,11 @@ interface SupReorderBuffer#(numeric type aluExeNum, numeric type fpuMulDivExeNum
     // doFinishMem, after addr translation
     method Action setExecuted_doFinishMem(InstTag x, Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
 
+    // dispatched (debug)
+    interface Vector#(aluExeNum, Put#(InstTag)) setDispatched_alu;
+    interface Vector#(fpuMulDivExeNum, Put#(InstTag)) setDispatched_fpuMulDiv;
+    method Action setDispatched_mem(InstTag x);
+
     // get original PC/PPC before execution, EHR port 0 will suffice
     interface Vector#(TAdd#(1, aluExeNum), ROB_getOrigPC) getOrigPC;
     interface Vector#(aluExeNum, ROB_getOrigPredPC) getOrigPredPC;
@@ -461,6 +507,9 @@ module mkSupReorderBuffer#(
     Vector#(SupSize, Reg#(Bool)) setExeLSQ_SB_enq <- replicateM(mkRevertingVirtualReg(True));
     Vector#(SupSize, Reg#(Bool)) setExeFpuMulDiv_SB_enq <- replicateM(mkRevertingVirtualReg(True));
     Vector#(SupSize, Reg#(Bool)) setNotified_SB_enq <- replicateM(mkRevertingVirtualReg(True));
+    Vector#(SupSize, Reg#(Bool)) setDispAlu_SB_enq <- replicateM(mkRevertingVirtualReg(True));
+    Vector#(SupSize, Reg#(Bool)) setDispMem_SB_enq <- replicateM(mkRevertingVirtualReg(True));
+    Vector#(SupSize, Reg#(Bool)) setDispFpuMulDiv_SB_enq <- replicateM(mkRevertingVirtualReg(True));
 
     function SingleScalarPtr getNextPtr(SingleScalarPtr p);
         return p == fromInteger(valueOf(SingleScalarSize)-1) ? 0 : p + 1;
@@ -794,6 +843,9 @@ module mkSupReorderBuffer#(
                 setExeFpuMulDiv_SB_enq[i] <= False;
                 setExeLSQ_SB_enq[i] <= False;
                 setNotified_SB_enq[i] <= False;
+                setDispAlu_SB_enq[i] <= False;
+                setDispMem_SB_enq[i] <= False;
+                setDispFpuMulDiv_SB_enq[i] <= False;
             endmethod
             method InstTag getEnqInstTag;
                 return InstTag {
@@ -864,6 +916,24 @@ module mkSupReorderBuffer#(
         endinterface);
     end
 
+    Vector#(aluExeNum, Put#(InstTag)) aluSetDispIfc;
+    for(Integer i = 0; i < valueof(aluExeNum); i = i+1) begin
+        aluSetDispIfc[i] = (interface Put;
+            method Action put(InstTag x) if(all(id, readVReg(setDispAlu_SB_enq)));
+                row[x.way][x.ptr].setDispatched_alu[i].put(?);
+            endmethod
+        endinterface);
+    end
+
+    Vector#(fpuMulDivExeNum, Put#(InstTag)) fpuMulDivSetDispIfc;
+    for(Integer i = 0; i < valueof(fpuMulDivExeNum); i = i+1) begin
+        fpuMulDivSetDispIfc[i] = (interface Put;
+            method Action put(InstTag x) if(all(id, readVReg(setDispFpuMulDiv_SB_enq)));
+                row[x.way][x.ptr].setDispatched_fpuMulDiv[i].put(?);
+            endmethod
+        endinterface);
+    end
+
     // get pc/ppc ifc used by alu exe (also one pc for mem exe)
     Vector#(TAdd#(1, aluExeNum), ROB_getOrigPC) getOrigPCIfc;
     Vector#(aluExeNum, ROB_getOrigPredPC) getOrigPredPCIfc;
@@ -924,6 +994,14 @@ module mkSupReorderBuffer#(
         all(id, readVReg(setExeMem_SB_enq)) // ordering: < enq
     );
         row[x.way][x.ptr].setExecuted_doFinishMem(vaddr, access_at_commit, non_mmio_st_done);
+    endmethod
+
+    interface setDispatched_alu = aluSetDispIfc;
+
+    interface setDispatched_fpuMulDiv = fpuMulDivSetDispIfc;
+
+    method Action setDispatched_mem(InstTag x) if(all(id, readVReg(setDispMem_SB_enq)));
+        row[x.way][x.ptr].setDispatched_mem;
     endmethod
 
     interface getOrigPC = getOrigPCIfc;
