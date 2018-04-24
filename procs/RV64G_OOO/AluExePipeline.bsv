@@ -197,7 +197,7 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
         end
 
         // set rob dispatched (debug)
-        inIfc.rob_setDispatched(x.tag)
+        inIfc.rob_setDispatched(x.tag);
         
         // go to next stage
         dispToRegQ.enq(ToSpecFifo {

@@ -23,6 +23,7 @@
 
 `include "ProcConfig.bsv"
 // ReorderBuffer
+import GetPut::*;
 import Types::*;
 import ProcTypes::*;
 import HasSpecBits::*;

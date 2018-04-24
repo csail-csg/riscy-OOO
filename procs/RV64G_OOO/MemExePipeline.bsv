@@ -300,7 +300,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
                  "St cannot have dst reg");
 
         // set rob dispatched (debug)
-        inIfc.rob_setDispatched(x.tag)
+        inIfc.rob_setDispatched(x.tag);
         
         // go to next stage
         dispToRegQ.enq(ToSpecFifo {

@@ -133,7 +133,7 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         doAssert(!isValid(x.spec_tag), "FpuMulDiv should not carry any spec tag");
 
         // set rob dispatched (debug)
-        inIfc.rob_setDispatched(x.tag)
+        inIfc.rob_setDispatched(x.tag);
         
         // go to next stage
         dispToRegQ.enq(ToSpecFifo {
