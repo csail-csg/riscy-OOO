@@ -100,77 +100,95 @@ public:
 
     virtual void renameInstStuck(uint8_t core, const uint64_t pc, const uint8_t fetchMainEp,
                                  const int fetchWaitRedirect, const int fetchWaitFlush,
-                                 const uint8_t emCurEp, const uint8_t emCheckedEp,
-                                 const int emWaitRedirect, const int htifStall) {
+                                 const uint8_t emCurEp, const uint8_t emCheckedEp) {
         fprintf(stderr, "  [DEADLOCK renameInstStuck] core %d, pc %016llx, fetchMainEp %d, "
                 "fetchWaitRedirect %d, fetchWaitFlush %d, "
-                "emCurEp %d, emCheckedEp %d, emWaitRedirect %d, htifStall %d\n",
+                "emCurEp %d, emCheckedEp %d\n",
                 (int)core, (long long unsigned)pc, (int)fetchMainEp,
                 fetchWaitRedirect, fetchWaitFlush, (int)emCurEp,
-                (int)emCheckedEp, emWaitRedirect, htifStall);
+                (int)emCheckedEp);
         fprintf(log_fp, "[DEADLOCK renameInstStuck] core %d, pc %016llx, fetchMainEp %d, "
                 "fetchWaitRedirect %d, fetchWaitFlush %d, "
-                "emCurEp %d, emCheckedEp %d, emWaitRedirect %d, htifStall %d\n",
+                "emCurEp %d, emCheckedEp %d\n",
                 (int)core, (long long unsigned)pc, (int)fetchMainEp,
                 fetchWaitRedirect, fetchWaitFlush, (int)emCurEp,
-                (int)emCheckedEp, emWaitRedirect, htifStall);
+                (int)emCheckedEp);
         fflush(log_fp);
     }
 
     virtual void renameCorrectPathStuck(uint8_t core, const uint64_t pc, const uint8_t fetchMainEp,
                                         const int fetchWaitRedirect, const int fetchWaitFlush,
-                                        const uint8_t emCurEp, const uint8_t emCheckedEp,
-                                        const int emWaitRedirect, const int htifStall) {
+                                        const uint8_t emCurEp, const uint8_t emCheckedEp) {
         fprintf(stderr, "  [DEADLOCK renameCorrectPathStuck] core %d, pc %016llx, fetchMainEp %d, "
                 "fetchWaitRedirect %d, fetchWaitFlush %d, "
-                "emCurEp %d, emCheckedEp %d, emWaitRedirect %d, htifStall %d\n",
+                "emCurEp %d, emCheckedEp %d\n",
                 (int)core, (long long unsigned)pc, (int)fetchMainEp,
                 fetchWaitRedirect, fetchWaitFlush, (int)emCurEp,
-                (int)emCheckedEp, emWaitRedirect, htifStall);
+                (int)emCheckedEp);
         fprintf(log_fp, "[DEADLOCK renameCorrectPathStuck] core %d, pc %016llx, fetchMainEp %d, "
                 "fetchWaitRedirect %d, fetchWaitFlush %d, "
-                "emCurEp %d, emCheckedEp %d, emWaitRedirect %d, htifStall %d\n",
+                "emCurEp %d, emCheckedEp %d\n",
                 (int)core, (long long unsigned)pc, (int)fetchMainEp,
                 fetchWaitRedirect, fetchWaitFlush, (int)emCurEp,
-                (int)emCheckedEp, emWaitRedirect, htifStall);
+                (int)emCheckedEp);
         fflush(log_fp);
     }
 
-    virtual void commitInstStuck(uint8_t core, const uint64_t pc,
+    virtual void commitInstStuck(const uint8_t core, const uint64_t pc,
                                  const uint8_t iType, const int isException,
                                  const int isInterrupt, const uint8_t trapVal,
-                                 const uint8_t state, const uint64_t specBits,
-                                 const int specTagValid, const uint8_t specTag,
-                                 const int stbEmpty, const uint8_t prv, const int htifStall) {
+                                 const uint8_t state, const int dispatched,
+                                 const int claimedPhyReg,
+                                 const int ldKilled, const int memAccessAtCommit,
+                                 const int lsqAtCommitNotified, const int nonMMIOStDone,
+                                 const int epochIncremented, const uint32_t specBits,
+                                 const int stbEmpty, const int stqEmpty,
+                                 const int tlbNoPendingReq, const uint8_t prv) {
         fprintf(stderr, "  [DEADLOCK commitInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, specBits %016llx, specTagValid %d, specTag %d, "
-                "stbEmpty %d, prv %d, htifStall %d\n",
+                "isInterrupt %d, trapVal %d, state %d, dispatched %d, claimedPhyReg %d, ldKilled %d, "
+                "memAccessAtCommit %d, lsqAtCommitNotified %d, nonMMIOStDone %d, epochIncremented %d, "
+                "specBits %08x, stbEmpty %d, stqEmpty %d, tlbNoPendingReq %d, prv %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, (unsigned long long)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
-        fprintf(log_fp, "[DEADLOCK commitInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, specBits %016llx, specTagValid %d, specTag %d, "
-                "stbEmpty %d, prv %d, htifStall %d\n",
+                (int)state, dispatched, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
+                nonMMIOStDone, epochIncremented, (unsigned)specBits, stbEmpty, stqEmpty,
+                tlbNoPendingReq, (int)prv);
+        fprintf(log_fp, "  [DEADLOCK commitInstStuck] core %d, pc %016llx, iType %d, isException %d, "
+                "isInterrupt %d, trapVal %d, state %d, dispatched %d, claimedPhyReg %d, ldKilled %d, "
+                "memAccessAtCommit %d, lsqAtCommitNotified %d, nonMMIOStDone %d, epochIncremented %d, "
+                "specBits %08x, stbEmpty %d, stqEmpty %d, tlbNoPendingReq %d, prv %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, (unsigned long long)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
+                (int)state, dispatched, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
+                nonMMIOStDone, epochIncremented, (unsigned)specBits, stbEmpty, stqEmpty,
+                tlbNoPendingReq, (int)prv);
         fflush(log_fp);
     }
 
-    virtual void commitUserInstStuck(uint8_t core, const uint64_t pc,
+    virtual void commitUserInstStuck(const uint8_t core, const uint64_t pc,
                                      const uint8_t iType, const int isException,
                                      const int isInterrupt, const uint8_t trapVal,
-                                     const uint8_t state, const uint64_t specBits,
-                                     const int specTagValid, const uint8_t specTag,
-                                     const int stbEmpty, const uint8_t prv, const int htifStall) {
+                                     const uint8_t state, const int dispatched,
+                                     const int claimedPhyReg,
+                                     const int ldKilled, const int memAccessAtCommit,
+                                     const int lsqAtCommitNotified, const int nonMMIOStDone,
+                                     const int epochIncremented, const uint32_t specBits,
+                                     const int stbEmpty, const int stqEmpty,
+                                     const int tlbNoPendingReq, const uint8_t prv) {
         fprintf(stderr, "  [DEADLOCK commitUserInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, specBits %016llx, specTagValid %d, specTag %d, "
-                "stbEmpty %d, prv %d, htifStall %d\n",
+                "isInterrupt %d, trapVal %d, state %d, dispatched %d, claimedPhyReg %d, ldKilled %d, "
+                "memAccessAtCommit %d, lsqAtCommitNotified %d, nonMMIOStDone %d, epochIncremented %d, "
+                "specBits %08x, stbEmpty %d, stqEmpty %d, tlbNoPendingReq %d, prv %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, (unsigned long long)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
-        fprintf(log_fp, "[DEADLOCK commitUserInstStuck] core %d, pc %016llx, iType %d, isException %d, "
-                "isInterrupt %d, trapVal %d, state %d, specBits %016llx, specTagValid %d, specTag %d, "
-                "stbEmpty %d, prv %d, htifStall %d\n",
+                (int)state, dispatched, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
+                nonMMIOStDone, epochIncremented, (unsigned)specBits, stbEmpty, stqEmpty,
+                tlbNoPendingReq, (int)prv);
+        fprintf(log_fp, "  [DEADLOCK commitUserInstStuck] core %d, pc %016llx, iType %d, isException %d, "
+                "isInterrupt %d, trapVal %d, state %d, dispatched %d, claimedPhyReg %d, ldKilled %d, "
+                "memAccessAtCommit %d, lsqAtCommitNotified %d, nonMMIOStDone %d, epochIncremented %d, "
+                "specBits %08x, stbEmpty %d, stqEmpty %d, tlbNoPendingReq %d, prv %d\n",
                 (int)core, (long long unsigned)pc, (int)iType, isException, isInterrupt, (int)trapVal,
-                (int)state, (unsigned long long)specBits, specTagValid, (int)specTag, stbEmpty, (int)prv, htifStall);
+                (int)state, dispatched, claimedPhyReg, ldKilled, memAccessAtCommit, lsqAtCommitNotified,
+                nonMMIOStDone, epochIncremented, (unsigned)specBits, stbEmpty, stqEmpty,
+                tlbNoPendingReq, (int)prv);
         fflush(log_fp);
     }
 };

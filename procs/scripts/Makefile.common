@@ -30,6 +30,7 @@
 # CORE_NUM
 # TSO_MM: true or false
 # CHECK_DEADLOCK: true or false
+# RENAME_DEBUG: true or false
 # BUILD_DIR
 
 CONNECTALDIR := $(RISCY_HOME)/connectal
@@ -113,6 +114,11 @@ CONNECTALFLAGS += --bscflags " -D USE_XILINX_SYNC_FIFO "
 # check deadlock
 ifeq ($(CHECK_DEADLOCK),true)
 CONNECTALFLAGS += --bscflags=" -D CHECK_DEADLOCK "
+endif
+
+# check rename error
+ifeq ($(RENAME_DEBUG),true)
+CONNECTALFLAGS += --bscflags=" -D RENAME_DEBUG "
 endif
 
 # FPU implementation

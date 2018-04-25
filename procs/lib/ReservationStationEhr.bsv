@@ -256,10 +256,10 @@ module mkReservationStation#(Bool lazySched, Bool lazyEnq, Bool countValid)(
     interface setRegReady = setRegReadyIfc;
 
     interface SpeculationUpdate specUpdate;
-        method Action incorrectSpeculation(SpecTag x);
+        method Action incorrectSpeculation(Bool kill_all, SpecTag x);
             function Action wrongSpec(Integer i);
             action
-                if(spec_bits[i][sb_wrongSpec_port][x] == 1) begin
+                if(kill_all || spec_bits[i][sb_wrongSpec_port][x] == 1) begin
                     valid[i][valid_wrongSpec_port] <= False;
                 end
             endaction

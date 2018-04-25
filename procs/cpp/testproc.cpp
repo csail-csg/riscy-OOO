@@ -141,8 +141,7 @@ int runHtifTest() {
             "toHost addr %llx, fromHost addr %llx\n",
             (long long unsigned)startpc, (int)core_num,
             (long long unsigned)tohost_addr, (long long unsigned)fromhost_addr);
-    procRequestProxy->start(startpc,
-                            tohost_addr, fromhost_addr);
+    procRequestProxy->start(startpc, tohost_addr, fromhost_addr);
 
     // wait for result
     int result = procIndication->waitResult();

@@ -83,8 +83,13 @@ module mkSpecTagManager(SpecTagManager);
     endmethod
     method Bool canClaim = isValid(next_spec_tag);
     interface SpeculationUpdate specUpdate;
-        method Action incorrectSpeculation(SpecTag tag);
-            current_spec_bits <= current_spec_bits & (~(dependent_checkpoints[tag]));
+        method Action incorrectSpeculation(Bool killAll, SpecTag tag);
+            if(killAll) begin
+                current_spec_bits <= 0;
+            end
+            else begin
+                current_spec_bits <= current_spec_bits & (~(dependent_checkpoints[tag]));
+            end
             // conflict with claim spec tag
             wrongSpec_claim_conflict.wset(?);
         endmethod

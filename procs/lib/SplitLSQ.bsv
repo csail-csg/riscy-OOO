@@ -41,10 +41,8 @@ export LdQDeqEntry(..);
 export StQDeqEntry(..);
 export LSQUpdateAddrResult(..);
 export LSQForwardResult(..);
-export LSQStallSource(..);
 export LSQIssueLdResult(..);
 export LSQIssueLdInfo(..);
-export LSQKillLdInfo(..);
 export LSQRespLdResult(..);
 export LSQHitInfo(..);
 export SplitLSQ(..);
@@ -128,20 +126,20 @@ typedef struct {
     // ===================
     // Basic info
 
-    InstTag          instTag;
-    LdQMemFunc       memFunc;
-    Bool             unsignedLd;
-    Bool             byteEn; // unshifted BE
-    Bool             acq; // acquire ordering
-    Bool             rel; // release ordering
-    Maybe#(PhyDst)   dst;
-    Addr             paddr;
+    InstTag           instTag;
+    LdQMemFunc        memFunc;
+    Bool              unsignedLd;
+    Bool              byteEn; // unshifted BE
+    Bool              acq; // acquire ordering
+    Bool              rel; // release ordering
+    Maybe#(PhyDst)    dst;
+    Addr              paddr;
     // whether paddr is mmio addr; MMIO access is handled at deq time
     // non-speculatively
-    Bool             isMMIO;
+    Bool              isMMIO;
     // byte enable after shift to align with dword boudary. This is valid
     // for all types of memory accesses.
-    ByteEn           shiftedBE;
+    ByteEn            shiftedBE;
 
     // ===================
     // Status bits of the Ld. Typically we don't need to reset any bit as the
@@ -149,18 +147,20 @@ typedef struct {
     // when Ld issues from issueQ. This is because it may need to be set again
     // if the Ld finds itself stalled by something.
 
-    // paddr/isMMIO/data have been computed
-    Bool             computed;
+    // fault after addr translation
+    Maybe#(Exception) fault;
+    // paddr/isMMIO/data have been computed (can be true only when no fault)
+    Bool              computed;
     // Ld is in issueQ, can be true only when computed = True and excutiong =
     // done = killed = False
-    Bool             inIssueQ;
+    Bool              inIssueQ;
     // Ld is executing (either issued to cache or forwarding is on its way).
-    Bool             executing;
+    Bool              executing;
     // Ld has got its result (executing must be true)
-    Bool             done;
+    Bool              done;
     // Ld is killed by older inst (failed speculation), can be true only when
     // executing or done is true
-    Bool             killed;
+    Bool              killed;
 
     // ===================
     // Ld/St ordering.
@@ -201,11 +201,9 @@ typedef struct {
     // ===================
     // Speculation related.
 
-    // after update with paddr, all Lds and all MMIOs should have valid spec
-    // tag
-    Maybe#(SpecTag)  specTag;
-    // spec bits should contain myself's spec tag
     SpecBits         specBits;
+    // inst is at commit stage
+    Bool             atCommit;
     // waiting for a wrong path load resp (the current entry cannot issue)
     Bool             waitWPResp;
 } LdQEntry deriving (Bits, Eq, FShow);
@@ -218,35 +216,37 @@ typedef struct {
     // ===================
     // Basic info
 
-    InstTag          instTag;
-    StQMemFunc       memFunc;
-    AmoFunc          amoFunc;
-    Bool             byteEn; // unshifted BE
-    Bool             acq; // acquire ordering
-    Bool             rel; // release ordering
-    Maybe#(PhyDst)   dst;
+    InstTag           instTag;
+    StQMemFunc        memFunc;
+    AmoFunc           amoFunc;
+    Bool              byteEn; // unshifted BE
+    Bool              acq; // acquire ordering
+    Bool              rel; // release ordering
+    Maybe#(PhyDst)    dst;
     // keep full addr, because  we use addr[2] to determine upper or lower
     // 32-bit AMO in cache, and we use lower bits of addr to shift load resp.
-    Addr             paddr;
+    Addr              paddr;
     // whether paddr is mmio addr; MMIO access is handled at deq time
     // non-speculatively
-    Bool             isMMIO;
+    Bool              isMMIO;
     // byte enable after shift to align with dword boudary. This is valid
     // for all types of memory accesses.
-    ByteEn           shiftedBE;
+    ByteEn            shiftedBE;
     // St/Sc/Amo data
     // for St/Sc: store data after shift to align with dword boudary
     // for Amo: data is **NOT** shifted, this doesn't affect forwarding to Ld,
     // because AMO never forwards data
-    Data             stData;
+    Data              stData;
 
     // ===================
     // status bits of St/Sc/Amo
 
-    // paddr/isMMIO/data have been computed
-    Bool             computed;
+    // fault after addr translation
+    Maybe#(Exception) fault;
+    // paddr/isMMIO/data have been computed (can be true only when no fault)
+    Bool              computed;
     // entry is verified, see comments above
-    Bool             verified;
+    Bool              verified;
 
     // ===================
     // Ld/St ordering.
@@ -259,10 +259,10 @@ typedef struct {
     // ===================
     // Speculation related.
 
-    // after update with paddr, all all MMIOs should have valid spec tag
-    Maybe#(SpecTag)  specTag;
-    // spec bits should contain myself's spec tag
     SpecBits         specBits;
+    // inst is at commit stage (Sc/Amo/MMIO) or have been committed (non-MMIO
+    // St)
+    Bool             atCommit;
 } StQEntry deriving(Bits, Eq, FShow);
 
 typedef struct {
@@ -274,10 +274,9 @@ typedef struct {
     Data data; // align with dword, not final result written to reg file
 } LSQForwardResult deriving(Bits, Eq, FShow);
 
-typedef enum {Ld, St, SB} LSQStallSource deriving(Bits, Eq, FShow);
 typedef union tagged {
     void ToCache;
-    LSQStallSource Stall;
+    void Stall;
     LSQForwardResult Forward;
 } LSQIssueLdResult deriving(Bits, Eq, FShow);
 
@@ -286,12 +285,6 @@ typedef struct {
     Addr paddr;
     ByteEn shiftedBE;
 } LSQIssueLdInfo deriving(Bits, Eq, FShow);
-
-typedef struct {
-    InstTag instTag;
-    Maybe#(SpecTag) specTag;
-    Bool killByLd;
-} LSQKillLdInfo deriving(Bits, Eq, FShow);
 
 typedef struct {
     Bool wrongPath;
@@ -305,32 +298,31 @@ typedef struct {
 } LSQHitInfo deriving(Bits, Eq, FShow);
 
 typedef struct {
-    InstTag         instTag;
-    LdQMemFunc      memFunc;
-    ByteEn          byteEn;
-    Bool            unsignedLd;
-    Bool            rel;
-    Maybe#(PhyDst)  dst;
-    Addr            paddr;
-    Bool            isMMIO;
-    ByteEn          shiftedBE;
-    Maybe#(SpecTag) specTag;
-    SpecBits        specBits;
+    InstTag           instTag;
+    LdQMemFunc        memFunc;
+    ByteEn            byteEn;
+    Bool              unsignedLd;
+    Bool              rel;
+    Maybe#(PhyDst)    dst;
+    Addr              paddr;
+    Bool              isMMIO;
+    ByteEn            shiftedBE;
+    Maybe#(Exception) fault;
+    Bool              killed;
 } LdQDeqEntry deriving (Bits, Eq, FShow);
 
 typedef struct {
-    InstTag         instTag;
-    StQMemFunc      memFunc;
-    AmoFunc         amoFunc;
-    Bool            acq;
-    Bool            rel;
-    Maybe#(PhyDst)  dst;
-    Addr            paddr;
-    Bool            isMMIO;
-    ByteEn          shiftedBE;
-    Data            stData;
-    Maybe#(SpecTag) specTag;
-    SpecBits        specBits;
+    InstTag           instTag;
+    StQMemFunc        memFunc;
+    AmoFunc           amoFunc;
+    Bool              acq;
+    Bool              rel;
+    Maybe#(PhyDst)    dst;
+    Addr              paddr;
+    Bool              isMMIO;
+    ByteEn            shiftedBE;
+    Data              stData;
+    Maybe#(Exception) fault;
 } StQDeqEntry deriving (Bits, Eq, FShow);
 
 interface SplitLSQ;
@@ -355,12 +347,13 @@ interface SplitLSQ;
     // update store data (shifted for St and Sc, unshifted for AMO). XXX we
     // assume data is updated before addr is updated
     method Action updateData(StQTag t, Data d);
-    // Update addr after address translation, and set the spec tag if it is a
-    // load or MMIO. Also search for the (oldest) younger load to kill. Return
-    // if the entry is waiting for wrong path resp.
+    // Update addr after address translation. Also search for the (oldest)
+    // younger load to kill. Return if the entry is waiting for wrong path
+    // resp, so Ld can be issued immediately.
     method ActionValue#(LSQUpdateAddrResult) updateAddr(
-        LdStQTag lsqTag, Addr paddr, Bool isMMIO,
-        ByteEn shiftedBE, Maybe#(SpecTag) specTag
+        LdStQTag lsqTag, Maybe#(Exception) fault,
+        // below are only meaningful wen fault is Invalid
+        Addr paddr, Bool isMMIO, ByteEn shiftedBE
     );
     // Issue a load, and remove dependence on this load issue.
     method ActionValue#(LSQIssueLdResult) issueLd(
@@ -368,56 +361,50 @@ interface SplitLSQ;
     );
     // Get the load to issue
     method ActionValue#(LSQIssueLdInfo) getIssueLd;
-    // Get the load killed by ld/st ordering
-    method ActionValue#(LSQKillLdInfo) getLdKilledByLdSt;
     // Get load resp
     method ActionValue#(LSQRespLdResult) respLd(LdQTag t, Data alignedData);
     // Deq LQ entry, and wakeup stalled loads. The guard checks the following:
     // (1) valid
-    // (2) not killed (we cannot deq a killed Ld and then commit it in ROB)
-    // (3) for non-MMIO Ld, it is done and all older SQ entries have been
-    // dequeued or verified
-    // (4) for Lr or MMIO, it is computed and there is no older SQ entry (this
-    // also handles the .rl associated with Lr)
+    // (2) one of the following is true:
+    //     (a) fault
+    //     (b) non-MMIO Ld, done and all older SQ entries have been dequeued or
+    //     verified (the load may be killed)
+    //     (c) MMIO or Lr, computed, atCommit, and no older SQ entry (this also
+    //     handles .rl associated with Lr)
     // NOTE: there is no pure fence in LQ right now
     // Outside world should do the following:
     // (1) issue Lr or MMIO to memory system only at deq port
-    // (2) check specBits (and waitWPResp TODO maybe not needed) before issuing
-    // Lr or MMIO
-    // (3) For WEAK model, check .rl associated with Lr and SB empty before
+    // (2) For WEAK model, check .rl associated with Lr and SB empty before
     // issuing Lr
-    // (4) set ROB entry of deq mem inst to Executed (so that ROB can commit)
-    // (5) when deq Ld or MMIO, clear spectag globally
-    // (6) Fore WEAK model, before issuing (non-MMIO) Lr, ensure SB does not
+    // (3) set ROB entry of deq mem inst to Executed (so that ROB can commit)
+    // (4) Fore WEAK model, before issuing (non-MMIO) Lr, ensure SB does not
     // contain overlapping address
     method LdQDeqEntry firstLd;
     method Action deqLd;
     // Deq SQ entry, and wakeup stalled loads. Also change the readFrom and
     // olderSt fields of loads. The guard only checks the following:
     // (1) valid
-    // (2) for St/Sc/Amo/MMIO, it is computed and all older LQ entries have
-    // been dequeued
-    // NOTE: .rl associated with Sc/Amo is automatically handled, and there is
-    // no pure fence in SQ right now.
+    // (2) one of the following is true:
+    //     (a) fault
+    //     (b) computed, and atCommit (this implies no older LQ entry)
+    // NOTE: .rl associated with Sc/Amo is automatically handled by in order
+    // deq, .aq in LQ is automatically handled by no older LQ entry, and there
+    // is no pure fence in SQ right now.
     // Outside world should do the following:
     // (1) issue Sc/Amo/MMIO to memory system at deq port
     // (2) for WEAK model, issue normal St to SB
     // (3) for TSO, issue normal St to memory
-    // (4) check specBits before issuing to memory or SB
-    // (5) For WEAK model, check .rl associated with Sc/Amo and SB empty before
+    // (4) For WEAK model, check .rl associated with Sc/Amo and SB empty before
     // issuing Sc/Amo
-    // (6) set ROB entry of dequeued Sc/Amo/MMIO to Executed (normal St should
+    // (5) set ROB entry of dequeued Sc/Amo/MMIO to Executed (normal St should
     // have been set as Executed when addr and data are computed)
-    // (7) when deq MMIO, clear spectag globally
-    // (8) Fore WEAK model, before issuing non-MMIO Sc/Amo, ensure SB does not
+    // (6) Fore WEAK model, before issuing non-MMIO Sc/Amo, ensure SB does not
     // contain overlapping address
     method StQDeqEntry firstSt;
     method Action deqSt;
 `ifdef TSO_MM
     // Kill loads when a cache line is evicted (TSO only)
     method Action cacheEvict(LineAddr a);
-    // Get the load killed by cache eviction (TSO only)
-    method ActionValue#(LSQKillLdInfo) getLdKilledByCache;
 `else
     // Wake up younger loads when SB deq (only WEAK model has SB)
     method Action wakeupLdStalledBySB(SBIndex sbIdx);
@@ -425,11 +412,10 @@ interface SplitLSQ;
     // For system consistency, check SQ empty. Need this check because a normal
     // St can sit in the SQ while already committed from ROB
     method Bool stqEmpty;
+    // notify that inst is or has been to commit stage
+    interface Vector#(SupSize, Put#(LdStQTag)) setAtCommit;
     // Speculation
     interface SpeculationUpdate specUpdate;
-    // for performance
-    method Bool stqFull_ehrPort0;
-    method Bool ldqFull_ehrPort0;
 endinterface
 
 // --- auxiliary types and functions ---
@@ -513,38 +499,26 @@ module mkLSQIssueLdQ(LSQIssueLdQ);
     let m <- mkSpecFifo_SB_deq_enq_C_deq_enq(True);
     return m;
 endmodule
-
-// killQ of LSQ tags should be killed
-typedef struct {
-    LdQTag tag;
-    Bool killByLd;
-} LSQKillLd deriving(Bits, Eq, FShow);
-typedef SpecFifo_SB_deq_enq_SB_deq_wrong_C_enq#(2, LSQKillLd) LSQKillLdQ;
-(* synthesize *)
-module mkLSQKillLdQ(LSQKillLdQ);
-    let m <- mkSpecFifo_SB_deq_enq_SB_deq_wrong_C_enq(True);
-    return m;
-endmodule
 // --- end of auxiliary types and functions ---
 
 (* synthesize *)
 module mkSplitLSQ(SplitLSQ);
     // method/rule ordering
-    // getHit, getKillLd, findIssue <
+    // getHit, findIssue <
     // (deqLd (TSO ? C : <) verifySt) <
     // cacheEvict <
     // updateAddr <
     // issueLd, getIssueLd <
     // enqIssueQ <
     // (wakeupLdStalledBySB (Weak only) CF deqSt) <
+    // setAtCommit <
     // respLd <
     // updateData <
     // (enqLd C enqSt) <
     // correctSpec
 
     // Scheduling notes:
-    // - getKilled, getHit, findIssue are almost readonly, so put them at
-    // beginning.
+    // - getHit, findIssue are almost readonly, so put them at beginning.
     // - findIssue must be before updateAddr, because the newly updated load
     // may be issued outside LSQ. We don't want to enq this Ld to issueQ.
     // - A load can first updateAddr and then issue in one cycle (in two
@@ -568,7 +542,6 @@ module mkSplitLSQ(SplitLSQ);
     // put the cache resp rule < respLd. Since cache resp rule calls deqSt
     // (TSO) or wakeupLdStalledBySB (WEAK), we have deqSt < respLd and
     // wakeupLdStalledBySB < respLd.
-    // - Since respLd needs shiftedBE, we put respLd < updateData.
     // - There is a bypassing path from updateAddr to deqSt. This path should
     // not be activated in reality, because the updated StQ entry cannot be
     // validated in the same cycle. TODO? If we really want, we can make a
@@ -588,10 +561,14 @@ module mkSplitLSQ(SplitLSQ);
     // - In TSO, only one of deqLd and verifySt can fire at one cycle, because
     // of sequential verification requirement. In WEAK, deqLd < verifySt,
     // because verifySt does not need to peek any info in LQ.
+    // - XXX We temporarily put deqSt < setAtCommit to avoid bypass from
+    // doCommit to deqSt. To avoid scheduling cycles, we may need wires to call
+    // this method in doCommit rule. Such wires should not be a problem,
+    // because the inst cannot be killed or affected in other ways.
 
     // W.r.t wrongSpec:
-    // getKillLd < wrongSpec (they fire in same rule)
-    // findIss, getHit < wrongSpec (findIss ad getHit are read only)
+    // findIss < wrongSpec (findIss is read only, the real action rule enqIss
+    // is conflicting with wrongSpec)
     // All other methods or rules that have conflicting accesses with wrongSpec
     // should conflict with wrongSpec to cut off any possible bypass path.
 
@@ -610,36 +587,37 @@ module mkSplitLSQ(SplitLSQ);
 
     // LQ
     // entry valid bits
-    Vector#(LdQSize, Ehr#(2, Bool))             ld_valid           <- replicateM(mkEhr(False));
+    Vector#(LdQSize, Ehr#(2, Bool))                 ld_valid           <- replicateM(mkEhr(False));
     // entry contents
-    Vector#(LdQSize, Reg#(InstTag))             ld_instTag         <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(LdQMemFunc))          ld_memFunc         <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Bool))                ld_unsigned        <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(ByteEn))              ld_byteEn          <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Bool))                ld_acq             <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Bool))                ld_rel             <- replicateM(mkRegU);
-    Vector#(LdQSize, Reg#(Maybe#(PhyDst)))      ld_dst             <- replicateM(mkRegU);
-    Vector#(LdQSize, Ehr#(2, Addr))             ld_paddr           <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(2, Bool))             ld_isMMIO          <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(2, ByteEn))           ld_shiftedBE       <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(2, Bool))             ld_computed        <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))             ld_inIssueQ        <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(2, Bool))             ld_executing       <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(2, Bool))             ld_done            <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))             ld_killed          <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(2, Maybe#(StQTag)))   ld_olderSt         <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(2, Bool))             ld_olderStVerified <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Maybe#(StQTag)))   ld_readFrom        <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Maybe#(LdQTag)))   ld_depLdQDeq       <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Maybe#(StQTag)))   ld_depStQDeq       <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Reg#(InstTag))                 ld_instTag         <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(LdQMemFunc))              ld_memFunc         <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Bool))                    ld_unsigned        <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(ByteEn))                  ld_byteEn          <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Bool))                    ld_acq             <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Bool))                    ld_rel             <- replicateM(mkRegU);
+    Vector#(LdQSize, Reg#(Maybe#(PhyDst)))          ld_dst             <- replicateM(mkRegU);
+    Vector#(LdQSize, Ehr#(2, Addr))                 ld_paddr           <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(2, Bool))                 ld_isMMIO          <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(2, ByteEn))               ld_shiftedBE       <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(2, Maybe#(Exception)))    ld_fault           <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(2, Bool))                 ld_computed        <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))                 ld_inIssueQ        <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(2, Bool))                 ld_executing       <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(2, Bool))                 ld_done            <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Bool))                 ld_killed          <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(2, Maybe#(StQTag)))       ld_olderSt         <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(2, Bool))                 ld_olderStVerified <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(StQTag)))       ld_readFrom        <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(LdQTag)))       ld_depLdQDeq       <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(StQTag)))       ld_depStQDeq       <- replicateM(mkEhr(?));
 `ifndef TSO_MM
-    Vector#(LdQSize, Ehr#(3, Maybe#(LdQTag)))   ld_depLdEx         <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Maybe#(SBIndex)))  ld_depSBDeq        <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(LdQTag)))       ld_depLdEx         <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(SBIndex)))      ld_depSBDeq        <- replicateM(mkEhr(?));
 `endif
-    Vector#(LdQSize, Ehr#(3, Maybe#(SpecTag)))  ld_specTag         <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, SpecBits))         ld_specBits        <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, SpecBits))             ld_specBits        <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(TAdd#(1, SupSize), Bool)) ld_atCommit        <- replicateM(mkEhr(?));
     // wrong-path load filter (must init to all False)
-    Vector#(LdQSize, Ehr#(1, Bool))             ld_waitWPResp      <- replicateM(mkEhr(False));
+    Vector#(LdQSize, Ehr#(1, Bool))                 ld_waitWPResp      <- replicateM(mkEhr(False));
     // enq/deq ptr
     Reg#(LdQTag)    ld_enqP <- mkReg(0);
     Ehr#(2, LdQTag) ld_deqP <- mkEhr(0);
@@ -647,7 +625,6 @@ module mkSplitLSQ(SplitLSQ);
     // Ports of each EHR used in each method or rule ("write" means the write
     // port is used, "assert" means the port is only used for assert in
     // simulation)
-    let ld_valid_getKill   = getVEhrPort(ld_valid, 0);
     let ld_valid_findIss   = getVEhrPort(ld_valid, 0);
     let ld_valid_wrongSpec = getVEhrPort(ld_valid, 0); // write
     let ld_valid_deqLd     = getVEhrPort(ld_valid, 0); // write
@@ -657,6 +634,7 @@ module mkSplitLSQ(SplitLSQ);
     let ld_valid_issue     = getVEhrPort(ld_valid, 1);
     let ld_valid_enqIss    = getVEhrPort(ld_valid, 1); // assert
     let ld_valid_deqSt     = getVEhrPort(ld_valid, 1);
+    let ld_valid_setCom    = getVEhrPort(ld_valid, 1); // assert
     let ld_valid_resp      = getVEhrPort(ld_valid, 1); // assert
     let ld_valid_enq       = getVEhrPort(ld_valid, 1); // write
 
@@ -681,8 +659,13 @@ module mkSplitLSQ(SplitLSQ);
     let ld_shiftedBE_issue   = getVEhrPort(ld_shiftedBE, 1);
     let ld_shiftedBE_enqIss  = getVEhrPort(ld_shiftedBE, 1); // assert
 
+    let ld_fault_deqLd   = getVEhrPort(ld_fault, 0);
+    let ld_fault_updAddr = getVEhrPort(ld_fault, 0); // write
+    let ld_fault_issue   = getVEhrPort(ld_fault, 1); // assert
+    let ld_fault_enqIss  = getVEhrPort(ld_fault, 1); // assert
+    let ld_fault_enq     = getVEhrPort(ld_fault, 1); // write
+
     let ld_computed_findIss = getVEhrPort(ld_computed, 0);
-    let ld_computed_getKill = getVEhrPort(ld_computed, 0); // assert
     let ld_computed_deqLd   = getVEhrPort(ld_computed, 0);
     let ld_computed_evict   = getVEhrPort(ld_computed, 0); // assert
     let ld_computed_updAddr = getVEhrPort(ld_computed, 0); // write
@@ -699,7 +682,7 @@ module mkSplitLSQ(SplitLSQ);
 
     let ld_executing_findIss   = getVEhrPort(ld_executing, 0);
     let ld_executing_wrongSpec = getVEhrPort(ld_executing, 0);
-    let ld_executing_getKill   = getVEhrPort(ld_executing, 0); // assert
+    let ld_executing_deqLd     = getVEhrPort(ld_executing, 0);
     let ld_executing_evict     = getVEhrPort(ld_executing, 0);
     let ld_executing_updAddr   = getVEhrPort(ld_executing, 0);
     let ld_executing_issue     = getVEhrPort(ld_executing, 0); // write
@@ -715,7 +698,6 @@ module mkSplitLSQ(SplitLSQ);
     let ld_done_resp      = getVEhrPort(ld_done, 0); // write
     let ld_done_enq       = getVEhrPort(ld_done, 1); // write
 
-    let ld_killed_getKill = getVEhrPort(ld_killed, 0); // assert
     let ld_killed_deqLd   = getVEhrPort(ld_killed, 0);
     let ld_killed_evict   = getVEhrPort(ld_killed, 0); // write
     let ld_killed_updAddr = getVEhrPort(ld_killed, 1); // write
@@ -762,12 +744,6 @@ module mkSplitLSQ(SplitLSQ);
     let ld_depSBDeq_enq     = getVEhrPort(ld_depSBDeq, 2); // write
 `endif
 
-    let ld_specTag_getKill = getVEhrPort(ld_specTag, 0);
-    let ld_specTag_deqLd   = getVEhrPort(ld_specTag, 0);
-    let ld_specTag_evict   = getVEhrPort(ld_specTag, 0); // assert
-    let ld_specTag_updAddr = getVEhrPort(ld_specTag, 0); // write
-    let ld_specTag_enq     = getVEhrPort(ld_specTag, 1); // write
-
     let ld_specBits_wrongSpec   = getVEhrPort(ld_specBits, 0); // write
     let ld_specBits_deqLd       = getVEhrPort(ld_specBits, 0); // C with wrongSpec
     let ld_specBits_evict       = getVEhrPort(ld_specBits, 0); // C with wrongSpec
@@ -776,11 +752,20 @@ module mkSplitLSQ(SplitLSQ);
     let ld_specBits_enq         = getVEhrPort(ld_specBits, 0); // write, C with wrongSpec
     let ld_specBits_correctSpec = getVEhrPort(ld_specBits, 1); // write
 
+    let ld_atCommit_wrongSpec = getVEhrPort(ld_atCommit, 0);
+    let ld_atCommit_deqLd     = getVEhrPort(ld_atCommit, 0);
+    Vector#(SupSize, Vector#(LdQSize, Reg#(Bool))) ld_atCommit_setCom;
+    for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
+        ld_atCommit_setCom[i] = getVEhrPort(ld_atCommit, i); // write
+    end
+    let ld_atCommit_enq = getVEhrPort(ld_atCommit, valueof(SupSize)); // write
+
     let ld_waitWPResp_hit       = getVEhrPort(ld_waitWPResp, 0);
     let ld_waitWPResp_findIss   = getVEhrPort(ld_waitWPResp, 0);
+    let ld_waitWPResp_deqLd     = getVEhrPort(ld_waitWPResp, 0);
     let ld_waitWPResp_updAddr   = getVEhrPort(ld_waitWPResp, 0);
     let ld_waitWPResp_issue     = getVEhrPort(ld_waitWPResp, 0); // assert
-    let ld_waitWPResp_enqIss    = getVEhrPort(ld_waitWPResp, 0);
+    let ld_waitWPResp_enqIss    = getVEhrPort(ld_waitWPResp, 0); // assert
     let ld_waitWPResp_resp      = getVEhrPort(ld_waitWPResp, 0); // write
     let ld_waitWPResp_wrongSpec = getVEhrPort(ld_waitWPResp, 0); // write
 
@@ -790,23 +775,24 @@ module mkSplitLSQ(SplitLSQ);
 
     // SQ
     // entry valid bits
-    Vector#(StQSize, Ehr#(2, Bool))            st_valid     <- replicateM(mkEhr(False));
+    Vector#(StQSize, Ehr#(2, Bool))                 st_valid     <- replicateM(mkEhr(False));
     // entry contents
-    Vector#(StQSize, Reg#(InstTag))            st_instTag   <- replicateM(mkRegU);
-    Vector#(StQSize, Reg#(StQMemFunc))         st_memFunc   <- replicateM(mkRegU);
-    Vector#(StQSize, Reg#(AmoFunc))            st_amoFunc   <- replicateM(mkRegU);
-    Vector#(StQSize, Reg#(ByteEn))             st_byteEn    <- replicateM(mkRegU);
-    Vector#(StQSize, Reg#(Bool))               st_acq       <- replicateM(mkRegU);
-    Vector#(StQSize, Reg#(Bool))               st_rel       <- replicateM(mkRegU);
-    Vector#(StQSize, Reg#(Maybe#(PhyDst)))     st_dst       <- replicateM(mkRegU);
-    Vector#(StQSize, Ehr#(2, Addr))            st_paddr     <- replicateM(mkEhr(?));
-    Vector#(StQSize, Ehr#(2, Bool))            st_isMMIO    <- replicateM(mkEhr(?));
-    Vector#(StQSize, Ehr#(2, ByteEn))          st_shiftedBE <- replicateM(mkEhr(?));
-    Vector#(StQSize, Ehr#(1, Data))            st_stData    <- replicateM(mkEhr(?));
-    Vector#(StQSize, Ehr#(2, Bool))            st_computed  <- replicateM(mkEhr(?));
-    Vector#(StQSize, Ehr#(2, Bool))            st_verified  <- replicateM(mkEhr(?));
-    Vector#(StQSize, Ehr#(2, Maybe#(SpecTag))) st_specTag   <- replicateM(mkEhr(?));
-    Vector#(StQSize, Ehr#(2, SpecBits))        st_specBits  <- replicateM(mkEhr(?));
+    Vector#(StQSize, Reg#(InstTag))                 st_instTag   <- replicateM(mkRegU);
+    Vector#(StQSize, Reg#(StQMemFunc))              st_memFunc   <- replicateM(mkRegU);
+    Vector#(StQSize, Reg#(AmoFunc))                 st_amoFunc   <- replicateM(mkRegU);
+    Vector#(StQSize, Reg#(ByteEn))                  st_byteEn    <- replicateM(mkRegU);
+    Vector#(StQSize, Reg#(Bool))                    st_acq       <- replicateM(mkRegU);
+    Vector#(StQSize, Reg#(Bool))                    st_rel       <- replicateM(mkRegU);
+    Vector#(StQSize, Reg#(Maybe#(PhyDst)))          st_dst       <- replicateM(mkRegU);
+    Vector#(StQSize, Ehr#(2, Addr))                 st_paddr     <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(2, Bool))                 st_isMMIO    <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(2, ByteEn))               st_shiftedBE <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(1, Data))                 st_stData    <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(2, Maybe#(Exception)))    st_fault     <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(2, Bool))                 st_computed  <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(2, Bool))                 st_verified  <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(2, SpecBits))             st_specBits  <- replicateM(mkEhr(?));
+    Vector#(StQSize, Ehr#(TAdd#(1, SupSize), Bool)) st_atCommit  <- replicateM(mkEhr(?));
     // enq/deq ptr
     Reg#(StQTag) st_enqP <- mkReg(0);
     Reg#(StQTag) st_deqP <- mkReg(0);
@@ -818,6 +804,7 @@ module mkSplitLSQ(SplitLSQ);
     let st_valid_updAddr   = getVEhrPort(st_valid, 0); // assert
     let st_valid_issue     = getVEhrPort(st_valid, 0);
     let st_valid_deqSt     = getVEhrPort(st_valid, 0); // write
+    let st_valid_setCom    = getVEhrPort(st_valid, 1); // assert
     let st_valid_updData   = getVEhrPort(st_valid, 1); // assert
     let st_valid_enq       = getVEhrPort(st_valid, 1); // write
 
@@ -837,6 +824,10 @@ module mkSplitLSQ(SplitLSQ);
     let st_stData_deqSt   = getVEhrPort(st_stData, 0);
     let st_stData_updData = getVEhrPort(st_stData, 0); // write
 
+    let st_fault_updAddr = getVEhrPort(st_fault, 0); // write
+    let st_fault_deqSt   = getVEhrPort(st_fault, 1);
+    let st_fault_enq     = getVEhrPort(st_fault, 1); // write
+
     let st_computed_verify  = getVEhrPort(st_computed, 0);
     let st_computed_updAddr = getVEhrPort(st_computed, 0); // write
     let st_computed_issue   = getVEhrPort(st_computed, 1);
@@ -850,15 +841,19 @@ module mkSplitLSQ(SplitLSQ);
     let st_verified_deqSt     = getVEhrPort(st_verified, 1);
     let st_verified_enq       = getVEhrPort(st_verified, 1); // write
 
-    let st_specTag_updAddr = getVEhrPort(st_specTag, 0); // write
-    let st_specTag_deqSt   = getVEhrPort(st_specTag, 1);
-    let st_specTag_enq     = getVEhrPort(st_specTag, 1); // write
-
     let st_specBits_wrongSpec   = getVEhrPort(st_specBits, 0); // write
     let st_specBits_updAddr     = getVEhrPort(st_specBits, 0); // C with wrongSpec
     let st_specBits_deqSt       = getVEhrPort(st_specBits, 0); // C with wrongSpec
     let st_specBits_enq         = getVEhrPort(st_specBits, 0); // write, C with wrongSpec
     let st_specBits_correctSpec = getVEhrPort(st_specBits, 1); // write
+
+    let st_atCommit_wrongSpec = getVEhrPort(st_atCommit, 0);
+    let st_atCommit_deqSt     = getVEhrPort(st_atCommit, 0);
+    Vector#(SupSize, Vector#(StQSize, Reg#(Bool))) st_atCommit_setCom;
+    for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
+        st_atCommit_setCom[i] = getVEhrPort(st_atCommit, i); // write
+    end
+    let st_atCommit_enq = getVEhrPort(st_atCommit, valueof(SupSize));
 
     Reg#(StQTag) st_verifyP_wrongSpec = st_verifyP[0]; // write
     Reg#(StQTag) st_verifyP_verify    = st_verifyP[0]; // write, C with wrongSpec
@@ -879,14 +874,6 @@ module mkSplitLSQ(SplitLSQ);
     // will redo the work.
     RWire#(LSQIssueLdInfo) issueLdInfo <- mkRWire;
 
-    // FIFO of LSQ tags that should be killed. Replicated tags may exist, but
-    // replications will all be killed when the first is processed due to spec
-    // bits.
-    LSQKillLdQ killByLdStQ <- mkLSQKillLdQ;
-`ifdef TSO_MM
-    LSQKillLdQ killByCacheQ <- mkLSQKillLdQ;
-`endif
-
     // make wrongSpec conflict with all others (but not correctSpec method and
     // findIssue)
     RWire#(void) wrongSpec_hit_conflict <- mkRWire;
@@ -900,6 +887,8 @@ module mkSplitLSQ(SplitLSQ);
     RWire#(void) wrongSpec_deqSt_conflict <- mkRWire;
     RWire#(void) wrongSpec_verify_conflict <- mkRWire;
     RWire#(void) wrongSpec_wakeBySB_conflict <- mkRWire;
+    // make wrongSpec more urgent than firstSt (resolve bsc error)
+    Wire#(Bool) wrongSpec_urgent_firstSt <- mkDWire(True);
 
     function LdQTag getNextLdPtr(LdQTag t);
         return t == fromInteger(valueOf(LdQSize) - 1) ? 0 : t + 1;
@@ -1033,7 +1022,7 @@ module mkSplitLSQ(SplitLSQ);
 
     // find load ready for issuing when LSQ is not empty:
     // (1) entry valid of load
-    // (2) computed
+    // (2) computed (this implies no fault)
     // (3) not in issueQ
     // (4) not executing (this implies not done)
     // (5) not depend on any thing
@@ -1086,6 +1075,8 @@ module mkSplitLSQ(SplitLSQ);
                  "enq issueQ entry is valid");
         doAssert(ld_memFunc[info.tag] == Ld,
                  "enq issueQ entry is Ld");
+        doAssert(!isValid(ld_fault_enqIss[info.tag]),
+                 "enq issueQ entry cannot have fault");
         doAssert(ld_computed_enqIss[info.tag],
                  "enq issueQ entry is computed");
         doAssert(!ld_executing_enqIss[info.tag],
@@ -1287,30 +1278,65 @@ module mkSplitLSQ(SplitLSQ);
     // deqLd guard (see comments at the method declaration)
     function Bool deqLdGuard;
         LdQTag deqP = ld_deqP_deqLd;
-        Bool valid_not_killed = ld_valid_deqLd[deqP] && !ld_killed_deqLd[deqP];
-        // Now figure out access type specific requirement
-        Bool no_older_st = !isValid(ld_olderSt_deqLd[deqP]);
-        if(ld_memFunc[deqP] == Ld && !ld_isMMIO_deqLd[deqP]) begin
-            // normal non-MMIO Ld (cannot have .rl)
-            return valid_not_killed && ld_done_deqLd[deqP] &&
-                   (no_older_st || ld_olderStVerified_deqLd[deqP]);
+        if(!ld_valid_deqLd[deqP]) begin
+            return False; // not valid
         end
         else begin
-            // Lr or MMIO
-            return valid_not_killed && ld_computed_deqLd[deqP] && no_older_st;
+            if(isValid(ld_fault_deqLd[deqP])) begin
+                return True; // fault
+            end
+            else begin
+                Bool no_older_st = !isValid(ld_olderSt_deqLd[deqP]);
+                if(ld_memFunc[deqP] == Ld && !ld_isMMIO_deqLd[deqP]) begin
+                    // normal non-MMIO Ld: done, older St (if exists) verified
+                    return ld_done_deqLd[deqP] &&
+                           (no_older_st || ld_olderStVerified_deqLd[deqP]);
+                end
+                else begin
+                    // Lr or MMIO: done, at commit, no older st
+                    return ld_computed_deqLd[deqP] &&
+                           ld_atCommit_deqLd[deqP] &&
+                           no_older_st;
+                end
+            end
         end
     endfunction
 
     // deqSt guard (see comments at the method declaration)
     function Bool deqStGuard;
         StQTag deqP = st_deqP;
-        Bool valid = st_valid_deqSt[deqP];
-        Bool computed = st_computed_deqSt[deqP];
-        LdQTag ldDeqP = ld_deqP_deqSt;
-        Bool no_older_ld = !ld_valid_deqSt[ldDeqP] ||
-                           isValid(ld_olderSt_deqSt[ldDeqP]);
-        return valid && computed && no_older_ld;
+        if(!st_valid_deqSt[deqP]) begin
+            return False;
+        end
+        else begin
+            if(isValid(st_fault_deqSt[deqP])) begin
+                return True; // fault
+            end
+            else begin
+                // computed and at commit
+                return st_computed_deqSt[deqP] && st_atCommit_deqSt[deqP];
+            end
+        end
     endfunction
+
+    Vector#(SupSize, Put#(LdStQTag)) setAtCommitIfc;
+    for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
+        setAtCommitIfc[i] = (interface Put;
+            method Action put(LdStQTag lsqTag);
+                case(lsqTag) matches
+                    tagged Ld .tag: begin
+                        ld_atCommit_setCom[i][tag] <= True;
+                        doAssert(ld_valid_setCom[tag], "must be valid");
+                    end
+                    tagged St .tag: begin
+                        st_atCommit_setCom[i][tag] <= True;
+                        doAssert(st_valid_setCom[tag], "must be valid");
+                    end
+                    default: doAssert(False, "unknown lsq tag");
+                endcase
+            endmethod
+        endinterface);
+    end
 
     method ByteEn getOrigBE(LdStQTag t);
         return (case(t) matches
@@ -1370,6 +1396,7 @@ module mkSplitLSQ(SplitLSQ);
         ld_acq[ld_enqP] <= mem_inst.aq;
         ld_rel[ld_enqP] <= mem_inst.rl;
         ld_dst[ld_enqP] <= dst;
+        ld_fault_enq[ld_enqP] <= Invalid;
         ld_computed_enq[ld_enqP] <= False;
         ld_inIssueQ_enq[ld_enqP] <= False;
         ld_executing_enq[ld_enqP] <= False;
@@ -1382,8 +1409,8 @@ module mkSplitLSQ(SplitLSQ);
         ld_depLdEx_enq[ld_enqP] <= Invalid;
         ld_depSBDeq_enq[ld_enqP] <= Invalid;
 `endif
-        ld_specTag_enq[ld_enqP] <= Invalid;
         ld_specBits_enq[ld_enqP] <= spec_bits;
+        ld_atCommit_enq[ld_enqP] <= False;
         // don't touch wait wrong resp
         // Record older St. XXX We must use the up-to-date value st_valid;
         // otherwise, we may record a valid olderSt and never get it reset.
@@ -1427,10 +1454,11 @@ module mkSplitLSQ(SplitLSQ);
         st_acq[st_enqP] <= mem_inst.aq;
         st_rel[st_enqP] <= mem_inst.rl;
         st_dst[st_enqP] <= dst;
+        st_fault_enq[st_enqP] <= Invalid;
         st_computed_enq[st_enqP] <= False;
         st_verified_enq[st_enqP] <= False;
-        st_specTag_enq[st_enqP] <= Invalid;
         st_specBits_enq[st_enqP] <= spec_bits;
+        st_atCommit_enq[st_enqP] <= False;
         // make conflict with incorrect spec
         wrongSpec_enq_conflict.wset(?);
     endmethod
@@ -1442,8 +1470,8 @@ module mkSplitLSQ(SplitLSQ);
     endmethod
 
     method ActionValue#(LSQUpdateAddrResult) updateAddr(
-        LdStQTag lsqTag, Addr pa, Bool mmio,
-        ByteEn shift_be, Maybe#(SpecTag) spec_tag
+        LdStQTag lsqTag, Maybe#(Exception) fault,
+        Addr pa, Bool mmio, ByteEn shift_be
     );
         // index vec for vector functions
         Vector#(LdQSize, LdQTag) idxVec = genWith(fromInteger);
@@ -1478,15 +1506,14 @@ module mkSplitLSQ(SplitLSQ);
                      !ld_killed_updAddr[tag],
                      "updating entry should not be " +
                      "computed or issuing or executed or done or killed");
-            doAssert(isValid(spec_tag) == (mmio || ld_memFunc[tag] == Ld),
-                     "only Ld or MMIO needs to set spec tag");
 
-            // write computed, paddr, shift be, specTag
-            ld_computed_updAddr[tag] <= True;
+            // write fault, computed paddr, shift be. NOTE computed is
+            // true only when no fault.
+            ld_fault_updAddr[tag] <= fault;
+            ld_computed_updAddr[tag] <= !isValid(fault);
             ld_paddr_updAddr[tag] <= pa;
             ld_isMMIO_updAddr[tag] <= mmio;
             ld_shiftedBE_updAddr[tag] <= shift_be;
-            ld_specTag_updAddr[tag] <= spec_tag;
 
 `ifndef TSO_MM
             // for WEAK model, try to kill younger load in case of multicore
@@ -1507,15 +1534,14 @@ module mkSplitLSQ(SplitLSQ);
                      "updating entry must be valid");
             doAssert(!st_computed_updAddr[tag] && !st_verified_updAddr[tag],
                      "updating entry should not be computed or validated");
-            doAssert(isValid(spec_tag) == mmio,
-                     "only MMIO needs to set spec tag");
 
-            // write computed, paddr, shift be, specTag
-            st_computed_updAddr[tag] <= True;
+            // write fault, computed paddr, shift be. NOTE computed is
+            // true only when no fault.
+            st_fault_updAddr[tag] <= fault;
+            st_computed_updAddr[tag] <= !isValid(fault);
             st_paddr_updAddr[tag] <= pa;
             st_isMMIO_updAddr[tag] <= mmio;
             st_shiftedBE_updAddr[tag] <= shift_be;
-            st_specTag_updAddr[tag] <= spec_tag;
 
             // A store always try to kill younger loads
             doKill = True;
@@ -1539,9 +1565,8 @@ module mkSplitLSQ(SplitLSQ);
         end
 
         if(verbose) begin
-            $display("[LSQ - updateAddr] ", fshow(lsqTag),
-                     "; ", fshow(pa), "; ", fshow(mmio),
-                     "; ", fshow(shift_be), "; ", fshow(spec_tag),
+            $display("[LSQ - updateAddr] ", fshow(lsqTag), "; ", fshow(fault),
+                     "; ", fshow(pa), "; ", fshow(mmio), "; ", fshow(shift_be),
                      "; ", fshow(doKill), "; ", fshow(youngerLds),
                      "; ", fshow(curSt));
         end
@@ -1596,13 +1621,6 @@ module mkSplitLSQ(SplitLSQ);
             Vector#(LdQSize, Bool) killLds = map(needKill, idxVec);
             if(findOldestLd(killLds) matches tagged Valid .killTag) begin
                 ld_killed_updAddr[killTag] <= True;
-                killByLdStQ.enq(ToSpecFifo {
-                    data: LSQKillLd {
-                        tag: killTag,
-                        killByLd: lsqTag matches tagged Ld .unused ? True : False
-                    },
-                    spec_bits: ld_specBits_updAddr[killTag]
-                });
                 if(verbose) begin
                     $display("[LSQ - updateAddr] kill tag %d", killTag);
                 end
@@ -1610,14 +1628,6 @@ module mkSplitLSQ(SplitLSQ);
                 doAssert(ld_computed_updAddr[killTag], "must be computed");
                 doAssert(!ld_isMMIO_updAddr[killTag], "cannot kill MMIO");
                 doAssert(ld_memFunc[killTag] == Ld, "can only kill Ld");
-                Maybe#(SpecTag) specTag = ld_specTag_updAddr[killTag];
-                SpecBits specBits = ld_specBits_updAddr[killTag];
-                doAssert(isValid(specTag), "killed Ld must have spec tag");
-                doAssert(specBits[validValue(specTag)] == 1,
-                         "sb of killed Ld has itself's spec tag");
-                // when the Ld called incorrectSpeculation, it will kill
-                // itself, and set waitWPResp if it is still executing at
-                // that time
             end
         end
 
@@ -1645,6 +1655,7 @@ module mkSplitLSQ(SplitLSQ);
         doAssert(pa == ld_paddr_issue[tag], "Ld paddr incorrect");
         doAssert(shift_be == ld_shiftedBE_issue[tag], "Ld BE incorrect");
         doAssert(ld_valid_issue[tag], "issuing Ld must be valid");
+        doAssert(!isValid(ld_fault_issue[tag]), "issuing Ld cannot be fault");
         doAssert(ld_computed_issue[tag], "issuing Ld must be computed");
         doAssert(!ld_executing_issue[tag], "issuing Ld must not be executing");
         doAssert(!ld_done_issue[tag], "issuing Ld must not be done");
@@ -1663,7 +1674,7 @@ module mkSplitLSQ(SplitLSQ);
         doAssert(!ld_waitWPResp_issue[tag], "issuing Ld cannot wait for WP resp");
 
         // issue result
-        LSQIssueLdResult issRes = Stall (St);
+        LSQIssueLdResult issRes = Stall;
 
         // common thing for TSO and WEAK: valid SQ entry older than the load
         Maybe#(StQVirTag) precedingSt = olderStVirTags[tag];
@@ -1711,7 +1722,7 @@ module mkSplitLSQ(SplitLSQ);
             case(st_memFunc[stTag])
                 Sc, Amo: begin
                     // cannot forward, stall the load
-                    issRes = Stall (St);
+                    issRes = Stall;
                     ld_depStQDeq_issue[tag] <= Valid (stTag);
                 end
                 St: begin
@@ -1728,7 +1739,7 @@ module mkSplitLSQ(SplitLSQ);
                     end
                     else begin
                         // cannot forward, stall
-                        issRes = Stall (St);
+                        issRes = Stall;
                         ld_depStQDeq_issue[tag] <= Valid (stTag);
                     end
                 end
@@ -1804,7 +1815,7 @@ module mkSplitLSQ(SplitLSQ);
                                    (isValid(ldTagOlderSt) && 
                                     validValue(ldTagOlderSt) >= stVTag))) begin
             // stalled by Ld, Lr or acquire fence in LQ
-            issRes = Stall (Ld);
+            issRes = Stall;
             if(ld_acq[ldTag]) begin
                 ld_depLdQDeq_issue[tag] <= matchLdTag;
             end
@@ -1823,7 +1834,7 @@ module mkSplitLSQ(SplitLSQ);
             // bypass or stall by SQ
             if(st_acq[stTag]) begin
                 // stall by acquire fence in SQ
-                issRes = Stall (St);
+                issRes = Stall;
                 ld_depStQDeq_issue[tag] <= matchStTag;
             end
             else begin
@@ -1831,7 +1842,7 @@ module mkSplitLSQ(SplitLSQ);
                 case(st_memFunc[stTag])
                     Sc, Amo: begin
                         // cannot forward, stall
-                        issRes = Stall (St);
+                        issRes = Stall;
                         ld_depStQDeq_issue[tag] <= matchStTag;
                     end
                     St: begin
@@ -1849,7 +1860,7 @@ module mkSplitLSQ(SplitLSQ);
                         end
                         else begin
                             // cannot forward, stall
-                            issRes = Stall (St);
+                            issRes = Stall;
                             ld_depStQDeq_issue[tag] <= matchStTag;
                         end
                     end
@@ -1875,7 +1886,7 @@ module mkSplitLSQ(SplitLSQ);
             else if(sbRes.matchIdx matches tagged Valid .idx) begin
                 // SB has matching entry, but cannot fully forward, wait for SB
                 // deq
-                issRes = Stall (SB);
+                issRes = Stall;
                 ld_depSBDeq_issue[tag] <= Valid (idx);
             end
             else begin
@@ -1888,8 +1899,7 @@ module mkSplitLSQ(SplitLSQ);
         end
 
         // if the Ld is issued, remove dependences on this issue
-        Bool not_stall = issRes matches tagged Stall .unused ? False : True;
-        if(not_stall) begin
+        if(issRes != Stall) begin
             function Action setReady(LdQTag i);
             action
                 // no need to check valid here, we can write anything to
@@ -1922,52 +1932,6 @@ module mkSplitLSQ(SplitLSQ);
         doAssert(ld_memFunc[tag] == Ld, "must be Ld");
         return issueLdQ.first.data;
     endmethod
-
-    method ActionValue#(LSQKillLdInfo) getLdKilledByLdSt;
-        if(verbose) begin
-            $display("[LSQ - getLdKilledByLdSt] ", fshow(killByLdStQ.first));
-        end
-        killByLdStQ.deq;
-        LSQKillLd kill = killByLdStQ.first.data;
-        LdQTag tag = kill.tag;
-        Bool byLd = kill.killByLd;
-        doAssert(
-            ld_valid_getKill[tag] &&
-            ld_computed_getKill[tag] &&
-            ld_killed_getKill[tag] &&
-            ld_executing_getKill[tag] &&
-            ld_memFunc[tag] == Ld,
-            "killed load must be valid, computed, killed and executing/done"
-        );
-        return LSQKillLdInfo {
-            instTag: ld_instTag[tag],
-            specTag: ld_specTag_getKill[tag],
-            killByLd: byLd
-        };
-    endmethod
-
-`ifdef TSO_MM
-    method ActionValue#(LSQKillLdInfo) getLdKilledByCache;
-        if(verbose) begin
-            $display("[LSQ - getLdKilledByCache] ", fshow(killByCacheQ.first));
-        end
-        killByCacheQ.deq;
-        let tag = killByCacheQ.first.data.tag;
-        doAssert(
-            ld_valid_getKill[tag] &&
-            ld_computed_getKill[tag] &&
-            ld_killed_getKill[tag] &&
-            ld_executing_getKill[tag] &&
-            ld_memFunc[tag] == Ld,
-            "killed load must be valid, computed, killed and executing/done"
-        );
-        return LSQKillLdInfo {
-            instTag: ld_instTag[tag],
-            specTag: ld_specTag_getKill[tag],
-            killByLd: False
-        };
-    endmethod
-`endif
 
     method ActionValue#(LSQRespLdResult) respLd(LdQTag t, Data alignedData);
         let res = LSQRespLdResult {
@@ -2018,8 +1982,8 @@ module mkSplitLSQ(SplitLSQ);
             paddr: ld_paddr_deqLd[deqP],
             isMMIO: ld_isMMIO_deqLd[deqP],
             shiftedBE: ld_shiftedBE_deqLd[deqP],
-            specTag: ld_specTag_deqLd[deqP],
-            specBits: ld_specBits_deqLd[deqP]
+            fault: ld_fault_deqLd[deqP],
+            killed: ld_killed_deqLd[deqP]
         };
     endmethod
 
@@ -2029,31 +1993,25 @@ module mkSplitLSQ(SplitLSQ);
         if(verbose) $display("[LSQ - deqLd] deqP %d", deqP);
 
         // sanity check
-        doAssert(checkAddrAlign(ld_paddr_deqLd[deqP], ld_byteEn[deqP]),
-                 "addr BE should be naturally aligned");
-        if(ld_memFunc[deqP] == Ld || ld_isMMIO_deqLd[deqP]) begin
-            doAssert(isValid(ld_specTag_deqLd[deqP]),
-                     "Ld or MMIO must have spec tag");
-            SpecTag specTag = validValue(ld_specTag_deqLd[deqP]);
-            if(ld_isMMIO_deqLd[deqP]) begin
-                doAssert(ld_specBits_deqLd[deqP] == (1 << specTag),
-                         "spec bits of MMIO must be just itself's spec tag");
-            end
-            else begin
-                doAssert(ld_specBits_deqLd[deqP][specTag] == 1,
-                         "spec bits of non-MMIO Ld must contain itself");
-            end
-        end
-        else begin
-            doAssert(!isValid(ld_specTag_deqLd[deqP]),
-                     "non-MMIO Lr cannot have spec tag");
+        if(ld_atCommit_deqLd[deqP]) begin
             doAssert(ld_specBits_deqLd[deqP] == 0,
-                     "non-MMIO Lr must have zero spec bits");
+                     "at commit means zero spec bits");
         end
 
         // remove the entry
         ld_valid_deqLd[deqP] <= False;
         ld_deqP_deqLd <= getNextLdPtr(deqP);
+
+        // set waitWPResp in case Ld is killed but not done
+        if(ld_killed_deqLd[deqP]) begin
+            doAssert(ld_memFunc[deqP] == Ld && !ld_isMMIO_deqLd[deqP],
+                     "must be non-MMIO Ld");
+            doAssert(!isValid(ld_fault_deqLd[deqP]), "cannot have fault");
+            doAssert(ld_executing_deqLd[deqP] && ld_done_deqLd[deqP],
+                     "must be done");
+            doAssert(!ld_waitWPResp_deqLd[deqP],
+                     "cannot wait for wrong path resp");
+        end
 
         // wakeup loads stalled by this entry
         function Action setReady(LdQTag i);
@@ -2071,7 +2029,7 @@ module mkSplitLSQ(SplitLSQ);
         wrongSpec_deqLd_conflict.wset(?);
     endmethod
 
-    method StQDeqEntry firstSt if(deqStGuard);
+    method StQDeqEntry firstSt if(deqStGuard && wrongSpec_urgent_firstSt);
         StQTag deqP = st_deqP;
         return StQDeqEntry {
             instTag: st_instTag[deqP],
@@ -2084,8 +2042,7 @@ module mkSplitLSQ(SplitLSQ);
             isMMIO: st_isMMIO_deqSt[deqP],
             shiftedBE: st_shiftedBE_deqSt[deqP],
             stData: st_stData_deqSt[deqP],
-            specTag: st_specTag_deqSt[deqP],
-            specBits: st_specBits_deqSt[deqP]
+            fault: st_fault_deqSt[deqP]
         };
     endmethod
 
@@ -2095,20 +2052,11 @@ module mkSplitLSQ(SplitLSQ);
         if(verbose) $display("[LSQ - deqSt] deqP %d", deqP);
 
         // sanity check
-        doAssert(checkAddrAlign(st_paddr_deqSt[deqP], st_byteEn[deqP]),
-                 "addr BE should be naturally aligned");
-        if(st_isMMIO_deqSt[deqP]) begin
-            doAssert(isValid(st_specTag_deqSt[deqP]),
-                     "Ld or MMIO must have spec tag");
-            SpecTag specTag = validValue(st_specTag_deqSt[deqP]);
-            doAssert(st_specBits_deqSt[deqP] == (1 << specTag),
-                     "spec bits of MMIO must be just itself's spec tag");
-        end
-        else begin
-            doAssert(!isValid(st_specTag_deqSt[deqP]),
-                     "non-MMIO St/Sc/Amo cannot have spec tag");
+        if(!isValid(st_fault_deqSt[deqP])) begin
+            doAssert(checkAddrAlign(st_paddr_deqSt[deqP], st_byteEn[deqP]),
+                     "addr BE should be naturally aligned");
             doAssert(st_specBits_deqSt[deqP] == 0,
-                     "non-MMIO St/Sc/Amo must have zero spec bits");
+                     "must have zero spec bits");
         end
 
         // remove entry
@@ -2175,10 +2123,7 @@ module mkSplitLSQ(SplitLSQ);
         if(findOldestLd(killLds) matches tagged Valid .killTag) begin
             ld_killed_evict[killTag] <= True;
             killByCacheQ.enq(ToSpecFifo {
-                data: LSQKillLd {
-                    tag:killTag,
-                    killByLd: False
-                },
+                data: killTag,
                 spec_bits: ld_specBits_evict[killTag]
             });
             if(verbose) begin
@@ -2188,14 +2133,6 @@ module mkSplitLSQ(SplitLSQ);
             doAssert(ld_computed_evict[killTag], "must be computed");
             doAssert(!ld_isMMIO_evict[killTag], "cannot kill MMIO");
             doAssert(ld_memFunc[killTag] == Ld, "can only kill Ld");
-            Maybe#(SpecTag) specTag = ld_specTag_evict[killTag];
-            SpecBits specBits = ld_specBits_evict[killTag];
-            doAssert(isValid(specTag), "killed Ld must have spec tag");
-            doAssert(specBits[validValue(specTag)] == 1,
-                     "sb of killed Ld has itself's spec tag");
-            // when the Ld called incorrectSpeculation, it will kill
-            // itself, and set waitWPResp if it is still executing at
-            // that time
         end
 
         // make conflict with incorrect spec
@@ -2228,6 +2165,8 @@ module mkSplitLSQ(SplitLSQ);
         return !st_valid_empty[st_deqP];
     endmethod
 
+    interface setAtCommit = setAtCommitIfc;
+
     interface SpeculationUpdate specUpdate;
         method Action correctSpeculation(SpecBits mask);
             if(verbose && mask != maxBound) begin
@@ -2253,23 +2192,26 @@ module mkSplitLSQ(SplitLSQ);
             Vector#(StQSize, StQTag) stIdxVec = genWith(fromInteger);
             joinActions(map(correctSpecSt, stIdxVec));
 
-            // clear spec bits for issueQ and killQ
+            // clear spec bits for issueQ
             issueLdQ.specUpdate.correctSpeculation(mask);
-            killByLdStQ.specUpdate.correctSpeculation(mask);
-`ifdef TSO_MM
-            killByCacheQ.specUpdate.correctSpeculation(mask);
-`endif
         endmethod
 
-        method Action incorrectSpeculation(SpecTag specTag);
+        method Action incorrectSpeculation(Bool killAll, SpecTag specTag);
             // idx vec
 
             // clear wrong path LQ entries & set wrong path load filter. NOTE
             // that olderSt and olderStVerified fields are not affected by the
-            // kill
+            // kill. NOTE that if atCommit is true, then killAll should not
+            // kill this entry
+            Vector#(LdQSize, LdQTag) ldIdxVec = genWith(fromInteger);
+            function Bool isLdNeedKill(LdQTag i);
+                return (killAll ? !ld_atCommit_wrongSpec[i] :
+                        ld_specBits_wrongSpec[i][specTag] == 1);
+            endfunction
+            Vector#(LdQSize, Bool) ldNeedKill = map(isLdNeedKill, ldIdxVec);
             function Action killLdQ(LdQTag i);
             action
-                if(ld_specBits_wrongSpec[i][specTag] == 1) begin
+                if(ldNeedKill[i]) begin
                     ld_valid_wrongSpec[i] <= False;
                     // set wrong path load resp filter
                     if (ld_valid_wrongSpec[i] &&
@@ -2279,37 +2221,39 @@ module mkSplitLSQ(SplitLSQ);
                         doAssert(ld_memFunc[i] == Ld,
                                  "only load resp can be wrong path");
                     end
+                    doAssert(!ld_atCommit_wrongSpec[i], "cannot be at commit");
                 end
             endaction
             endfunction
-            Vector#(LdQSize, LdQTag) ldIdxVec = genWith(fromInteger);
             joinActions(map(killLdQ, ldIdxVec));
 
-            // clear wrong path SQ entries
+            // clear wrong path SQ entries. NOTE that inst at commit should not
+            // be killed in case of kill all
+            Vector#(StQSize, StQTag) stIdxVec = genWith(fromInteger);
+            function Bool isStNeedKill(StQTag i);
+                return (killAll ? !st_atCommit_wrongSpec[i] :
+                                  st_specBits_wrongSpec[i][specTag] == 1);
+            endfunction
+            Vector#(StQSize, Bool) stNeedKill = map(isStNeedKill, stIdxVec);
             function Action killStQ(StQTag i);
             action
-                if(st_specBits_wrongSpec[i][specTag] == 1) begin
+                if(stNeedKill[i]) begin
                     st_valid_wrongSpec[i] <= False;
+                    doAssert(!st_atCommit_wrongSpec[i], "cannot be at commit");
                 end
             endaction
             endfunction
-            Vector#(StQSize, StQTag) stIdxVec = genWith(fromInteger);
             joinActions(map(killStQ, stIdxVec));
 
-            // kill entries in issueQ and killQ
-            issueLdQ.specUpdate.incorrectSpeculation(specTag);
-            killByLdStQ.specUpdate.incorrectSpeculation(specTag);
-`ifdef TSO_MM
-            killByCacheQ.specUpdate.incorrectSpeculation(specTag);
-`endif
+            // kill entries in issueQ
+            issueLdQ.specUpdate.incorrectSpeculation(killAll, specTag);
 
             // change enqP: make valid entries always consecutive: new enqP is
             // the oldest **VALID** entry that gets killed. If such entry does
             // not exists, then enqP remains the same.
             // LdQ enqP
             function Bool isValidLdKilled(LdQTag i);
-                return ld_valid_wrongSpec[i] &&
-                       ld_specBits_wrongSpec[i][specTag] == 1;
+                return ld_valid_wrongSpec[i] && ldNeedKill[i];
             endfunction
             Vector#(LdQSize, Bool) killedValidLds = map(isValidLdKilled,
                                                         ldIdxVec);
@@ -2321,8 +2265,7 @@ module mkSplitLSQ(SplitLSQ);
 
             // StQ enqP
             function Bool isValidStKilled(StQTag i);
-                return st_valid_wrongSpec[i] &&
-                       st_specBits_wrongSpec[i][specTag] == 1;
+                return st_valid_wrongSpec[i] && stNeedKill[i];
             endfunction
             Vector#(StQSize, Bool) killedValidSts = map(isValidStKilled,
                                                         stIdxVec);
@@ -2336,8 +2279,7 @@ module mkSplitLSQ(SplitLSQ);
             // neither killed nor verified. If such entry does not exists, then
             // verifyP should be the same as new enqP.
             function Bool unkilledUnverified(StQTag i);
-                return st_valid_wrongSpec[i] &&
-                       st_specBits_wrongSpec[i][specTag] != 1 &&
+                return st_valid_wrongSpec[i] && !stNeedKill[i] &&
                        !st_verified_wrongSpec[i];
             endfunction
             Vector#(StQSize, Bool) unverifiedSts = map(unkilledUnverified,
@@ -2352,8 +2294,10 @@ module mkSplitLSQ(SplitLSQ);
             st_verifyP_wrongSpec <= new_st_verifyP;
 
             if(verbose) begin
-                $display("[LSQ - wrongSpec] ", fshow(specTag),
-                         "; ", fshow(new_ld_enqP), "; ", fshow(new_st_enqP),
+                $display("[LSQ - wrongSpec] ", fshow(killAll),
+                         "; ", fshow(specTag),
+                         "; ", fshow(new_ld_enqP),
+                         "; ", fshow(new_st_enqP),
                          "; ", fshow(new_st_verifyP));
             end
 
@@ -2369,14 +2313,8 @@ module mkSplitLSQ(SplitLSQ);
             wrongSpec_verify_conflict.wset(?);
             wrongSpec_cacheEvict_conflict.wset(?);
             wrongSpec_wakeBySB_conflict.wset(?);
+            // more urgent than firstSt
+            wrongSpec_urgent_firstSt <= True;
         endmethod
     endinterface
-
-    method Bool stqFull_ehrPort0;
-        return st_enqP == st_deqP && st_valid[st_enqP][0];
-    endmethod
-
-    method Bool ldqFull_ehrPort0;
-        return ld_enqP == ld_deqP[0] && ld_valid[ld_enqP][0];
-    endmethod
 endmodule

@@ -197,8 +197,7 @@ module mkProcReqSync#(
         Addr startpc,
         Addr toHostAddr, Addr fromHostAddr
     );
-        startQ.enq(tuple3(startpc,
-                          toHostAddr, fromHostAddr));
+        startQ.enq(tuple3(startpc, toHostAddr, fromHostAddr));
     endmethod
     method Action bootRomInitReq(Bit#(16) index, Data v);
         bootRomInitQ.enq(tuple2(truncate(index), v));

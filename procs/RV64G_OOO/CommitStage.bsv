@@ -45,14 +45,20 @@ typedef struct {
     IType iType;
     Maybe#(Trap) trap;
     RobInstState state;
+    Bool dispatched;
+    Bool claimedPhyReg;
+    Bool ldKilled;
+    Bool memAccessAtCommit;
+    Bool lsqAtCommitNotified;
+    Bool nonMMIOStDone;
+    Bool epochIncremented;
     SpecBits specBits;
-    Maybe#(SpecTag) specTag;
-    // store buffer
+    // info about LSQ/TLB
     Bool stbEmpty;
+    Bool stqEmpty;
+    Bool tlbNoPendingReq;
     // CSR info: previlige mode
     Bit#(2) prv;
-    // htif
-    Bool htifStall;
 } CommitStuck deriving(Bits, Eq, FShow);
 
 interface CommitInput;
@@ -63,6 +69,8 @@ interface CommitInput;
     // no stores
     method Bool stbEmpty;
     method Bool stqEmpty;
+    // notify LSQ that inst has reached commit
+    interface Vector#(SupSize, Put#(LdStQTag)) lsqSetAtCommit;
     // TLB has stopped processing now
     method Bool tlbNoPendingReq;
     // set flags
@@ -70,7 +78,10 @@ interface CommitInput;
     method Action setUpdateVMInfo;
     method Action setFlushReservation;
     // redirect
-    method Action redirect_action(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag);
+    method Action killAll;
+    method Action redirectPc(Addr trap_pc);
+    method Action setFetchWaitRedirect;
+    method Action incrementEpoch;
     // record if we commit a CSR inst or interrupt
     method Action commitCsrInstOrInterrupt;
     // performance
@@ -84,7 +95,6 @@ typedef struct {
     Addr pc;
     IType iType;
     Maybe#(Trap) trap;
-    Maybe#(SpecTag) specTag;
     SpecBits specBits;
 } RenameErrInfo deriving(Bits, Eq, FShow);
 
@@ -105,22 +115,7 @@ typedef struct {
     Addr pc;
     Addr addr;
     Trap trap;
-    Maybe#(SpecTag) specTag;
-    InstTag instTag;
 } CommitTrap deriving(Bits, Eq, FShow);
-
-typedef struct {
-    IType iType; // for sret & mrts
-    Addr nextPc;
-    Maybe#(SpecTag) specTag;
-    InstTag instTag;
-} CommitRedirect deriving(Bits, Eq, FShow);
-
-typedef union tagged {
-    void Invalid;
-    Tuple2#(CSR, Data) CsrInst; // csr index + data
-    Bit#(5) FpuInst; // fflags
-} CommitWrCsrf deriving(Bits, Eq, FShow);
 
 module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Bool verbose = True;
@@ -130,13 +125,18 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     RegRenamingTable regRenamingTable = inIfc.rtIfc;
     CsrFile csrf = inIfc.csrfIfc;
 
-    // verify packets
-`ifdef VERIFICATION_PACKETS
-    Reg#(Bool)  sendSynchronizationPackets <- mkReg(False);
-    Reg#(Bit#(64)) skippedVerificationPackets <- mkReg(0);
-    Reg#(Bit#(64)) verificationPacketsToIgnore <- mkReg(0);
-    Fifo#(4, VerificationPacket) verifyFifo <- mkCFFifo;
-`endif
+    // wires to set atCommit in LSQ: avoid scheduling cycle. Using wire should
+    // be fine, because LSQ does not need to see atCommit signal immediately.
+    // The only concern is about killAll which checks atCommit in LSQ, but we
+    // never call killAll and setAtCommit in the same cycle.
+    Vector#(SupSize, RWire#(LdStQTag)) setLSQAtCommit <- replicateM(mkRWire);
+
+    for(Integer i = 0; i< valueof(SupSize); i = i+1) begin
+        (* fire_when_enabled, no_implicit_conditions *)
+        rule doSetLSQAtCommit(setLSQAtCommit[i].wget matches tagged Valid .tag);
+            inIfc.lsqSetAtCommit[i].put(tag);
+        endrule
+    end
 
     // commit stage performance counters
 `ifdef PERF_COUNT
@@ -178,11 +178,18 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             iType: x.iType,
             trap: x.trap,
             state: x.rob_inst_state,
+            dispatched: x.dispatched,
+            claimedPhyReg: x.claimed_phy_reg,
+            ldKilled: x.ldKilled,
+            memAccessAtCommit: x.memAccessAtCommit,
+            lsqAtCommitNotified: x.lsqAtCommitNotified,
+            nonMMIOStDone: x.nonMMIOStDone,
+            epochIncremented: x.epochIncremented,
             specBits: x.spec_bits,
-            specTag: x.spec_tag,
-            stbEmpty: inIfc.stbEmpty && inIfc.stqEmpty,
-            prv: csrf.decodeInfo.prv,
-            htifStall: False
+            stbEmpty: inIfc.stbEmpty,
+            stqEmpty: inIfc.stqEmpty,
+            tlbNoPendingReq: inIfc.tlbNoPendingReq,
+            prv: csrf.decodeInfo.prv
         };
     endfunction
 
@@ -208,6 +215,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     endrule
 `endif
 
+`ifdef RENAME_DEBUG
     // rename debug
     Reg#(Bool) renameDebugStarted <- mkConfigReg(False);
     Reg#(Maybe#(RenameErrInfo)) renameErrInfo <- mkConfigReg(Invalid);
@@ -219,28 +227,265 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         renameErrQ.enq(info);
         renameDebugStarted <= False;
     endrule
+`endif
 
-    // commit rule: fire when at least one commit can be done
-    rule doCommit(rob.deqPort[0].deq_data.rob_inst_state == Executed);
+    // we commit trap in two cycles: first cycle deq ROB and flush; second
+    // cycle handles trap, redirect and handles system consistency
+    Reg#(Maybe#(CommitTrap)) commitTrap <- mkReg(Invalid); // saves new pc here
+
+    // maintain system consistency when system state (CSR) changes
+    function Action makeSystemConsistent(Bool flushTlb);
+    action
+        if(flushTlb) begin
+            inIfc.setFlushTlbs;
+`ifdef PERF_COUNT
+            if(inIfc.doStats) begin
+                flushTlbCnt.incr(1);
+            end
+`endif
+        end
+        // notify TLB to keep update of CSR changes
+        inIfc.setUpdateVMInfo;
+        // always wait store buffer and SQ to be empty
+        when(inIfc.stbEmpty && inIfc.stqEmpty, noAction);
+        // We wait TLB to finish all requests and become sync with memory.
+        // Notice that currently TLB is read only, so TLB is always in sync
+        // with memory (i.e., there is no write to commit to memory). Since all
+        // insts have been killed, nothing can be issued to D TLB at this time.
+        // Since fetch stage is set to wait for redirect, fetch1 stage is
+        // stalled, and nothing can be issued to I TLB at this time.
+        // Therefore, we just need to make sure that I and D TLBs are not
+        // handling any miss req. Besides, when I and D TLBs do not have any
+        // miss req, L2 TLB must be idling.
+        when(inIfc.tlbNoPendingReq, noAction);
+        // yield load reservation in cache
+        inIfc.setFlushReservation;
+    endaction
+    endfunction
+
+    rule doCommitTrap_flush(
+        !isValid(commitTrap) &&&
+        rob.deqPort[0].deq_data.trap matches tagged Valid .trap
+    );
+        rob.deqPort[0].deq;
+        let x = rob.deqPort[0].deq_data;
+        if(verbose) $display("[doCommitTrap] ", fshow(x));
+
+        // record trap info
+        Addr vaddr = ?;
+        if(x.ppc_vaddr_csrData matches tagged VAddr .va) begin
+            vaddr = va;
+        end
+        commitTrap <= Valid (CommitTrap {
+            trap: trap,
+            pc: x.pc,
+            addr: vaddr
+        });
+
+        // flush everything. Only increment epoch and stall fetch when we haven
+        // not done it yet (we may have already done them at rename stage)
+        inIfc.killAll;
+        if(!x.epochIncremented) begin
+            inIfc.incrementEpoch;
+            inIfc.setFetchWaitRedirect;
+        end
+
+        // faulting mem inst may have claimed phy reg, we should not commit it;
+        // instead, we kill the renaming by calling killAll
+
+`ifdef PERF_COUNT
+        // performance counter
+        if(inIfc.doStats) begin
+            if(trap matches tagged Exception .e) begin
+                excepCnt.incr(1);
+            end
+            else begin
+                interruptCnt.incr(1);
+            end
+        end
+`endif
+
+        // checks
+        doAssert(x.rob_inst_state == Executed, "must be executed");
+        doAssert(x.spec_bits == 0, "cannot have spec bits");
+    endrule
+
+    rule doCommitTrap_handle(commitTrap matches tagged Valid .trap);
+        // reset commitTrap
+        commitTrap <= Invalid;
+
+        // notify commit of interrupt (so MMIO pRq may be handled)
+        if(trap.trap matches tagged Interrupt .inter) begin
+            inIfc.commitCsrInstOrInterrupt;
+        end
+
+        // trap handling & redirect
+        let new_pc <- csrf.trap(trap.trap, trap.pc, trap.addr);
+        inIfc.redirectPc(new_pc);
+
+        // system consistency
+        makeSystemConsistent(False);
+
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            comRedirectCnt.incr(1);
+        end
+`endif
+    endrule
+
+    // commit misspeculated load
+    rule doCommitKilledLd(
+        !isValid(commitTrap) &&
+        !isValid(rob.deqPort[0].deq_data.trap) &&
+        rob.deqPort[0].deq_data.ldKilled
+    );
+        rob.deqPort[0].deq;
+        let x = rob.deqPort[0].deq_data;
+        if(verbose) $display("[doCommitKilledLd] ", fshow(x));
+
+        // kill everything, redirect, and increment epoch
+        inIfc.killAll;
+        inIfc.redirectPc(x.pc);
+        inIfc.incrementEpoch;
+
+        // the killed Ld should have claimed phy reg, we should not commit it;
+        // instead, we have kill the renaming by calling killAll
+
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            comRedirectCnt.incr(1);
+        end
+`endif
+
+        // checks
+        doAssert(!x.epochIncremented, "cannot increment epoch before");
+        doAssert(x.rob_inst_state == Executed, "must be executed");
+        doAssert(x.spec_bits == 0, "cannot have spec bits");
+    endrule
+
+    // commit system inst
+    rule doCommitSystemInst(
+        !isValid(commitTrap) &&
+        !isValid(rob.deqPort[0].deq_data.trap) &&
+        !rob.deqPort[0].deq_data.ldKilled &&
+        rob.deqPort[0].deq_data.rob_inst_state == Executed &&
+        isSystem(rob.deqPort[0].deq_data.iType)
+    );
+        rob.deqPort[0].deq;
+        let x = rob.deqPort[0].deq_data;
+        if(verbose) $display("[doCommitSystemInst] ", fshow(x));
+
+        // we claim a phy reg for every inst, so commit its renaming
+        regRenamingTable.commit[0].commit;
+
+        if(x.iType == Csr) begin
+            // notify commit of CSR (so MMIO pRq may be handled)
+            inIfc.commitCsrInstOrInterrupt;
+            // write CSR
+            let csr_idx = validValue(x.csr);
+            Data csr_data = ?;
+            if(x.ppc_vaddr_csrData matches tagged CSRData .d) begin
+                csr_data = d;
+            end
+            else begin
+                doAssert(False, "must have csr data");
+            end
+            csrf.csrInstWr(csr_idx, csr_data);
+        end
+
+        // redirect (Sret and Mret redirect pc is got from CSRF)
+        Addr next_pc = x.ppc_vaddr_csrData matches tagged PPC .ppc ? ppc : (x.pc + 4);
+        doAssert(next_pc == x.pc + 4, "ppc must be pc + 4");
+        if(x.iType == Sret) begin
+            next_pc <- csrf.sret;
+        end
+        else if(x.iType == Mret) begin
+            next_pc <- csrf.mret;
+        end
+        inIfc.redirectPc(next_pc);
+
+        // rename stage only sends out system inst when ROB is empty, so no
+        // need to flush ROB again
+
+        // system consistency
+        makeSystemConsistent(x.iType == SFence);
+
+        // incr inst cnt
+        csrf.incInstret(1);
+
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            comRedirectCnt.incr(1);
+            // inst count stats
+            instCnt.incr(1);
+            if(csrf.decodeInfo.prv == 0) begin
+                userInstCnt.incr(1);
+            end
+        end
+`endif
+`ifdef CHECK_DEADLOCK
+        commitInst.send;
+        if(csrf.decodeInfo.prv == 0) begin
+            commitUserInst.send;
+        end
+`endif
+
+        // checks
+        doAssert(x.epochIncremented, "must have already incremented epoch");
+        doAssert((x.iType == Csr) == isValid(x.csr), "only CSR has valid csr idx");
+        doAssert(x.fflags == 0 && !x.will_dirty_fpu_state, "cannot dirty FPU");
+        doAssert(x.spec_bits == 0, "cannot have spec bits");
+        doAssert(x.claimed_phy_reg, "must have claimed phy reg");
+`ifdef RENAME_DEBUG
+        if(!x.claimed_phy_reg && canSetRenameErr) begin
+            renameErrInfo <= Valid (RenameErrInfo {
+                err: NonTrapCommitLackClaim,
+                pc: x.pc,
+                iType: x.iType,
+                trap: x.trap,
+                specBits: x.spec_bits
+            });
+        end
+`endif
+    endrule
+
+    // Lr/Sc/Amo/MMIO cannot proceed to executed until we notify LSQ that it
+    // has reached the commit stage
+    rule notifyLSQCommit(
+        !isValid(commitTrap) &&
+        !isValid(rob.deqPort[0].deq_data.trap) &&
+        !rob.deqPort[0].deq_data.ldKilled &&
+        rob.deqPort[0].deq_data.rob_inst_state != Executed &&
+        rob.deqPort[0].deq_data.memAccessAtCommit &&
+        !rob.deqPort[0].deq_data.lsqAtCommitNotified
+    );
+        let x = rob.deqPort[0].deq_data;
+        let inst_tag = rob.deqPort[0].getDeqInstTag;
+        if(verbose) $display("[notifyLSQCommit] ", fshow(x), "; ", fshow(inst_tag));
+
+        // notify LSQ, and record in ROB that notification is done
+        setLSQAtCommit[0].wset(x.lsqTag);
+        rob.setLSQAtCommitNotified(inst_tag);
+    endrule
+
+    // commit normal: fire when at least one commit can be done
+    rule doCommitNormalInst(
+        !isValid(commitTrap) &&
+        !isValid(rob.deqPort[0].deq_data.trap) &&
+        !rob.deqPort[0].deq_data.ldKilled &&
+        rob.deqPort[0].deq_data.rob_inst_state == Executed &&
+        !isSystem(rob.deqPort[0].deq_data.iType)
+    );
         // stop superscalar commit after we
-        // 1. need to start preparing cache/TLB (system inst or trap)
-        // 2. redirect (by trap or system inst)
-        // 3. update CSR
-        // 4. an inst is not ready to commit
+        // 1. see a trap or system inst or killed Ld
+        // 2. inst is not ready to commit
         Bool stop = False;
 
-        // We apply actions (except ROB deq) at the end of the rule
-        // Each loop iteration just figure out the action to do, but doesn't take action
-        // This works because if an iteration can happe (stop == False),
-        // then previous iterations cannot change any state (except ROB deq)
-        // Apply actions at end makes rule splitting possible
-        Maybe#(IType) prepareFlush = Invalid;
-        Maybe#(CommitTrap) doTrap = Invalid;
-        Maybe#(CommitRedirect) redirect = Invalid;
-        CommitWrCsrf wrCsrf = Invalid;
+        // We merge writes on FPU csr and apply writes at the end of the rule
+        Bit#(5) fflags = 0;
+        Bool will_dirty_fpu_state = False;
+        // rename error
         Maybe#(RenameErrInfo) renameError = Invalid;
-        // track if we have committed an CSR inst or interrupt
-        Bool commitCsrInstOrInterrupt = False;
         // incr committed inst cnt at the end of rule
         SupCnt comInstCnt = 0;
         SupCnt comUserInstCnt = 0;
@@ -258,248 +503,74 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
                 let inst_tag = rob.deqPort[i].getDeqInstTag;
 
                 // check can be committed or not
-                if(rob.deqPort[i].deq_data.rob_inst_state != Executed) begin
-                    // inst not ready for commit, stop here
+                if(x.rob_inst_state != Executed || x.ldKilled || isValid(x.trap) || isSystem(x.iType)) begin
+                    // inst not ready for commit, or system inst, or trap, or killed, stop here
                     stop = True;
                 end
                 else begin
+                    if (verbose) $display("[doCommitNormalInst - %d] ", i, fshow(inst_tag), " ; ", fshow(x));
+
                     // inst can be committed, deq it
                     rob.deqPort[i].deq;
 
-                    if (verbose) $display("[doCommit - %d] inst_tag = ", i, fshow(inst_tag), " ; ", fshow(x));
+                    // every inst here should have been renamed, commit renaming
+                    regRenamingTable.commit[i].commit;
+                    doAssert(x.claimed_phy_reg, "should have renamed");
 
-                    let iType = x.iType;
-                    let trap = x.trap;
-                    let pc = x.pc;
-                    let csr = x.csr;
-                    let claimed_phy_reg = x.claimed_phy_reg;
-                    let fflags = x.fflags;
-                    let spec_tag = x.spec_tag;
-                    let will_dirty_fpu_state = x.will_dirty_fpu_state;
-
-                    Addr nextPc = pc + 4; // if ppc in ROB is not updated in doFinishXXX rule, then must be pc+4 
-                    Addr addr = ?; // page fault virtual addr
-                    Data csrData = ?; // for Csr inst to write dst csr
-                    case(x.ppc_vaddr_csrData) matches
-                        tagged PPC .ppc: nextPc = ppc;
-                        tagged VAddr .a: addr = a;
-                        tagged CSRData .d: csrData = d;
-                    endcase
-
-                    if (isSystem(iType) || isValid(trap)) begin
-                        // should start preparing cache/TLB, record iType
-                        prepareFlush = Valid (iType);
-                        stop = True; // stop commit
-                    end
-
-                    if (isValid(trap)) begin
-                        // Don't do instruction, take trap instead, record the action
-                        doTrap = Valid (CommitTrap {
-                            pc: pc,
-                            addr: addr,
-                            trap: validValue(trap),
-                            specTag: spec_tag,
-                            instTag: inst_tag
+`ifdef RENAME_DEBUG
+                    // send debug msg for rename error
+                    if(!x.claimed_phy_reg && !isValid(renameError)) begin
+                        renameError = Valid (RenameErrInfo {
+                            err: NonTrapCommitLackClaim,
+                            pc: x.pc,
+                            iType: x.iType,
+                            trap: x.trap,
+                            specBits: x.spec_bits
                         });
-                        stop = True; // stop commmit
-                        
-                        // record if we commit an interrupt
-                        if(trap matches tagged Valid (tagged Interrupt .inter)) begin
-                            commitCsrInstOrInterrupt = True;
-                        end
-
-                        // We should not commit renaming here
-                        // There are two cases for an inst to have trap
-                        // 1. It gets the trap at the front end, so it has not claimed any phy reg
-                        // 2. It is a memory access that get fault, it must have already killed its own renaming
-                        if(claimed_phy_reg) begin
-                            case(iType)
-                                Ld, St, Lr, Sc, Amo: noAction;
-                                default: begin
-                                    // send debug msg for rename error
-                                    if(!isValid(renameError)) begin
-                                        renameError = Valid (RenameErrInfo {
-                                            err: TrapCommit,
-                                            pc: pc,
-                                            iType: iType,
-                                            trap: trap,
-                                            specTag: spec_tag,
-                                            specBits: x.spec_bits
-                                        });
-                                        $fdisplay(stderr, "[doCommit - trap] RENAME ERROR DETECTED!");
-                                    end
-                                end
-                            endcase
-                        end
                     end
-                    else begin
-                        // Do instruction commit
-                        // write csrf: don't write if redirect for Sret or Mret
-                        if(iType != Sret && iType != Mret) begin
-                            if(csr matches tagged Valid .idx) begin
-                                wrCsrf = CsrInst (tuple2(idx, csrData));
-                                stop = True; // stop commit
-                            end
-                            else if(csrf.fpuInstNeedWr(fflags, will_dirty_fpu_state)) begin
-                                wrCsrf = FpuInst (fflags);
-                                stop = True; // stop commit
-                            end
-                        end
+`endif
 
-                        // record if we commit a CSR inst
-                        if(iType == Csr) begin
-                            commitCsrInstOrInterrupt = True;
-                        end
+                    // cumulate writes to FPU csr
+                    fflags = fflags | x.fflags;
+                    will_dirty_fpu_state = will_dirty_fpu_state || x.will_dirty_fpu_state;
 
-                        // every inst here should have been renamed, and won't kill itself
-                        // so we always commit renaming
-                        regRenamingTable.commit[i].commit;
-                        // send debug msg for rename error
-                        if(!claimed_phy_reg && !isValid(renameError)) begin
-                            renameError = Valid (RenameErrInfo {
-                                err: NonTrapCommit,
-                                pc: pc,
-                                iType: iType,
-                                trap: trap,
-                                specTag: spec_tag,
-                                specBits: x.spec_bits
-                            });
-                            $fdisplay(stderr, "[doCommit - not trap] RENAME ERROR DETECTED!");
-                        end
+                    // for non-mmio st, notify SQ that store is committed
+                    if(x.nonMMIOStDone) begin
+                        setLSQAtCommit[i].wset(x.lsqTag);
+                    end
 
-                        // Redirect (Sret and Mret redirect pc is got from CSRF)
-                        if (iType == Sret || iType == Mret || doReplay(iType)) begin
-                            // record info for redirect
-                            redirect = Valid (CommitRedirect {
-                                iType: iType,
-                                nextPc: nextPc,
-                                specTag: spec_tag,
-                                instTag: inst_tag
-                            });
-                            stop = True; // stop commit
-                        end
-
-                        // inst commit counter
-                        comInstCnt = comInstCnt + 1;
-                        if(csrf.decodeInfo.prv == 0) begin
-                            comUserInstCnt = comUserInstCnt + 1; // user space inst
-                        end
+                    // inst commit counter
+                    comInstCnt = comInstCnt + 1;
+                    if(csrf.decodeInfo.prv == 0) begin
+                        comUserInstCnt = comUserInstCnt + 1; // user space inst
+                    end
 
 `ifdef PERF_COUNT
-                        // performance counter
-                        case(iType)
-                            Br: brCnt = brCnt + 1;
-                            J : jmpCnt = jmpCnt + 1;
-                            Jr: jrCnt = jrCnt + 1;
-                        endcase
+                    // performance counter
+                    case(x.iType)
+                        Br: brCnt = brCnt + 1;
+                        J : jmpCnt = jmpCnt + 1;
+                        Jr: jrCnt = jrCnt + 1;
+                    endcase
 `endif
-                    end
                 end
             end
         end
 
-        // flush TLB/Cache and wait SB flush and DTLB finish writes
-        if(prepareFlush matches tagged Valid .iType) begin
-            // Do Stuff in a later cycle because the vm update needs to see the effects of writes done in this rule
-            if (iType == SFence) begin
-                inIfc.setFlushTlbs;
-`ifdef PERF_COUNT
-                // performance counter
-                if(inIfc.doStats) begin
-                    flushTlbCnt.incr(1);
-                end
-`endif
-            end
-            inIfc.setUpdateVMInfo;
-            // always wait store buffer and SQ to be empty
-            when(inIfc.stbEmpty && inIfc.stqEmpty, noAction);
-            // We wait TLB to finish all requests and become sync with memory.
-            // Notice that currently TLB is read only, so TLB is always in sync
-            // with memory (i.e., there is no write to commit to memory). Since
-            // all insts younger than this one have been killed, nothing can be
-            // issued to D TLB at this time. Since fetch stage is set to wait
-            // for redirect, fetch1 stage is stalled, and nothing can be issued
-            // to I TLB at this time.  Therefore, we just need to make sure
-            // that I and D TLBs are not handling any miss req. Besides, when I
-            // and D TLBs do not have any miss req, L2 TLB must be idling.
-            when(inIfc.tlbNoPendingReq, noAction);
-            // yield load reservation in cache
-            inIfc.setFlushReservation;
+        // write FPU csr
+        if(csrf.fpuInstNeedWr(fflags, will_dirty_fpu_state)) begin
+            csrf.fpuInstWr(fflags);
         end
 
-        // record if we commit an interrupt or CSR inst
-        if(commitCsrInstOrInterrupt) begin
-            inIfc.commitCsrInstOrInterrupt;
-        end
+        // incr inst cnt
+        csrf.incInstret(comInstCnt);
 
-        (* split *)
-        if(doTrap matches tagged Valid .t) (* nosplit *) begin
-            // handle trap
-            let trap_pc <- csrf.trap(t.trap, t.pc, t.addr);
-            inIfc.redirect_action(trap_pc, t.specTag, t.instTag);
-            // XXX Are we calling incorrectSpec twice here in case of page
-            // fault? Calling twice should be fine, becaus rename has been
-            // blocked by incremented epoch
-`ifdef PERF_COUNT
-            // performance counter
-            if(inIfc.doStats) begin
-                if(t.trap matches tagged Exception .e) begin
-                    excepCnt.incr(1);
-                end
-                else begin
-                    interruptCnt.incr(1);
-                end
-            end
-`endif
-        end
-        else (* nosplit *) begin
-            // write CSRF: don't write if we redirect for sret or mret
-            // (only one of wrte csrf, sret, mret can happen)
-            Bool sret = False;
-            Bool mret = False;
-            if(redirect matches tagged Valid .r) begin
-                sret = r.iType == Sret;
-                mret = r.iType == Mret;
-            end
-            if(!sret && !mret) begin
-                case(wrCsrf) matches
-                    tagged CsrInst {.idx, .data}: begin
-                        csrf.csrInstWr(idx, data);
-                    end
-                    tagged FpuInst .ff: begin
-                        csrf.fpuInstWr(ff);
-                    end
-                endcase
-            end
-            // incr inst cnt
-            csrf.incInstret(comInstCnt);
-            // do redirect
-            (* split *)
-            if(redirect matches tagged Valid .r) (* nosplit *) begin
-                if(r.iType == Sret) begin
-                    let next_pc <- csrf.sret;
-                    inIfc.redirect_action(next_pc, r.specTag, r.instTag);
-                end
-                else if(r.iType == Mret) begin
-                    let next_pc <- csrf.mret;
-                    inIfc.redirect_action(next_pc, r.specTag, r.instTag);
-                end
-                else begin
-                    inIfc.redirect_action(r.nextPc, r.specTag, r.instTag);
-                end
-`ifdef PERF_COUNT
-                // performance counter
-                if(inIfc.doStats) begin
-                    comRedirectCnt.incr(1);
-                end
-`endif
-            end
-        end
-
+`ifdef RENAME_DEBUG
         // set rename error
         if(canSetRenameErr && isValid(renameError)) begin
             renameErrInfo <= renameError;
         end
+`endif
 
 `ifdef CHECK_DEADLOCK
         commitInst.send; // ROB head is removed
@@ -552,8 +623,15 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     interface commitUserInstStuck = nullGet;
 `endif
 
+`ifdef RENAME_DEBUG
     method Action startRenameDebug if(!renameDebugStarted);
         renameDebugStarted <= True;
     endmethod
     interface renameErr = toGet(renameErrQ);
+`else
+    method Action startRenameDebug;
+        noAction;
+    endmethod
+    interface renameErr = nullGet;
+`endif
 endmodule

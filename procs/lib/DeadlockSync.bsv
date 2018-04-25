@@ -121,8 +121,7 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
             ind.renameInstStuck(
                 zeroExtend(c), s.fetch.pc, zeroExtend(s.fetch.mainEp),
                 s.fetch.waitForRedirect, s.fetch.waitForFlush,
-                zeroExtend(s.epoch.curEp), zeroExtend(s.epoch.checkedEp),
-                s.epoch.waitRedirect, s.htifStall
+                zeroExtend(s.epoch.curEp), zeroExtend(s.epoch.checkedEp)
             );
         endrule
 
@@ -131,8 +130,7 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
             ind.renameCorrectPathStuck(
                 zeroExtend(c), s.fetch.pc, zeroExtend(s.fetch.mainEp),
                 s.fetch.waitForRedirect, s.fetch.waitForFlush,
-                zeroExtend(s.epoch.curEp), zeroExtend(s.epoch.checkedEp),
-                s.epoch.waitRedirect, s.htifStall
+                zeroExtend(s.epoch.curEp), zeroExtend(s.epoch.checkedEp)
             );
         endrule
 
@@ -160,8 +158,9 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
             let {isException, isInterrupt, trapVal} = decomposeTrap(s.trap);
             ind.commitInstStuck(
                 zeroExtend(c), s.pc, pack(s.iType), isException, isInterrupt, trapVal,
-                pack(s.state), zeroExtend(s.specBits), isValid(s.specTag),
-                zeroExtend(fromMaybe(maxBound, s.specTag)), s.stbEmpty, s.prv, s.htifStall
+                pack(s.state), s.dispatched, s.claimedPhyReg, s.ldKilled, s.memAccessAtCommit,
+                s.lsqAtCommitNotified, s.nonMMIOStDone, s.epochIncremented,
+                zeroExtend(s.specBits), s.stbEmpty, s.stqEmpty, s.tlbNoPendingReq, s.prv
             );
         endrule
 
@@ -170,8 +169,9 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
             let {isException, isInterrupt, trapVal} = decomposeTrap(s.trap);
             ind.commitUserInstStuck(
                 zeroExtend(c), s.pc, pack(s.iType), isException, isInterrupt, trapVal,
-                pack(s.state), zeroExtend(s.specBits), isValid(s.specTag),
-                zeroExtend(fromMaybe(maxBound, s.specTag)), s.stbEmpty, s.prv, s.htifStall
+                pack(s.state), s.dispatched, s.claimedPhyReg, s.ldKilled, s.memAccessAtCommit,
+                s.lsqAtCommitNotified, s.nonMMIOStDone, s.epochIncremented,
+                zeroExtend(s.specBits), s.stbEmpty, s.stqEmpty, s.tlbNoPendingReq, s.prv
             );
         endrule
 

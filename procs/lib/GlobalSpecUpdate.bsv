@@ -29,7 +29,7 @@ import ReorderBuffer::*;
 
 interface GlobalSpecUpdate#(numeric type correctSpecPortNum, numeric type conflictWrongSpecPortNum);
     interface Vector#(correctSpecPortNum, Put#(SpecTag)) correctSpec;
-    method Action incorrectSpec(SpecTag spec_tag, InstTag inst_tag);
+    method Action incorrectSpec(Bool kill_all, SpecTag spec_tag, InstTag inst_tag);
     // Some rules (e.g. doFinishFpuMulDiv) in Core.bsv may not conflict with wrong spec
     // and is ordered before rules that calls incorrectSpec
     // this creates cycles in scheduling
@@ -85,9 +85,9 @@ module mkGlobalSpecUpdate#(
 
     interface correctSpec = correctVec;
 
-    method Action incorrectSpec(SpecTag spec_tag, InstTag inst_tag);
-        ifc.incorrectSpeculation(spec_tag);
-        rob.incorrectSpeculation(spec_tag, inst_tag);
+    method Action incorrectSpec(Bool kill_all, SpecTag spec_tag, InstTag inst_tag);
+        ifc.incorrectSpeculation(kill_all, spec_tag);
+        rob.incorrectSpeculation(kill_all, spec_tag, inst_tag);
         // conflict with correct spec
         for(Integer i = 0; i < valueof(correctSpecPortNum); i = i+1) begin
             spec_conflict[i].wset(?);

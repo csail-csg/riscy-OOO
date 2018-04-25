@@ -136,7 +136,7 @@ interface CoreFixPoint;
     interface Vector#(AluExeNum, AluExePipeline) aluExeIfc;
     interface Vector#(FpuMulDivExeNum, FpuMulDivExePipeline) fpuMulDivExeIfc;
     interface MemExePipeline memExeIfc;
-    method Action redirect_action(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag);
+    method Action killAll; // kill everything: used by commit stage
     interface Reg#(Bool) doStatsIfc;
 endinterface
 
@@ -214,16 +214,16 @@ module mkCore#(CoreId coreId)(Core);
         Reg#(Bool) doStatsReg <- mkConfigReg(False); 
 
         // redirect func
-        function Action redirectFunc(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag );
-        action
-            if (verbose) $fdisplay(stdout, "[redirect_action] new pc = 0x%8x, spec_tag = ", trap_pc, fshow(spec_tag));
-            epochManager.redirect;
-            fetchStage.redirect(trap_pc);
-            if (spec_tag matches tagged Valid .valid_spec_tag) begin
-                globalSpecUpdate.incorrectSpec(valid_spec_tag, inst_tag);
-            end
-        endaction
-        endfunction
+        //function Action redirectFunc(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag );
+        //action
+        //    if (verbose) $fdisplay(stdout, "[redirect_action] new pc = 0x%8x, spec_tag = ", trap_pc, fshow(spec_tag));
+        //    epochManager.redirect;
+        //    fetchStage.redirect(trap_pc);
+        //    if (spec_tag matches tagged Valid .valid_spec_tag) begin
+        //        globalSpecUpdate.incorrectSpec(valid_spec_tag, inst_tag);
+        //    end
+        //endaction
+        //endfunction
 
         // write aggressive elements + wakupe reservation stations
         function Action writeAggr(Integer wrAggrPort, PhyRIndx dst);
@@ -247,6 +247,7 @@ module mkCore#(CoreId coreId)(Core);
         endaction
         endfunction
 
+        Vector#(AluExeNum, FIFO#(FetchTrainBP)) trainBPQ <- replicateM(mkFIFO);
         Vector#(AluExeNum, AluExePipeline) aluExe;
         for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
             Vector#(2, SendBypass) sendBypassIfc; // exe and finish
@@ -273,15 +274,32 @@ module mkCore#(CoreId coreId)(Core);
                 method rob_getPC = rob.getOrigPC[i].get;
                 method rob_getPredPC = rob.getOrigPredPC[i].get;
                 method rob_setExecuted = rob.setExecuted_doFinishAlu[i].set;
-                method fetch_train_predictors = fetchStage.train_predictors;
+                method rob_setDispatched = rob.setDispatched_alu[i].put;
+                method fetch_train_predictors = toPut(trainBPQ[i]).put;
                 method setRegReadyAggr = writeAggr(aluWrAggrPort(i));
                 interface sendBypass = sendBypassIfc;
                 method writeRegFile = writeCons(aluWrConsPort(i));
-                method redirect_action = redirectFunc;
+                method Action redirect(Addr new_pc, SpecTag spec_tag, InstTag inst_tag);
+                    if (verbose) begin
+                        $display("[ALU redirect - %d] ", i, fshow(new_pc),
+                                 "; ", fshow(spec_tag), "; ", fshow(inst_tag));
+                    end
+                    epochManager.incrementEpoch;
+                    fetchStage.redirect(new_pc);
+                    globalSpecUpdate.incorrectSpec(False, spec_tag, inst_tag);
+                endmethod
                 method correctSpec = globalSpecUpdate.correctSpec[finishAluCorrectSpecPort(i)].put;
                 method doStats = doStatsReg._read;
             endinterface);
             aluExe[i] <- mkAluExePipeline(aluExeInput);
+            // truly call fetch method to train branch predictor
+            rule doFetchTrainBP;
+                let train <- toGet(trainBPQ[i]).get;
+                fetchStage.train_predictors(
+                    train.pc, train.nextPc, train.iType, train.taken,
+                    train.dpTrain, train.mispred
+                );
+            endrule
         end
 
         Vector#(FpuMulDivExeNum, FpuMulDivExePipeline) fpuMulDivExe;
@@ -293,6 +311,7 @@ module mkCore#(CoreId coreId)(Core);
                 method rf_rd3 = rf.read[fpuMulDivRdPort(i)].rd3;
                 method csrf_rd = csrf.rd;
                 method rob_setExecuted = rob.setExecuted_doFinishFpuMulDiv[i].set;
+                method rob_setDispatched = rob.setDispatched_fpuMulDiv[i].put;
                 method Action writeRegFile(PhyRIndx dst, Data data);
                     writeAggr(fpuMulDivWrAggrPort(i), dst);
                     writeCons(fpuMulDivWrConsPort(i), dst, data);
@@ -310,23 +329,14 @@ module mkCore#(CoreId coreId)(Core);
             method rob_getPC = rob.getOrigPC[valueof(AluExeNum)].get; // last getPC port
             method rob_setExecuted_doFinishMem = rob.setExecuted_doFinishMem;
             method rob_setExecuted_deqLSQ = rob.setExecuted_deqLSQ;
-            method rob_setLdSpecBit = rob.setLdSpecBit;
+            method rob_setDispatched = rob.setDispatched_mem;
             method isMMIOAddr = mmio.isMMIOAddr;
             method mmioReq = mmio.dataReq;
             method mmioRespVal = mmio.dataRespVal;
             method mmioRespDeq = mmio.dataRespDeq;
-            method Action incrementEpochWithoutRedirect;
-                epochManager.incrementEpochWithoutRedirect;
-                // stop fetch until redirect
-                fetchStage.setWaitRedirect;
-            endmethod
             method setRegReadyAggr_mem = writeAggr(memWrAggrPort);
             method setRegReadyAggr_forward = writeAggr(forwardWrAggrPort);
             method writeRegFile = writeCons(memWrConsPort);
-            method redirect_action = redirectFunc;
-            method correctSpec_doFinishMem = globalSpecUpdate.correctSpec[finishMemCorrectSpecPort].put;
-            method correctSpec_deqLSQ = globalSpecUpdate.correctSpec[deqLSQCorrectSpecPort].put;
-            method incorrectSpec = globalSpecUpdate.incorrectSpec;
             method doStats = doStatsReg._read;
         endinterface);
         let memExe <- mkMemExePipeline(memExeInput);
@@ -334,7 +344,9 @@ module mkCore#(CoreId coreId)(Core);
         interface aluExeIfc = aluExe;
         interface fpuMulDivExeIfc = fpuMulDivExe;
         interface memExeIfc = memExe;
-        method redirect_action = redirectFunc;
+        method Action killAll;
+            globalSpecUpdate.incorrectSpec(True, ?, ?);
+        endmethod
         interface doStatsIfc = doStatsReg;
     endmodule
     CoreFixPoint coreFix <- moduleFix(mkCoreFixPoint);
@@ -437,11 +449,15 @@ module mkCore#(CoreId coreId)(Core);
         interface csrfIfc = csrf;
         method stbEmpty = stb.isEmpty;
         method stqEmpty = lsq.stqEmpty;
+        method lsqSetAtCommit = lsq.setAtCommit;
         method tlbNoPendingReq = iTlb.noPendingReq && dTlb.noPendingReq;
         method setFlushTlbs = flush_tlbs._write(True);
         method setUpdateVMInfo = update_vm_info._write(True);
         method setFlushReservation = flush_reservation._write(True);
-        method redirect_action = coreFix.redirect_action;
+        method killAll = coreFix.killAll;
+        method redirectPc = fetchStage.redirect;
+        method setFetchWaitRedirect = fetchStage.setWaitRedirect;
+        method incrementEpoch = epochManager.incrementEpoch;
         method commitCsrInstOrInterrupt = csrInstOrInterruptInflight_commit._write(False);
         method doStats = coreFix.doStatsIfc._read;
         method Bool checkDeadlock;
@@ -471,7 +487,8 @@ module mkCore#(CoreId coreId)(Core);
     // 1. break scheduling cycles
     // 2. XXX since csrf is configReg now, we should not let this rule fire together with doCommit
     // because we read csrf here and write csrf in doCommit
-    (* preempts = "prepareCachesAndTlbs, commitStage.doCommit" *)
+    (* preempts = "prepareCachesAndTlbs, commitStage.doCommitTrap_handle" *)
+    (* preempts = "prepareCachesAndTlbs, commitStage.doCommitSystemInst" *)
     rule prepareCachesAndTlbs(flush_reservation || flush_tlbs || update_vm_info);
         if (flush_reservation) begin
             flush_reservation <= False;
@@ -507,14 +524,14 @@ module mkCore#(CoreId coreId)(Core);
     endrule
 
     // incr buffer full cycles
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule incLdQFull(doStats && lsq.ldqFull_ehrPort0);
-        exeLdQFullCycles.incr(1);
-    endrule
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule incStQFull(doStats && lsq.stqFull_ehrPort0);
-        exeStQFullCycles.incr(1);
-    endrule
+    //(* fire_when_enabled, no_implicit_conditions *)
+    //rule incLdQFull(doStats && lsq.ldqFull_ehrPort0);
+    //    exeLdQFullCycles.incr(1);
+    //endrule
+    //(* fire_when_enabled, no_implicit_conditions *)
+    //rule incStQFull(doStats && lsq.stqFull_ehrPort0);
+    //    exeStQFullCycles.incr(1);
+    //endrule
     (* fire_when_enabled, no_implicit_conditions *)
     rule incROBFull(doStats && rob.isFull_ehrPort0);
         exeROBFullCycles.incr(1);

@@ -22,14 +22,15 @@
 // SOFTWARE.
 
 typedef enum {
-    TrapCommit, // trapped inst still need to commit renaming
-    NonTrapCommit // non-trapped inst cannot commit renaming
+    TrapCommitLackClaim, // trapped inst lacks renamed dst
+    TrapCommitRedundantClaim, // trapped inst with redundant renamed dst
+    NonTrapCommitLackClaim // non-trapped inst lacks renamed dst
 } RenameError deriving(Bits, Eq, FShow);
 
 interface RenameDebugIndication;
     method Action renameErr(
         Bit#(8) core, RenameError err, Bit#(64) pc, Bit#(5) iType,
         Bool isException, Bool isInterrupt, Bit#(4) trapVal,
-        Bit#(64) specBits, Bool specTagValid, Bit#(6) specTag
+        Bit#(32) specBits
     );
 endinterface
