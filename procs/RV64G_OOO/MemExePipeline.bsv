@@ -131,7 +131,7 @@ interface MemExeInput;
     // ROB
     method Addr rob_getPC(InstTag t);
     method Action rob_setExecuted_doFinishMem(InstTag t, Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
-    method Action rob_setExecuted_deqLSQ(InstTag t, Maybe#(Exception) cause, Bool ld_killed);
+    method Action rob_setExecuted_deqLSQ(InstTag t, Maybe#(Exception) cause, Maybe#(LdKilledBy) ld_killed);
     // MMIO
     method Bool isMMIOAddr(Addr a);
     method Action mmioReq(MMIOCRq r);
@@ -272,10 +272,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     DCoCache dMem <- mkDCoCache(procRespIfc);
 
 `ifdef PERF_COUNT
-    // load mispeculation
-    Count#(Data) exeLdKillByLdCnt <- mkCount(0);
-    Count#(Data) exeLdKillByStCnt <- mkCount(0);
-    Count#(Data) exeLdKillByCacheCnt <- mkCount(0);
     // load issue stall
     Count#(Data) exeLdStallByLdCnt <- mkCount(0);
     Count#(Data) exeLdStallByStCnt <- mkCount(0);
@@ -587,7 +583,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         lsq.deqLd;
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, lsqDeqLd.fault, False);
         // check
-        doAssert(!lsqDeqLd.killed, "cannot be killed");
+        doAssert(!isValid(lsqDeqLd.killed), "cannot be killed");
     endrule
 
     // deq non-MMIO Ld without fault (but may be killed)
@@ -632,7 +628,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         reqLrScAmoQ.enq(req);
         if(verbose) $display("[doDeqLdQ_Lr_issue] ", fshow(lsqDeqLd), "; ", fshow(req));
         // check
-        doAssert(!lsqDeqLd.killed, "cannot be killed");
+        doAssert(!isValid(lsqDeqLd.killed), "cannot be killed");
     endrule
 
     rule doDeqLdQ_Lr_deq(waitLrScAmoMMIOResp == Lr);
@@ -650,9 +646,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, False);
         if(verbose) $display("[doDeqLdQ_Lr_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
-        doAssert(!lsqDeqLd.killed, "cannot be killed");
         doAssert(lsqDeqLd.memFunc == Lr && !lsqDeqLd.isMMIO, "must be non-MMIO Lr");
-        doAssert(!isValid(lsqDeqLd.fault) && !lsqDeqLd.killed, "no fualt or kill");
+        doAssert(!isValid(lsqDeqLd.fault) && !isValid(lsqDeqLd.killed), "no fualt or kill");
     endrule
 
     // issue MMIO Ld without fault when
@@ -680,7 +675,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         inIfc.mmioReq(req);
         if(verbose) $display("[doDeqLdQ_MMIO_issue] ", fshow(lsqDeqLd), "; ", fshow(req));
         // check
-        doAssert(!lsqDeqLd.killed, "cannot be killed");
+        doAssert(!isValid(lsqDeqLd.killed), "cannot be killed");
         doAssert(lsqDeqLd.memFunc == Ld, "LdQ MMIO is only Ld");
     endrule
 
@@ -704,9 +699,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, False);
         if(verbose) $display("[doDeqLdQ_MMIO_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
-        doAssert(!lsqDeqLd.killed, "cannot be killed");
         doAssert(lsqDeqLd.memFunc == Ld && lsqDeqLd.isMMIO, "must be MMIO Ld");
-        doAssert(!isValid(lsqDeqLd.fault) && !lsqDeqLd.killed, "no fualt or kill");
+        doAssert(!isValid(lsqDeqLd.fault) && !isValid(lsqDeqLd.killed), "no fualt or kill");
     endrule
 
     rule doDeqLdQ_MMIO_fault(
@@ -722,9 +716,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Valid (LoadAccessFault), False);
         if(verbose) $display("[doDeqLdQ_MMIO_fault] ", fshow(lsqDeqLd));
         // check
-        doAssert(!lsqDeqLd.killed, "cannot be killed");
         doAssert(lsqDeqLd.memFunc == Ld && lsqDeqLd.isMMIO, "must be MMIO Ld");
-        doAssert(!isValid(lsqDeqLd.fault) && !lsqDeqLd.killed, "no fualt or kill");
+        doAssert(!isValid(lsqDeqLd.fault) && !isValid(lsqDeqLd.killed), "no fualt or kill");
     endrule
 
     // deq StQ
@@ -972,9 +965,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     method Data getPerf(ExeStagePerfType t);
         return (case(t)
 `ifdef PERF_COUNT
-            ExeLdKillByLd: exeLdKillByLdCnt;
-            ExeLdKillBySt: exeLdKillByStCnt;
-            ExeLdKillByCache: exeLdKillByCacheCnt;
             ExeLdStallByLd: exeLdStallByLdCnt;
             ExeLdStallBySt: exeLdStallByStCnt;
             ExeLdStallBySB: exeLdStallBySBCnt;

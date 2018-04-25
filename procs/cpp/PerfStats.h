@@ -181,9 +181,6 @@ public:
         init(ExeStage, ExeRedirectBr, "Exe stage redirect branch num");
         init(ExeStage, ExeRedirectJr, "Exe stage redirect jump reg num");
         init(ExeStage, ExeRedirectOther, "Exe stage redirect other num");
-        init(ExeStage, ExeLdKillByLd, "Exe stage kill load num by Ld");
-        init(ExeStage, ExeLdKillBySt, "Exe stage kill load num by St");
-        init(ExeStage, ExeLdKillByCache, "Exe stage kill load num by cache");
         init(ExeStage, ExeLdStallByLd, "Exe stage stall load num by LdQ");
         init(ExeStage, ExeLdStallBySt, "Exe stage stall load num by StQ");
         init(ExeStage, ExeLdStallBySB, "Exe stage stall load num by SB");
@@ -191,6 +188,11 @@ public:
         init(ExeStage, ExeStQFullCycles, "Exe stage StQ full cycles");
         init(ExeStage, ExeROBFullCycles, "Exe stage ROB full cycles");
         init(ExeStage, ExeTlbExcep, "Exe stage TLB exception num");
+        init(ExeStage, ExeIntMulCnt, "Exe stage int mul num");
+        init(ExeStage, ExeIntDivCnt, "Exe stage int div num");
+        init(ExeStage, ExeFpFmaCnt, "Exe stage fp add/mul/fma num");
+        init(ExeStage, ExeFpDivCnt, "Exe stage fp div num");
+        init(ExeStage, ExeFpSqrtCnt, "Exe stage fp sqrt num");
 
         // ComStage
         init(ComStage, CycleCnt, "cycles");
@@ -200,7 +202,10 @@ public:
         init(ComStage, ComBrCnt, "branch num");
         init(ComStage, ComJmpCnt, "jump num");
         init(ComStage, ComJrCnt, "jump reg num");
-        init(ComStage, ComRedirect, "Com stage system inst redirect num");
+        init(ComStage, ComLdKillByLd, "Com stage kill load num by Ld");
+        init(ComStage, ComLdKillBySt, "Com stage kill load num by St");
+        init(ComStage, ComLdKillByCache, "Com stage kill load num by cache");
+        init(ComStage, ComSysCnt, "Com stage system inst num");
         init(ComStage, ExcepCnt, "exception num");
         init(ComStage, InterruptCnt, "interrupt num");
         init(ComStage, FlushTlbCnt, "flush TLB num");

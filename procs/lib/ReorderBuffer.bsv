@@ -45,32 +45,32 @@ typedef union tagged {
 } PPCVAddrCSRData deriving(Bits, Eq, FShow);
 
 typedef struct {
-    Addr             pc;
-    IType            iType;
-    Maybe#(CSR)      csr;
-    Bool             claimed_phy_reg; // whether we need to commmit renaming
-    Maybe#(Trap)     trap;
-    PPCVAddrCSRData  ppc_vaddr_csrData;
-    Bit#(5)          fflags;
-    Bool             will_dirty_fpu_state; // True means 2'b11 will be written to FS
-    RobInstState     rob_inst_state; // was executed (i.e. can commit)
-    LdStQTag         lsqTag; // tag for LSQ
-    Bool             ldKilled; // mispeculative load
+    Addr               pc;
+    IType              iType;
+    Maybe#(CSR)        csr;
+    Bool               claimed_phy_reg; // whether we need to commmit renaming
+    Maybe#(Trap)       trap;
+    PPCVAddrCSRData    ppc_vaddr_csrData;
+    Bit#(5)            fflags;
+    Bool               will_dirty_fpu_state; // True means 2'b11 will be written to FS
+    RobInstState       rob_inst_state; // was executed (i.e. can commit)
+    LdStQTag           lsqTag; // tag for LSQ
+    Maybe#(LdKilledBy) ldKilled; // mispeculative load + reason for the kill
     // some mem access is only performed at commit time, so ROB should notify
     // LSQ that the instrution arrives at commit stage and access can start
-    Bool memAccessAtCommit;
+    Bool               memAccessAtCommit;
     // we have notified LSQ that inst is at commit
-    Bool lsqAtCommitNotified;
+    Bool               lsqAtCommitNotified;
     // a successfully translated non-MMIO store needs ROB to notify the commit
     // from ROB, so that it can be dequeud from SQ
-    Bool nonMMIOStDone;
+    Bool               nonMMIOStDone;
     // We detect some traps at rename stage, and increment epoch to kill
     // everything from fetch. So we should not increment epoch again when
     // committing the trap. Therefore we record the epoch increment at rename.
-    Bool epochIncremented;
+    Bool               epochIncremented;
 
     // speculation
-    SpecBits         spec_bits;
+    SpecBits           spec_bits;
 } ToReorderBuffer deriving(Bits, Eq, FShow);
 
 typedef enum {
@@ -91,7 +91,7 @@ interface ReorderBufferRowEhr#(numeric type aluExeNum, numeric type fpuMulDivExe
     method ToReorderBuffer read_deq;
     method Action setLSQAtCommitNotified;
     // deqLSQ rules set ROB state: set execeptions, load mispeculation, and becomes Executed
-    method Action setExecuted_deqLSQ(Maybe#(Exception) cause, Bool ld_killed);
+    method Action setExecuted_deqLSQ(Maybe#(Exception) cause, Maybe#(LdKilledBy) ld_killed);
     // doFinish rules set ROB state for ALU and FPU/MUL/DIV (always become Executed)
     interface Vector#(aluExeNum, Row_setExecuted_doFinishAlu) setExecuted_doFinishAlu;
     interface Vector#(fpuMulDivExeNum, Row_setExecuted_doFinishFpuMulDiv) setExecuted_doFinishFpuMulDiv;
@@ -164,7 +164,7 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Reg#(Bool)                                                      will_dirty_fpu_state <- mkRegU;
     Ehr#(TAdd#(3, TAdd#(fpuMulDivExeNum, aluExeNum)), RobInstState) rob_inst_state       <- mkEhr(?);
     Reg#(LdStQTag)                                                  lsqTag               <- mkRegU;
-    Ehr#(2, Bool)                                                   ldKilled             <- mkEhr(?);
+    Ehr#(2, Maybe#(LdKilledBy))                                     ldKilled             <- mkEhr(?);
     Ehr#(2, Bool)                                                   memAccessAtCommit    <- mkEhr(?);
     Ehr#(2, Bool)                                                   lsqAtCommitNotified  <- mkEhr(?);
     Ehr#(2, Bool)                                                   nonMMIOStDone        <- mkEhr(?);
@@ -244,12 +244,12 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         epochIncremented <= x.epochIncremented;
         spec_bits[sb_enq_port] <= x.spec_bits;
         lsqTag <= x.lsqTag;
-        ldKilled[ldKill_enq_port] <= False;
+        ldKilled[ldKill_enq_port] <= Invalid;
         memAccessAtCommit[accessCom_enq_port] <= False;
         lsqAtCommitNotified[lsqNotified_enq_port] <= False;
         nonMMIOStDone[nonMMIOSt_enq_port] <= False;
         // check
-        doAssert(!x.ldKilled, "ld killed must be false");
+        doAssert(!isValid(x.ldKilled), "ld killed must be false");
         doAssert(!x.memAccessAtCommit, "mem access at commit must be false");
         doAssert(!x.lsqAtCommitNotified, "lsq notified must be false");
         doAssert(!x.nonMMIOStDone, "non mmio st must be false");
@@ -280,7 +280,7 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         lsqAtCommitNotified[lsqNotified_setNotified_port] <= True;
     endmethod
 
-    method Action setExecuted_deqLSQ(Maybe#(Exception) cause, Bool ld_killed);
+    method Action setExecuted_deqLSQ(Maybe#(Exception) cause, Maybe#(LdKilledBy) ld_killed);
         // inst becomes Executed
         rob_inst_state[state_deqLSQ_port] <= Executed;
         // record trap
@@ -367,7 +367,7 @@ interface SupReorderBuffer#(numeric type aluExeNum, numeric type fpuMulDivExeNum
     // record that we have notified LSQ about inst reaching commit 
     method Action setLSQAtCommitNotified(InstTag x);
     // deqLSQ rules set ROB state
-    method Action setExecuted_deqLSQ(InstTag x, Maybe#(Exception) cause, Bool ld_killed);
+    method Action setExecuted_deqLSQ(InstTag x, Maybe#(Exception) cause, Maybe#(LdKilledBy) ld_killed);
     // doFinish rules set ROB state in ALU and FPU/MUL/DIV
     interface Vector#(aluExeNum, ROB_setExecuted_doFinishAlu) setExecuted_doFinishAlu;
     interface Vector#(fpuMulDivExeNum, ROB_setExecuted_doFinishFpuMulDiv) setExecuted_doFinishFpuMulDiv;
@@ -908,7 +908,7 @@ module mkSupReorderBuffer#(
         row[x.way][x.ptr].setLSQAtCommitNotified;
     endmethod
 
-    method Action setExecuted_deqLSQ(InstTag x, Maybe#(Exception) cause, Bool ld_killed) if(
+    method Action setExecuted_deqLSQ(InstTag x, Maybe#(Exception) cause, Maybe#(LdKilledBy) ld_killed) if(
         all(id, readVReg(setExeLSQ_SB_enq)) // ordering: < enq
     );
         row[x.way][x.ptr].setExecuted_deqLSQ(cause, ld_killed);

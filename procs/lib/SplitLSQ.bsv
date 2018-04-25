@@ -148,19 +148,19 @@ typedef struct {
     // if the Ld finds itself stalled by something.
 
     // fault after addr translation
-    Maybe#(Exception) fault;
+    Maybe#(Exception)  fault;
     // paddr/isMMIO/data have been computed (can be true only when no fault)
-    Bool              computed;
+    Bool               computed;
     // Ld is in issueQ, can be true only when computed = True and excutiong =
     // done = killed = False
-    Bool              inIssueQ;
+    Bool               inIssueQ;
     // Ld is executing (either issued to cache or forwarding is on its way).
-    Bool              executing;
+    Bool               executing;
     // Ld has got its result (executing must be true)
-    Bool              done;
+    Bool               done;
     // Ld is killed by older inst (failed speculation), can be true only when
     // executing or done is true
-    Bool              killed;
+    Maybe#(LdKilledBy) killed;
 
     // ===================
     // Ld/St ordering.
@@ -416,6 +416,9 @@ interface SplitLSQ;
     interface Vector#(SupSize, Put#(LdStQTag)) setAtCommit;
     // Speculation
     interface SpeculationUpdate specUpdate;
+    // for performance
+    method Bool stqFull_ehrPort0;
+    method Bool ldqFull_ehrPort0;
 endinterface
 
 // --- auxiliary types and functions ---
@@ -604,7 +607,7 @@ module mkSplitLSQ(SplitLSQ);
     Vector#(LdQSize, Ehr#(3, Bool))                 ld_inIssueQ        <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(2, Bool))                 ld_executing       <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(2, Bool))                 ld_done            <- replicateM(mkEhr(?));
-    Vector#(LdQSize, Ehr#(3, Bool))                 ld_killed          <- replicateM(mkEhr(?));
+    Vector#(LdQSize, Ehr#(3, Maybe#(LdKilledBy)))   ld_killed          <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(2, Maybe#(StQTag)))       ld_olderSt         <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(2, Bool))                 ld_olderStVerified <- replicateM(mkEhr(?));
     Vector#(LdQSize, Ehr#(3, Maybe#(StQTag)))       ld_readFrom        <- replicateM(mkEhr(?));
@@ -1085,7 +1088,7 @@ module mkSplitLSQ(SplitLSQ);
                  "enq issueQ entry cannot be done");
         doAssert(!ld_inIssueQ_enqIss[info.tag],
                  "enq issueQ entry cannot be in issueQ");
-        doAssert(!ld_killed_enqIss[info.tag],
+        doAssert(!isValid(ld_killed_enqIss[info.tag]),
                  "enq issueQ entry cannot be killed");
         doAssert(!ld_waitWPResp_enqIss[info.tag],
                  "enq issueQ entry cannot wait for wrong path resp");
@@ -1401,7 +1404,7 @@ module mkSplitLSQ(SplitLSQ);
         ld_inIssueQ_enq[ld_enqP] <= False;
         ld_executing_enq[ld_enqP] <= False;
         ld_done_enq[ld_enqP] <= False;
-        ld_killed_enq[ld_enqP] <= False;
+        ld_killed_enq[ld_enqP] <= Invalid;
         ld_readFrom_enq[ld_enqP] <= Invalid;
         ld_depLdQDeq_enq[ld_enqP] <= Invalid;
         ld_depStQDeq_enq[ld_enqP] <= Invalid;
@@ -1503,7 +1506,7 @@ module mkSplitLSQ(SplitLSQ);
                      !ld_inIssueQ_updAddr[tag] &&
                      !ld_executing_updAddr[tag] &&
                      !ld_done_updAddr[tag] &&
-                     !ld_killed_updAddr[tag],
+                     !isValid(ld_killed_updAddr[tag]),
                      "updating entry should not be " +
                      "computed or issuing or executed or done or killed");
 
@@ -1620,7 +1623,8 @@ module mkSplitLSQ(SplitLSQ);
             endfunction
             Vector#(LdQSize, Bool) killLds = map(needKill, idxVec);
             if(findOldestLd(killLds) matches tagged Valid .killTag) begin
-                ld_killed_updAddr[killTag] <= True;
+                LdKilledBy by = lsqTag matches tagged Ld .unuse ? Ld : St;
+                ld_killed_updAddr[killTag] <= Valid (by);
                 if(verbose) begin
                     $display("[LSQ - updateAddr] kill tag %d", killTag);
                 end
@@ -1659,7 +1663,7 @@ module mkSplitLSQ(SplitLSQ);
         doAssert(ld_computed_issue[tag], "issuing Ld must be computed");
         doAssert(!ld_executing_issue[tag], "issuing Ld must not be executing");
         doAssert(!ld_done_issue[tag], "issuing Ld must not be done");
-        doAssert(!ld_killed_issue[tag], "issuing Ld must not be killed");
+        doAssert(!isValid(ld_killed_issue[tag]), "issuing Ld must not be killed");
         doAssert(ld_memFunc[tag] == Ld, "only issue Ld");
         doAssert(!ld_isMMIO_issue[tag], "issuing Ld cannot be MMIO");
         doAssert(
@@ -1997,13 +2001,7 @@ module mkSplitLSQ(SplitLSQ);
             doAssert(ld_specBits_deqLd[deqP] == 0,
                      "at commit means zero spec bits");
         end
-
-        // remove the entry
-        ld_valid_deqLd[deqP] <= False;
-        ld_deqP_deqLd <= getNextLdPtr(deqP);
-
-        // set waitWPResp in case Ld is killed but not done
-        if(ld_killed_deqLd[deqP]) begin
+        if(isValid(ld_killed_deqLd[deqP])) begin
             doAssert(ld_memFunc[deqP] == Ld && !ld_isMMIO_deqLd[deqP],
                      "must be non-MMIO Ld");
             doAssert(!isValid(ld_fault_deqLd[deqP]), "cannot have fault");
@@ -2012,6 +2010,10 @@ module mkSplitLSQ(SplitLSQ);
             doAssert(!ld_waitWPResp_deqLd[deqP],
                      "cannot wait for wrong path resp");
         end
+
+        // remove the entry
+        ld_valid_deqLd[deqP] <= False;
+        ld_deqP_deqLd <= getNextLdPtr(deqP);
 
         // wakeup loads stalled by this entry
         function Action setReady(LdQTag i);
@@ -2121,7 +2123,7 @@ module mkSplitLSQ(SplitLSQ);
         // kill the oldest load
         Vector#(LdQSize, Bool) killLds = map(needKill, genWith(fromInteger));
         if(findOldestLd(killLds) matches tagged Valid .killTag) begin
-            ld_killed_evict[killTag] <= True;
+            ld_killed_evict[killTag] <= Valid (Cache);
             killByCacheQ.enq(ToSpecFifo {
                 data: killTag,
                 spec_bits: ld_specBits_evict[killTag]
@@ -2317,4 +2319,12 @@ module mkSplitLSQ(SplitLSQ);
             wrongSpec_urgent_firstSt <= True;
         endmethod
     endinterface
+
+    method Bool stqFull_ehrPort0;
+        return st_enqP == st_deqP && st_valid[st_enqP][0];
+    endmethod
+
+    method Bool ldqFull_ehrPort0;
+        return ld_enqP == ld_deqP[0] && ld_valid[ld_enqP][0];
+    endmethod
 endmodule

@@ -76,16 +76,18 @@ typedef enum {
     ExeRedirectBr,
     ExeRedirectJr,
     ExeRedirectOther,
-    ExeLdKillByLd,
-    ExeLdKillBySt,
-    ExeLdKillByCache,
     ExeLdStallByLd,
     ExeLdStallBySt,
     ExeLdStallBySB,
     ExeLdQFullCycles,
     ExeStQFullCycles,
     ExeROBFullCycles,
-    ExeTlbExcep
+    ExeTlbExcep,
+    ExeIntMulCnt,
+    ExeIntDivCnt,
+    ExeFpFmaCnt,
+    ExeFpDivCnt,
+    ExeFpSqrtCnt
 } ExeStagePerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
@@ -96,11 +98,14 @@ typedef enum {
     ComBrCnt,
     ComJmpCnt,
     ComJrCnt,
-    ComRedirect, // redirect caused by system inst
+    ComLdKillByLd,
+    ComLdKillBySt,
+    ComLdKillByCache,
+    ComSysCnt, // system inst count
     ExcepCnt,
     InterruptCnt,
     FlushTlbCnt
-} ComStagePerfType deriving(Bits, Eq, FShow); 
+} ComStagePerfType deriving(Bits, Eq, FShow);
 
 // PerfReq = XXPerfType
 

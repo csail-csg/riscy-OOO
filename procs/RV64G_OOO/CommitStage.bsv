@@ -147,8 +147,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Count#(Data) comBrCnt <- mkCount(0);
     Count#(Data) comJmpCnt <- mkCount(0);
     Count#(Data) comJrCnt <- mkCount(0);
+    // load mispeculation
+    Count#(Data) comLdKillByLdCnt <- mkCount(0);
+    Count#(Data) comLdKillByStCnt <- mkCount(0);
+    Count#(Data) comLdKillByCacheCnt <- mkCount(0);
     // exception/sys inst related
-    Count#(Data) comRedirectCnt <- mkCount(0);
+    Count#(Data) comSysCnt <- mkCount(0);
     Count#(Data) excepCnt <- mkCount(0);
     Count#(Data) interruptCnt <- mkCount(0);
     // flush tlb
@@ -178,7 +182,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             trap: x.trap,
             state: x.rob_inst_state,
             claimedPhyReg: x.claimed_phy_reg,
-            ldKilled: x.ldKilled,
+            ldKilled: isValid(x.ldKilled),
             memAccessAtCommit: x.memAccessAtCommit,
             lsqAtCommitNotified: x.lsqAtCommitNotified,
             nonMMIOStDone: x.nonMMIOStDone,
@@ -323,19 +327,13 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
         // system consistency
         makeSystemConsistent(False);
-
-`ifdef PERF_COUNT
-        if(inIfc.doStats) begin
-            comRedirectCnt.incr(1);
-        end
-`endif
     endrule
 
     // commit misspeculated load
     rule doCommitKilledLd(
-        !isValid(commitTrap) &&
-        !isValid(rob.deqPort[0].deq_data.trap) &&
-        rob.deqPort[0].deq_data.ldKilled
+        !isValid(commitTrap) &&&
+        !isValid(rob.deqPort[0].deq_data.trap) &&&
+        rob.deqPort[0].deq_data.ldKilled matches tagged Valid .killBy
     );
         rob.deqPort[0].deq;
         let x = rob.deqPort[0].deq_data;
@@ -351,7 +349,11 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
 `ifdef PERF_COUNT
         if(inIfc.doStats) begin
-            comRedirectCnt.incr(1);
+            case(killBy)
+                Ld: comLdKillByLdCnt.incr(1);
+                St: comLdKillByStCnt.incr(1);
+                Cache: comLdKillByCacheCnt.incr(1);
+            endcase
         end
 `endif
 
@@ -365,7 +367,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     rule doCommitSystemInst(
         !isValid(commitTrap) &&
         !isValid(rob.deqPort[0].deq_data.trap) &&
-        !rob.deqPort[0].deq_data.ldKilled &&
+        !isValid(rob.deqPort[0].deq_data.ldKilled) &&
         rob.deqPort[0].deq_data.rob_inst_state == Executed &&
         isSystem(rob.deqPort[0].deq_data.iType)
     );
@@ -413,7 +415,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
 `ifdef PERF_COUNT
         if(inIfc.doStats) begin
-            comRedirectCnt.incr(1);
+            comSysCnt.incr(1);
             // inst count stats
             instCnt.incr(1);
             if(csrf.decodeInfo.prv == 0) begin
@@ -452,7 +454,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     rule notifyLSQCommit(
         !isValid(commitTrap) &&
         !isValid(rob.deqPort[0].deq_data.trap) &&
-        !rob.deqPort[0].deq_data.ldKilled &&
+        !isValid(rob.deqPort[0].deq_data.ldKilled) &&
         rob.deqPort[0].deq_data.rob_inst_state != Executed &&
         rob.deqPort[0].deq_data.memAccessAtCommit &&
         !rob.deqPort[0].deq_data.lsqAtCommitNotified
@@ -470,7 +472,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     rule doCommitNormalInst(
         !isValid(commitTrap) &&
         !isValid(rob.deqPort[0].deq_data.trap) &&
-        !rob.deqPort[0].deq_data.ldKilled &&
+        !isValid(rob.deqPort[0].deq_data.ldKilled) &&
         rob.deqPort[0].deq_data.rob_inst_state == Executed &&
         !isSystem(rob.deqPort[0].deq_data.iType)
     );
@@ -501,7 +503,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
                 let inst_tag = rob.deqPort[i].getDeqInstTag;
 
                 // check can be committed or not
-                if(x.rob_inst_state != Executed || x.ldKilled || isValid(x.trap) || isSystem(x.iType)) begin
+                if(x.rob_inst_state != Executed || isValid(x.ldKilled) || isValid(x.trap) || isSystem(x.iType)) begin
                     // inst not ready for commit, or system inst, or trap, or killed, stop here
                     stop = True;
                 end
@@ -604,7 +606,10 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             ComBrCnt: comBrCnt;
             ComJmpCnt: comJmpCnt;
             ComJrCnt: comJrCnt;
-            ComRedirect: comRedirectCnt;
+            ComLdKillByLd: comLdKillByLdCnt;
+            ComLdKillBySt: comLdKillByStCnt;
+            ComLdKillByCache: comLdKillByCacheCnt;
+            ComSysCnt: comSysCnt;
             ExcepCnt: excepCnt;
             InterruptCnt: interruptCnt;
             FlushTlbCnt: flushTlbCnt;

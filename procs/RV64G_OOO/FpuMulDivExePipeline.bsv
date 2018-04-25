@@ -97,6 +97,8 @@ interface FpuMulDivExeInput;
     method Action writeRegFile(PhyRIndx dst, Data data);
     // spec update
     method Action conflictWrongSpec;
+    // performance
+    method Bool doStats;
 endinterface
 
 interface FpuMulDivExePipeline;
@@ -104,6 +106,8 @@ interface FpuMulDivExePipeline;
     interface Vector#(TMul#(2, AluExeNum), RecvBypass) recvBypass;
     interface ReservationStationFpuMulDiv rsFpuMulDivIfc;
     interface SpeculationUpdate specUpdate;
+    // performance
+    method Data getPerf(ExeStagePerfType t);
 endinterface
 
 module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
@@ -122,6 +126,15 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
     // mul div fpu func units
     MulDivExec mulDivExec <- mkMulDivExec;
     FpuExec fpuExec <- mkFpuExecPipeline;
+
+    // fpu/mul/div performance counters
+`ifdef PERF_COUNT
+    Count#(Data) exeIntMulCnt <- mkCount(0);
+    Count#(Data) exeIntDivCnt <- mkCount(0);
+    Count#(Data) exeFpFmaCnt <- mkCount(0);
+    Count#(Data) exeFpDivCnt <- mkCount(0);
+    Count#(Data) exeFpSqrtCnt <- mkCount(0);
+`endif
 
     rule doDispatchFpuMulDiv;
         rsFpuMulDiv.doDispatch;
@@ -233,30 +246,55 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         FpuResp resp <- fpuExec.fmaResp;
         if(verbose) $display("[doFinishFpFma] ", fshow(resp));
         doFinish(resp.dst, resp.tag, resp.res.data, resp.res.fflags);
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            exeFpFmaCnt.incr(1);
+        end
+`endif
     endrule
 
     rule doFinishFpDiv;
         FpuResp resp <- fpuExec.divResp;
         if(verbose) $display("[doFinishFpDiv] ", fshow(resp));
         doFinish(resp.dst, resp.tag, resp.res.data, resp.res.fflags);
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            exeFpDivCnt.incr(1);
+        end
+`endif
     endrule
 
     rule doFinishFpSqrt;
         FpuResp resp <- fpuExec.sqrtResp;
         if(verbose) $display("[doFinishFpSqrt] ", fshow(resp));
         doFinish(resp.dst, resp.tag, resp.res.data, resp.res.fflags);
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            exeFpSqrtCnt.incr(1);
+        end
+`endif
     endrule
 
     rule doFinishIntMul;
         MulDivResp resp <- mulDivExec.mulResp;
         if(verbose) $display("[doFinishIntMul] ", fshow(resp));
         doFinish(resp.dst, resp.tag, resp.data, 0);
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            exeIntMulCnt.incr(1);
+        end
+`endif
     endrule
 
     rule doFinishIntDiv;
         MulDivResp resp <- mulDivExec.divResp;
         if(verbose) $display("[doFinishIntDiv] ", fshow(resp));
         doFinish(resp.dst, resp.tag, resp.data, 0);
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            exeIntDivCnt.incr(1);
+        end
+`endif
     endrule
 
     interface recvBypass = map(getRecvBypassIfc, bypassWire);
@@ -270,4 +308,17 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         fpuExec.specUpdate,
         mulDivExec.specUpdate
     ));
+
+    method Data getPerf(ExeStagePerfType t)
+        return (case(t)
+`ifdef PERF_COUNT
+            ExeIntMulCnt: exeIntMulCnt;
+            ExeIntDivCnt: exeIntDivCnt;
+            ExeFpFmaCnt: exeFpFmaCnt;
+            ExeFpDivCnt: exeFpDivCnt;
+            ExeFpSqrtCnt: exeFpSqrtCnt;
+`endif
+            default: 0;
+        endcase);
+    endmethod
 endmodule
