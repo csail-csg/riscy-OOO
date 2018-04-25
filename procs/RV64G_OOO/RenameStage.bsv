@@ -247,7 +247,6 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 fflags: 0,
                                 ////////
                                 will_dirty_fpu_state: False,
-                                dispatched: False,
                                 rob_inst_state: Executed,
                                 lsqTag: ?,
                                 ldKilled: False,
@@ -610,7 +609,6 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                                 fflags: 0,
                                                 ////////
                                                 will_dirty_fpu_state: will_dirty_fpu_state,
-                                                dispatched: False,
                                                 rob_inst_state: rob_inst_state,
                                                 lsqTag: lsq_tag,
                                                 ldKilled: False,

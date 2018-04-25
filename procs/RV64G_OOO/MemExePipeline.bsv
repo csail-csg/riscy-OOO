@@ -132,7 +132,6 @@ interface MemExeInput;
     method Addr rob_getPC(InstTag t);
     method Action rob_setExecuted_doFinishMem(InstTag t, Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
     method Action rob_setExecuted_deqLSQ(InstTag t, Maybe#(Exception) cause, Bool ld_killed);
-    method Action rob_setDispatched(InstTag t); // debug
     // MMIO
     method Bool isMMIOAddr(Addr a);
     method Action mmioReq(MMIOCRq r);
@@ -298,9 +297,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // executed after address transation
         doAssert(!(x.data.mem_func == St && isValid(x.regs.dst)),
                  "St cannot have dst reg");
-
-        // set rob dispatched (debug)
-        inIfc.rob_setDispatched(x.tag);
         
         // go to next stage
         dispToRegQ.enq(ToSpecFifo {

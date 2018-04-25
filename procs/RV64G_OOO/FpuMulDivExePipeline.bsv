@@ -91,7 +91,6 @@ interface FpuMulDivExeInput;
     method Data csrf_rd(CSR csr);
     // ROB
     method Action rob_setExecuted(InstTag t, Bit#(5) fflags);
-    method Action rob_setDispatched(InstTag t); // debug
 
     // global broadcast methods
     // write reg file & set both conservative and aggressive sb & wake up inst
@@ -131,9 +130,6 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
 
         // FPU MUL DIV never have exception or misprecition, so no spec tag
         doAssert(!isValid(x.spec_tag), "FpuMulDiv should not carry any spec tag");
-
-        // set rob dispatched (debug)
-        inIfc.rob_setDispatched(x.tag);
         
         // go to next stage
         dispToRegQ.enq(ToSpecFifo {
