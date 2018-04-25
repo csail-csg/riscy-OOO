@@ -298,17 +298,17 @@ typedef struct {
 } LSQHitInfo deriving(Bits, Eq, FShow);
 
 typedef struct {
-    InstTag           instTag;
-    LdQMemFunc        memFunc;
-    ByteEn            byteEn;
-    Bool              unsignedLd;
-    Bool              rel;
-    Maybe#(PhyDst)    dst;
-    Addr              paddr;
-    Bool              isMMIO;
-    ByteEn            shiftedBE;
-    Maybe#(Exception) fault;
-    Bool              killed;
+    InstTag            instTag;
+    LdQMemFunc         memFunc;
+    ByteEn             byteEn;
+    Bool               unsignedLd;
+    Bool               rel;
+    Maybe#(PhyDst)     dst;
+    Addr               paddr;
+    Bool               isMMIO;
+    ByteEn             shiftedBE;
+    Maybe#(Exception)  fault;
+    Maybe#(LdKilledBy) killed;
 } LdQDeqEntry deriving (Bits, Eq, FShow);
 
 typedef struct {

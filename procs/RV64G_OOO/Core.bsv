@@ -274,7 +274,6 @@ module mkCore#(CoreId coreId)(Core);
                 method rob_getPC = rob.getOrigPC[i].get;
                 method rob_getPredPC = rob.getOrigPredPC[i].get;
                 method rob_setExecuted = rob.setExecuted_doFinishAlu[i].set;
-                method rob_setDispatched = rob.setDispatched_alu[i].put;
                 method fetch_train_predictors = toPut(trainBPQ[i]).put;
                 method setRegReadyAggr = writeAggr(aluWrAggrPort(i));
                 interface sendBypass = sendBypassIfc;
@@ -311,7 +310,6 @@ module mkCore#(CoreId coreId)(Core);
                 method rf_rd3 = rf.read[fpuMulDivRdPort(i)].rd3;
                 method csrf_rd = csrf.rd;
                 method rob_setExecuted = rob.setExecuted_doFinishFpuMulDiv[i].set;
-                method rob_setDispatched = rob.setDispatched_fpuMulDiv[i].put;
                 method Action writeRegFile(PhyRIndx dst, Data data);
                     writeAggr(fpuMulDivWrAggrPort(i), dst);
                     writeCons(fpuMulDivWrConsPort(i), dst, data);
@@ -330,7 +328,6 @@ module mkCore#(CoreId coreId)(Core);
             method rob_getPC = rob.getOrigPC[valueof(AluExeNum)].get; // last getPC port
             method rob_setExecuted_doFinishMem = rob.setExecuted_doFinishMem;
             method rob_setExecuted_deqLSQ = rob.setExecuted_deqLSQ;
-            method rob_setDispatched = rob.setDispatched_mem;
             method isMMIOAddr = mmio.isMMIOAddr;
             method mmioReq = mmio.dataReq;
             method mmioRespVal = mmio.dataRespVal;
@@ -602,6 +599,15 @@ module mkCore#(CoreId coreId)(Core);
             end
             return cnt;
         endfunction
+
+        function Data getFpuMulDivCnt(ExeStagePerfType pType);
+            Data cnt = 0;
+            for(Integer i = 0; i < valueof(FpuMulDivExeNum); i = i+1) begin
+                cnt = cnt + coreFix.fpuMulDivExeIfc[i].getPerf(pType);
+            end
+            return cnt;
+        endfunction
+
         let pType <- toGet(exePerfReqQ).get;
         Data data = (case(pType)
             SupRenameCnt: renameStage.getPerf(pType);
@@ -612,7 +618,7 @@ module mkCore#(CoreId coreId)(Core);
             ExeStQFullCycles: exeStQFullCycles;
             ExeROBFullCycles: exeROBFullCycles;
             ExeIntMulCnt, ExeIntDivCnt,
-            ExeFpFmaCnt, ExeFpDivCnt, ExeFpSqrtCnt: coreFix.fpuMulDivExeIfc.getPerf(pType);
+            ExeFpFmaCnt, ExeFpDivCnt, ExeFpSqrtCnt: getFpuMulDivCnt(pType);
             default: 0;
         endcase);
         exePerfRespQ.enq(PerfResp {

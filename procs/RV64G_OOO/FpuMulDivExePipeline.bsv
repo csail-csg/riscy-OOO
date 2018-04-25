@@ -23,6 +23,7 @@
 
 `include "ProcConfig.bsv"
 import DefaultValue::*;
+import Cntrs::*;
 import Vector::*;
 import BuildVector::*;
 import Types::*;
@@ -309,7 +310,7 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         mulDivExec.specUpdate
     ));
 
-    method Data getPerf(ExeStagePerfType t)
+    method Data getPerf(ExeStagePerfType t);
         return (case(t)
 `ifdef PERF_COUNT
             ExeIntMulCnt: exeIntMulCnt;

@@ -581,7 +581,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     rule doDeqLdQ_fault(isValid(lsqDeqLd.fault));
         if(verbose) $display("[doDeqLdQ_fault] ", fshow(lsqDeqLd));
         lsq.deqLd;
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, lsqDeqLd.fault, False);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, lsqDeqLd.fault, Invalid);
         // check
         doAssert(!isValid(lsqDeqLd.killed), "cannot be killed");
     endrule
@@ -595,7 +595,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         lsq.deqLd;
         // normal load should not have .rl, so no need to check SB empty
         doAssert(!lsqDeqLd.rel, "normal Ld cannot have .rl");
-        // set ROB as Executed
+        // set ROB as Executed (may be killed)
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, lsqDeqLd.killed);
     endrule
 
@@ -643,7 +643,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             inIfc.writeRegFile(dst.indx, resp);
             inIfc.setRegReadyAggr_mem(dst.indx);
         end
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, False);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, Invalid);
         if(verbose) $display("[doDeqLdQ_Lr_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
         doAssert(lsqDeqLd.memFunc == Lr && !lsqDeqLd.isMMIO, "must be non-MMIO Lr");
@@ -696,7 +696,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             inIfc.writeRegFile(dst.indx, resp);
             inIfc.setRegReadyAggr_mem(dst.indx);
         end
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, False);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, Invalid);
         if(verbose) $display("[doDeqLdQ_MMIO_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
         // check
         doAssert(lsqDeqLd.memFunc == Ld && lsqDeqLd.isMMIO, "must be MMIO Ld");
@@ -713,7 +713,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         lsq.deqLd;
         waitLrScAmoMMIOResp <= Invalid;
         // set ROB to raise access fault
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Valid (LoadAccessFault), False);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Valid (LoadAccessFault), Invalid);
         if(verbose) $display("[doDeqLdQ_MMIO_fault] ", fshow(lsqDeqLd));
         // check
         doAssert(lsqDeqLd.memFunc == Ld && lsqDeqLd.isMMIO, "must be MMIO Ld");
@@ -726,7 +726,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     rule doDeqStQ_fault(isValid(lsqDeqSt.fault));
         if(verbose) $display("[doDeqStQ_fault] ", fshow(lsqDeqSt));
         lsq.deqSt;
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, lsqDeqSt.fault, False);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, lsqDeqSt.fault, Invalid);
     endrule
 
 `ifdef TSO_MM
@@ -826,7 +826,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             inIfc.writeRegFile(dst.indx, resp);
             inIfc.setRegReadyAggr_mem(dst.indx);
         end
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, False);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, Invalid);
         if(verbose) $display("[doDeqStQ_ScAmo_deq] ", fshow(lsqDeqSt), "; ", fshow(resp));
         // check
         doAssert((lsqDeqSt.memFunc == Sc || lsqDeqSt.memFunc == Amo) &&
@@ -883,7 +883,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             inIfc.writeRegFile(dst.indx, resp);
             inIfc.setRegReadyAggr_mem(dst.indx);
         end
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, False);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, Invalid);
         if(verbose) $display("[doDeqStQ_MMIO_deq] ", fshow(lsqDeqSt), "; ", fshow(resp));
         // check
         doAssert(lsqDeqSt.memFunc == St || lsqDeqSt.memFunc == Amo, "must be St/Amo");
@@ -900,7 +900,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         lsq.deqSt;
         waitLrScAmoMMIOResp <= Invalid;
         // set ROB to raise access fault
-        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Valid (StoreAccessFault), False);
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Valid (StoreAccessFault), Invalid);
         if(verbose) $display("[doDeqStQ_MMIO_fault] ", fshow(lsqDeqSt));
         // check
         doAssert(lsqDeqSt.memFunc == St || lsqDeqSt.memFunc == Amo, "must be St/Amo");
