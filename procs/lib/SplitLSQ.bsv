@@ -2124,10 +2124,6 @@ module mkSplitLSQ(SplitLSQ);
         Vector#(LdQSize, Bool) killLds = map(needKill, genWith(fromInteger));
         if(findOldestLd(killLds) matches tagged Valid .killTag) begin
             ld_killed_evict[killTag] <= Valid (Cache);
-            killByCacheQ.enq(ToSpecFifo {
-                data: killTag,
-                spec_bits: ld_specBits_evict[killTag]
-            });
             if(verbose) begin
                 $display("[LSQ - cacheEvict] kill tag %d", killTag);
             end
