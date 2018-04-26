@@ -51,8 +51,7 @@ CORE_SCRIPT_DIR := $(FPGAUTILS_DIR)/core-scripts
 
 # interfaces
 S2H_INTERFACES = ProcRequest:ProcDmaWrapper.procReq \
-				 HostDmaRequest:ProcDmaWrapper.hostDmaReq \
-				 DeadlockRequest:ProcDmaWrapper.deadlockReq
+				 HostDmaRequest:ProcDmaWrapper.hostDmaReq
 H2S_INTERFACES = ProcDmaWrapper:ProcIndication,HostDmaIndication,DeadlockIndication,RenameDebugIndication:host
 
 BSVFILES = $(PROC_LIB_DIR)/ProcIF.bsv \

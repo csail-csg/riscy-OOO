@@ -31,9 +31,13 @@
 class DeadlockIndication : public DeadlockIndicationWrapper {
 private:
     FILE *log_fp;
+    long long unsigned ignore_user_commit_stucks;
 
 public:
-    DeadlockIndication(int id) : DeadlockIndicationWrapper(id), log_fp(0) {
+    DeadlockIndication(int id, long long unsigned ignore_user_stucks) :
+        DeadlockIndicationWrapper(id),
+        log_fp(0),
+        ignore_user_commit_stucks(ignore_user_stucks) {
         log_fp = fopen("deadlock.txt", "w");
     }
 
@@ -171,6 +175,13 @@ public:
                                      const int epochIncremented, const uint32_t specBits,
                                      const int stbEmpty, const int stqEmpty,
                                      const int tlbNoPendingReq, const uint8_t prv) {
+        if(ignore_user_commit_stucks > 0) {
+            ignore_user_commit_stucks--;
+            if(ignore_user_commit_stucks == 0) {
+                fprintf(stderr, "  [STOP ignoring user commit DEADLOCKs]\n");
+            }
+            return;
+        }
         fprintf(stderr, "  [DEADLOCK commitUserInstStuck] core %d, pc %016llx, iType %d, isException %d, "
                 "isInterrupt %d, trapVal %d, state %d, claimedPhyReg %d, ldKilled %d, "
                 "memAccessAtCommit %d, lsqAtCommitNotified %d, nonMMIOStDone %d, epochIncremented %d, "

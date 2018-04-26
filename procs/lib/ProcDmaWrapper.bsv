@@ -66,7 +66,6 @@ typedef AWSDramPins DramPins;
 interface ProcDmaWrapper;
     interface ProcRequest procReq;
     interface HostDmaRequest hostDmaReq;
-    interface DeadlockRequest deadlockReq;
 `ifndef BSIM
     interface DramPins pins;
 `endif
@@ -156,7 +155,6 @@ module mkProcDmaWrapper#(
         endmethod
     endinterface
     interface hostDmaReq = proc.hostDmaReq;
-    interface deadlockReq = proc.deadlockReq;
 `ifndef BSIM
     interface pins = dram.pins;
 `endif

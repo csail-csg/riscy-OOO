@@ -58,8 +58,7 @@ interface Proc;
     method Action wrDoneToHost;
     // to Dram
     interface Client#(DramUserReq, DramUserData) toDram;
-    // detect deadlock request & indication inverse, under portal clock domain
-    interface DeadlockRequest deadlockReq;
+    // detect deadlock indication inverse, under portal clock domain
     interface DeadlockIndInv deadlockIndInv;
     // rename debug
     interface RenameDebugIndInv renameDebugIndInv;
@@ -149,7 +148,6 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
     method rdDataToHost = host.rdDataToHost;
     method wrDoneToHost = host.wrDoneToHost;
     interface toDram = toDramIfc;
-    interface deadlockReq = deadlock.req;
     interface deadlockIndInv = deadlock.indInv;
     interface renameDebugIndInv = renameDebug.indInv;
 endmodule

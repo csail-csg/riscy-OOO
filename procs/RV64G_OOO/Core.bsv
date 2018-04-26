@@ -104,7 +104,6 @@ interface CoreDeadlock;
     interface Get#(CommitStuck) commitInstStuck;
     interface Get#(CommitStuck) commitUserInstStuck;
     interface Get#(void) checkStarted;
-    method Action setCheckStartInstNum(Data n);
 endinterface
 
 interface CoreRenameDebug;
@@ -401,13 +400,9 @@ module mkCore#(CoreId coreId)(Core);
 `ifdef CHECK_DEADLOCK
     // when to start deadlock checking
     Reg#(Bool) startDeadlockCheck <- mkReg(False);
-    Reg#(Maybe#(Data)) deadlockCheckStartInstNum <- mkReg(Invalid); // check start after committing these number of inst
     FIFO#(void) deadlockCheckStartedQ <- mkFIFO;
 
-    rule doStartDeadlockCheck(
-        deadlockCheckStartInstNum matches tagged Valid .n &&&
-        n < csrf.rd(CSRinstret) &&& !startDeadlockCheck &&& started
-    );
+    rule doStartDeadlockCheck(!startDeadlockCheck && started);
         startDeadlockCheck <= True;
         deadlockCheckStartedQ.enq(?);
     endrule
@@ -774,14 +769,8 @@ module mkCore#(CoreId coreId)(Core);
         interface commitInstStuck = commitStage.commitInstStuck;
         interface commitUserInstStuck = commitStage.commitUserInstStuck;
 `ifdef CHECK_DEADLOCK
-        method Action setCheckStartInstNum(Data n);
-            deadlockCheckStartInstNum <= Valid (n);
-        endmethod
         interface checkStarted = toGet(deadlockCheckStartedQ);
 `else
-        method Action setCheckStartInstNum(Data n);
-            noAction;
-        endmethod
         interface checkStarted = nullGet;
 `endif
     endinterface

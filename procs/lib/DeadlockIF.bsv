@@ -21,13 +21,6 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-
-interface DeadlockRequest;
-    // deadlock check for core starts after this number of inst
-    // deadlock check for caches always starts immediately
-    method Action setCheckStartInstNum(Bit#(64) n);
-endinterface
-
 typedef enum {
     HostDma,
     TlbDma,

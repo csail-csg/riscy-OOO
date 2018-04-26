@@ -189,7 +189,6 @@ instance Connectable#(DeadlockIndication, DeadlockIndInv);
 endinstance
 
 interface DeadlockSync;
-    interface DeadlockRequest req;
     interface DeadlockIndInv indInv;
 endinterface
 
@@ -210,8 +209,6 @@ module mkDeadlockSync#(
     SyncFIFOIfc#(Tuple2#(CoreId, CommitStuck)) commitInstStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
     SyncFIFOIfc#(Tuple2#(CoreId, CommitStuck)) commitUserInstStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
     SyncFIFOIfc#(Tuple2#(CoreId, Bool)) checkStartedQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
-
-    SyncFIFOIfc#(Data) setCheckStartInstNumQ <- mkSyncFifo(1, portalClk, portalRst, userClk, userRst);
 
     for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
         rule sendDCacheCRqStuck;
@@ -253,17 +250,6 @@ module mkDeadlockSync#(
     end
 
     mkConnection(toPut(llcCRqStuckQ), llcCRqStuck);
-
-    rule doSetCheckStartInstNum;
-        let n <- toGet(setCheckStartInstNumQ).get;
-        for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
-            core[i].setCheckStartInstNum(n);
-        end
-    endrule
-
-    interface DeadlockRequest req;
-        method setCheckStartInstNum = toPut(setCheckStartInstNumQ).put;
-    endinterface
 
     interface DeadlockIndInv indInv;
         interface dCacheCRqStuck = toGet(dCacheCRqStuckQ);
@@ -312,12 +298,6 @@ module mkDeadlockSync#(
     Get#(Tuple2#(CoreId, CommitStuck)) commitUserInstStuckNull    <- mkNullGet(clocked_by portalClk, reset_by portalRst);
     Get#(CoreId) checkStartedNull                                 <- mkNullGet(clocked_by portalClk, reset_by portalRst);
 
-    Put#(Data) setCheckStartInstNumNull <- mkNullPut(clocked_by portalClk, reset_by portalRst);
-
-    interface DeadlockRequest req;
-        method setCheckStartInstNum = setCheckStartInstNumNull.put;
-    endinterface
-    
     interface DeadlockIndInv indInv;
         interface dCacheCRqStuck = dCacheCRqStuckNull;
         interface dCachePRqStuck = dCachePRqStuckNull;

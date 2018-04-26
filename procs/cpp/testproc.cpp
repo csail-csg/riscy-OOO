@@ -39,7 +39,6 @@
 #include "print_buff.h"
 #include "proc_ind.h"
 #include "host_dma.h"
-#include "DeadlockRequest.h"
 #include "deadlock.h"
 #include "rename_debug.h"
 
@@ -69,9 +68,8 @@ static HostDmaRequestProxy *hostDmaRequestProxy = 0;
 static HostDmaIndication *hostDmaIndication = 0;
 
 // deadlock detect
-static DeadlockRequestProxy *deadlockReqeustProxy = 0;
 static DeadlockIndication *deadlockIndication = 0;
-static long long unsigned deadlock_check_start_inst_num = 0;
+static long long unsigned ignore_user_commit_stucks = 0;
 
 // rename debug
 static RenameDebugIndication *renameDebugIndication = 0;
@@ -127,11 +125,9 @@ int runHtifTest() {
     sleep(1);
 
     // set deadlock start inst num
-    fprintf(stderr, "set deadlock check starting after inst num %llu\n",
-            deadlock_check_start_inst_num);
-    deadlockReqeustProxy->setCheckStartInstNum(
-            (uint64_t)deadlock_check_start_inst_num);
-    sleep(1);
+    fprintf(stderr, "deadlock check starts with processor, "
+            "but ignores first %llu user commit stucks\n",
+            ignore_user_commit_stucks);
 
     // start processor
     uint64_t startpc = 0x1000;
@@ -168,7 +164,7 @@ int runHtifTest() {
 void printHelp(const char *prog) {
     fprintf(stderr, "Usage: %s [--assembly-tests] ", prog);
     fprintf(stderr, "[--just-run] [--mem-size MEM_MB_SIZE] ");
-    fprintf(stderr, "[--deadlock-check-after INST_NUM] ");
+    fprintf(stderr, "[--ignore-user-stucks IGNORED_USER_COMMIT_STUCK_NUM] ");
     fprintf(stderr, "[--core-num CORE_NUM] ");
     fprintf(stderr, "[--print-from INST_COUNT] [--skip INST_COUNT] ");
     fprintf(stderr, "[--shell-cmd CMD DELAY(sec)] ");
@@ -203,10 +199,10 @@ int main(int argc, char * const *argv) {
             mem_sz = (size_t)(atoi(argv[2])) * 1024 * 1024;
             // shift argc and argv accordingly
             argc-=2; argv+=2;
-        } else if(argc > 2 && strcmp(argv[1],"--deadlock-check-after") == 0) {
-            // first argument was "--deadlock-check-after"
-            // second argument should be inst num
-            deadlock_check_start_inst_num = std::stoull(argv[2]);
+        } else if(argc > 2 && strcmp(argv[1],"--ignore-user-stucks") == 0) {
+            // first argument was "--ignore-user-stucks"
+            // second argument should be number of stucks to ignore
+            ignore_user_commit_stucks = std::stoull(argv[2]);
             // shift argc and argv accordingly
             argc-=2; argv+=2;
         } else if(argc > 2 && strcmp(argv[1],"--core-num") == 0) {
@@ -283,8 +279,8 @@ int main(int argc, char * const *argv) {
     hostDmaIndication = new HostDmaIndication(IfcNames_HostDmaIndicationH2S);
     hostDmaRequestProxy = new HostDmaRequestProxy(IfcNames_HostDmaRequestS2H);
 
-    deadlockIndication = new DeadlockIndication(IfcNames_DeadlockIndicationH2S);
-    deadlockReqeustProxy = new DeadlockRequestProxy(IfcNames_DeadlockRequestS2H);
+    deadlockIndication = new DeadlockIndication(IfcNames_DeadlockIndicationH2S,
+                                                ignore_user_commit_stucks);
 
     renameDebugIndication = new RenameDebugIndication(IfcNames_RenameDebugIndicationH2S);
 
