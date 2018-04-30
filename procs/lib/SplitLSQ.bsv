@@ -372,6 +372,13 @@ interface SplitLSQ;
     //     (c) MMIO or Lr, computed, atCommit, and no older SQ entry (this also
     //     handles .rl associated with Lr)
     // NOTE: there is no pure fence in LQ right now
+    // NOTE: XXX A killed load is dequeued in the same way as normal loads. We
+    // should not dequeue a killed load to early, because it may have already
+    // waken up a younger instruction but have not yet written to phy reg file.
+    // In this case, the younger instruction will stuck at reg read stage,
+    // preventing an instruction older than the killed load from execution.
+    // This in turn prevents the killed load from committing and flushing,
+    // i.e., we deadlock.
     // Outside world should do the following:
     // (1) issue Lr or MMIO to memory system only at deq port
     // (2) For WEAK model, check .rl associated with Lr and SB empty before

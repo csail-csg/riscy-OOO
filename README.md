@@ -151,11 +151,12 @@ The additional thing is to build riscv-fesvr.
 We need to copy the bbl (`tools/RV64G/build-pk/bbl`) to F1.
 The following command boots Linux with 2GB memory.
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/awsf1/bin/ubuntu.exe --just-run --core-num $N --mem-size 2048 --deadlock-check-after 1000000000000 -- /path/to/bbl
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/awsf1/bin/ubuntu.exe --just-run --core-num $N --mem-size 2048 --ignore-user-stucks 1000000 -- /path/to/bbl
     
     The processor detects potential deadlock by checking if a user level instruction has been executed during a period of time.
     This will output a lot of "deadlock" warnings when the processor is booting linux or idling in shell.
-    To avoid such warnings, we use the `--deadlock-check-after A_LARGE_NUMBER` option as shown above.
+    To avoid such warnings, we use the `--ignore-user-stucks A_LARGE_NUMBER` option as shown above.
+    This will suppress the first `A_LARGE_NUMBER` of user-level instruction deadlock messages.
     
     Hit `ctrl-c` when you want to exit.
     
@@ -176,6 +177,6 @@ VC707 shoud only be able to hold 1 core (i.e., `$N=1`).
 - Boot Linux on FPGA.
 Since VC707 board only has 1GB DRAM, we boot Linux with 1GB memory.
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/vc707/bin/ubuntu.exe --just-run --core-num $N --mem-size 1024 --deadlock-check-after 1000000000000 -- $RISCY_HOME/tools/RV64G/build-pk/bbl
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/vc707/bin/ubuntu.exe --just-run --core-num $N --mem-size 1024  --ignore-user-stucks 1000000 -- $RISCY_HOME/tools/RV64G/build-pk/bbl
  
      Hit `ctrl-c` when you want to exit.
