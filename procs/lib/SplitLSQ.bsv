@@ -279,7 +279,7 @@ typedef enum {LdQ, StQ, SB} LdStalledBy deriving(Bits, Eq, FShow);
 
 typedef union tagged {
     void ToCache;
-    LdStalldedBy Stall;
+    LdStalledBy Stall;
     LSQForwardResult Forward;
 } LSQIssueLdResult deriving(Bits, Eq, FShow);
 

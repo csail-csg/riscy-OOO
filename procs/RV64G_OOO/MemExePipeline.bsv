@@ -529,7 +529,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `endif
         end
         else begin
-            doAssert(issRes == Stall, "load is stalled");
+            doAssert(False, "load is stalled");
         end
     endaction
     endfunction
