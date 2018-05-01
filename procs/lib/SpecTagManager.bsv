@@ -32,6 +32,8 @@ interface SpecTagManager;
     method Action   claimSpecTag;
     method Bool     canClaim;
     interface SpeculationUpdate specUpdate;
+    // performance: count full cycle
+    method Bool isFull_ehrPort0;
 endinterface
 
 (* synthesize *)
@@ -97,4 +99,8 @@ module mkSpecTagManager(SpecTagManager);
             current_spec_bits_ehr[1] <= current_spec_bits_ehr[1] & mask;
         endmethod
     endinterface
+
+    method Bool isFull_ehrPort0;
+        return next_spec_tag == Invalid;
+    endmethod
 endmodule

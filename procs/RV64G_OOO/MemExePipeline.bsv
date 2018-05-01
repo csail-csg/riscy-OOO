@@ -516,6 +516,18 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         else if(issRes == ToCache) begin
             reqLdQ.enq(tuple2(zeroExtend(info.tag), info.paddr));
         end
+        else if(issRes matches tagged Stall .stallBy) begin
+`ifdef PERF_COUNT
+            if(inIfc.doStats) begin
+                case(stallBy)
+                    LdQ: exeLdStallByLdCnt.incr(1);
+                    StQ: exeLdStallByStCnt.incr(1);
+                    SB: exeLdStallBySBCnt.incr(1);
+                    default: doAssert(False, "unknow stall reason");
+                endcase
+            end
+`endif
+        end
         else begin
             doAssert(issRes == Stall, "load is stalled");
         end

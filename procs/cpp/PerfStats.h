@@ -184,9 +184,6 @@ public:
         init(ExeStage, ExeLdStallByLd, "Exe stage stall load num by LdQ");
         init(ExeStage, ExeLdStallBySt, "Exe stage stall load num by StQ");
         init(ExeStage, ExeLdStallBySB, "Exe stage stall load num by SB");
-        init(ExeStage, ExeLdQFullCycles, "Exe stage LdQ full cycles");
-        init(ExeStage, ExeStQFullCycles, "Exe stage StQ full cycles");
-        init(ExeStage, ExeROBFullCycles, "Exe stage ROB full cycles");
         init(ExeStage, ExeTlbExcep, "Exe stage TLB exception num");
         init(ExeStage, ExeIntMulCnt, "Exe stage int mul num");
         init(ExeStage, ExeIntDivCnt, "Exe stage int div num");
@@ -209,6 +206,17 @@ public:
         init(ComStage, ExcepCnt, "exception num");
         init(ComStage, InterruptCnt, "interrupt num");
         init(ComStage, FlushTlbCnt, "flush TLB num");
+
+        // CoreSize
+        init(CoreSize, LdQFullCycles, "LdQ full cycles");
+        init(CoreSize, StQFullCycles, "StQ full cycles");
+        init(CoreSize, ROBFullCycles, "ROB full cycles");
+        init(CoreSize, AluRS0FullCycles, "alu RS 0 full cycles");
+        init(CoreSize, AluRS1FullCycles, "alu RS 1 full cycles");
+        init(CoreSize, FpuMulDivRSFullCycles, "fpu/mul/div RS full cycles");
+        init(CoreSize, MemRSFullCycles, "mem RS full cycles");
+        init(CoreSize, EpochFullCycles, "epoch full cycles");
+        init(CoreSize, SpecTagFullCycles, "spec tag full cycles");
     }
 };
 

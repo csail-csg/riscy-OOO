@@ -79,9 +79,6 @@ typedef enum {
     ExeLdStallByLd,
     ExeLdStallBySt,
     ExeLdStallBySB,
-    ExeLdQFullCycles,
-    ExeStQFullCycles,
-    ExeROBFullCycles,
     ExeTlbExcep,
     ExeIntMulCnt,
     ExeIntDivCnt,
@@ -89,6 +86,18 @@ typedef enum {
     ExeFpDivCnt,
     ExeFpSqrtCnt
 } ExeStagePerfType deriving(Bits, Eq, FShow);
+
+typedef enum {
+    LdQFullCycles,
+    StQFullCycles,
+    ROBFullCycles,
+    AluRS0FullCycles,
+    AluRS1FullCycles,
+    FpuMulDivRSFullCycles,
+    MemRSFullCycles,
+    EpochFullCycles,
+    SpecTagFullCycles
+} CoreSizePerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
     CycleCnt,
@@ -134,6 +143,7 @@ typedef enum {
     DecStage,
     ExeStage,
     ComStage,
+    CoreSize,
     LLC
 } PerfLocation deriving(Bits, Eq, FShow);
 

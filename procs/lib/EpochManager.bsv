@@ -47,6 +47,8 @@ interface EpochManager;
     method Action incrementEpoch;
     // for debug
     method EpochDebugState getEpochState;
+    // performance: count full cycle
+    method Bool isFull_ehrPort0;
 endinterface
 
 (* synthesize *)
@@ -122,6 +124,10 @@ module mkEpochManager(EpochManager);
             curEp: curr_epoch,
             checkedEp: prev_checked_epoch
         };
+    endmethod
+
+    method Bool isFull_ehrPort0;
+        return next_epoch == prev_checked_epoch;
     endmethod
 endmodule
 

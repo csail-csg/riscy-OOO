@@ -41,6 +41,7 @@ export LdQDeqEntry(..);
 export StQDeqEntry(..);
 export LSQUpdateAddrResult(..);
 export LSQForwardResult(..);
+export LdStalledBy(..);
 export LSQIssueLdResult(..);
 export LSQIssueLdInfo(..);
 export LSQRespLdResult(..);
@@ -274,9 +275,11 @@ typedef struct {
     Data data; // align with dword, not final result written to reg file
 } LSQForwardResult deriving(Bits, Eq, FShow);
 
+typedef enum {LdQ, StQ, SB} LdStalledBy deriving(Bits, Eq, FShow);
+
 typedef union tagged {
     void ToCache;
-    void Stall;
+    LdStalldedBy Stall;
     LSQForwardResult Forward;
 } LSQIssueLdResult deriving(Bits, Eq, FShow);
 
@@ -1685,7 +1688,7 @@ module mkSplitLSQ(SplitLSQ);
         doAssert(!ld_waitWPResp_issue[tag], "issuing Ld cannot wait for WP resp");
 
         // issue result
-        LSQIssueLdResult issRes = Stall;
+        LSQIssueLdResult issRes = Stall (StQ);
 
         // common thing for TSO and WEAK: valid SQ entry older than the load
         Maybe#(StQVirTag) precedingSt = olderStVirTags[tag];
@@ -1733,7 +1736,7 @@ module mkSplitLSQ(SplitLSQ);
             case(st_memFunc[stTag])
                 Sc, Amo: begin
                     // cannot forward, stall the load
-                    issRes = Stall;
+                    issRes = Stall (StQ);
                     ld_depStQDeq_issue[tag] <= Valid (stTag);
                 end
                 St: begin
@@ -1750,7 +1753,7 @@ module mkSplitLSQ(SplitLSQ);
                     end
                     else begin
                         // cannot forward, stall
-                        issRes = Stall;
+                        issRes = Stall (StQ);
                         ld_depStQDeq_issue[tag] <= Valid (stTag);
                     end
                 end
@@ -1826,7 +1829,7 @@ module mkSplitLSQ(SplitLSQ);
                                    (isValid(ldTagOlderSt) && 
                                     validValue(ldTagOlderSt) >= stVTag))) begin
             // stalled by Ld, Lr or acquire fence in LQ
-            issRes = Stall;
+            issRes = Stall (LdQ);
             if(ld_acq[ldTag]) begin
                 ld_depLdQDeq_issue[tag] <= matchLdTag;
             end
@@ -1845,7 +1848,7 @@ module mkSplitLSQ(SplitLSQ);
             // bypass or stall by SQ
             if(st_acq[stTag]) begin
                 // stall by acquire fence in SQ
-                issRes = Stall;
+                issRes = Stall (StQ);
                 ld_depStQDeq_issue[tag] <= matchStTag;
             end
             else begin
@@ -1853,7 +1856,7 @@ module mkSplitLSQ(SplitLSQ);
                 case(st_memFunc[stTag])
                     Sc, Amo: begin
                         // cannot forward, stall
-                        issRes = Stall;
+                        issRes = Stall (StQ);
                         ld_depStQDeq_issue[tag] <= matchStTag;
                     end
                     St: begin
@@ -1871,7 +1874,7 @@ module mkSplitLSQ(SplitLSQ);
                         end
                         else begin
                             // cannot forward, stall
-                            issRes = Stall;
+                            issRes = Stall (StQ);
                             ld_depStQDeq_issue[tag] <= matchStTag;
                         end
                     end
@@ -1897,7 +1900,7 @@ module mkSplitLSQ(SplitLSQ);
             else if(sbRes.matchIdx matches tagged Valid .idx) begin
                 // SB has matching entry, but cannot fully forward, wait for SB
                 // deq
-                issRes = Stall;
+                issRes = Stall (SB);
                 ld_depSBDeq_issue[tag] <= Valid (idx);
             end
             else begin
@@ -1910,7 +1913,8 @@ module mkSplitLSQ(SplitLSQ);
         end
 
         // if the Ld is issued, remove dependences on this issue
-        if(issRes != Stall) begin
+        Bool not_stall = issRes matches tagged Stall .by ? False : True;
+        if(not_stall) begin
             function Action setReady(LdQTag i);
             action
                 // no need to check valid here, we can write anything to

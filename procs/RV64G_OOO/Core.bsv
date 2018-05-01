@@ -375,19 +375,29 @@ module mkCore#(CoreId coreId)(Core);
     Reg#(Bool) doStats = coreFix.doStatsIfc; // whether data is collected
 `ifdef PERF_COUNT
     // OOO execute stag (in AluExePipeline and MemExePipeline)
-    Count#(Data) exeLdQFullCycles <- mkCount(0);
-    Count#(Data) exeStQFullCycles <- mkCount(0);
-    Count#(Data) exeROBFullCycles <- mkCount(0);
 
     // commit stage (many in CommitStage.bsv)
     // cycle
     Count#(Data) cycleCnt <- mkCount(0);
 
+    // buffer/tags size
+    Count#(Data) ldqFullCycles <- mkCount(0);
+    Count#(Data) stqFullCycles <- mkCount(0);
+    Count#(Data) robFullCycles <- mkCount(0);
+    Count#(Data) aluRS0FullCycles <- mkCount(0);
+    Count#(Data) aluRS1FullCycles <- mkCount(0);
+    Count#(Data) fpuMulDivRSFullCycles <- mkCount(0);
+    Count#(Data) memRSFullCycles <- mkCount(0);
+    Count#(Data) epochFullCycles <- mkCount(0);
+    Count#(Data) specTagFullCycles <- mkCount(0);
+
     // FIFOs to connect performance counters
     FIFO#(ExeStagePerfType) exePerfReqQ <- mkFIFO1;
     FIFO#(ComStagePerfType) comPerfReqQ <- mkFIFO1;
+    FIFO#(CoreSizePerfType) sizePerfReqQ <- mkFIFO1;
     Fifo#(1, PerfResp#(ExeStagePerfType)) exePerfRespQ <- mkCFFifo;
     Fifo#(1, PerfResp#(ComStagePerfType)) comPerfRespQ <- mkCFFifo;
+    Fifo#(1, PerfResp#(CoreSizePerfType)) sizePerfRespQ <- mkCFFifo;
 
     // FIFO of perf resp
     FIFO#(ProcPerfResp) perfRespQ <- mkFIFO1;
@@ -519,15 +529,39 @@ module mkCore#(CoreId coreId)(Core);
     // incr buffer full cycles
     (* fire_when_enabled, no_implicit_conditions *)
     rule incLdQFull(doStats && lsq.ldqFull_ehrPort0);
-        exeLdQFullCycles.incr(1);
+        ldqFullCycles.incr(1);
     endrule
     (* fire_when_enabled, no_implicit_conditions *)
     rule incStQFull(doStats && lsq.stqFull_ehrPort0);
-        exeStQFullCycles.incr(1);
+        stqFullCycles.incr(1);
     endrule
     (* fire_when_enabled, no_implicit_conditions *)
     rule incROBFull(doStats && rob.isFull_ehrPort0);
-        exeROBFullCycles.incr(1);
+        robFullCycles.incr(1);
+    endrule
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule incAluRS0Full(doStats && reservationStationAlu[0].isFull_ehrPort0);
+        aluRS0FullCycles.incr(1);
+    endrule
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule incAluRS1Full(doStats && reservationStationAlu[1].isFull_ehrPort0);
+        aluRS1FullCycles.incr(1);
+    endrule
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule incFpuMulDivRSFull(doStats && reservationStationFpuMulDiv[0].isFull_ehrPort0);
+        fpuMulDivRSFullCycles.incr(1);
+    endrule
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule incMemRSFull(doStats && reservationStationMem.isFull_ehrPort0);
+        memRSFullCycles.incr(1);
+    endrule
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule incEpochFull(doStats && epochManager.isFull_ehrPort0);
+        epochFullCycles.incr(1);
+    endrule
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule incSpecTagFull(doStats && specTagManager.isFull_ehrPort0);
+        specTagFullCycles.incr(1);
     endrule
 
     // broadcast whether we should collect data
@@ -578,6 +612,9 @@ module mkCore#(CoreId coreId)(Core);
             ComStage: begin
                 comPerfReqQ.enq(unpack(truncate(r.pType)));
             end
+            CoreSize: begin
+                sizePerfReqQ.enq(unpack(truncate(r.pType)));
+            end
             default: begin
                 $fwrite(stderr, "[WARNING] unrecognzied perf req location ", fshow(r.loc), "\n");
                 doAssert(False, "unknown perf location");
@@ -609,9 +646,6 @@ module mkCore#(CoreId coreId)(Core);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
             ExeTlbExcep,
             ExeLdStallByLd, ExeLdStallBySt, ExeLdStallBySB: coreFix.memExeIfc.getPerf(pType);
-            ExeLdQFullCycles: exeLdQFullCycles;
-            ExeStQFullCycles: exeStQFullCycles;
-            ExeROBFullCycles: exeROBFullCycles;
             ExeIntMulCnt, ExeIntDivCnt,
             ExeFpFmaCnt, ExeFpDivCnt, ExeFpSqrtCnt: getFpuMulDivCnt(pType);
             default: 0;
@@ -630,6 +664,27 @@ module mkCore#(CoreId coreId)(Core);
             default: commitStage.getPerf(pType);
         endcase);
         comPerfRespQ.enq(PerfResp {
+            pType: pType,
+            data: data
+        });
+    endrule
+
+    // handle perf req: core size
+    rule readPerfCnt_Size;
+        let pType <- toGet(sizePerfReqQ).get;
+        Data data = (case(pType)
+            LdQFullCycles: ldqFullCycles;
+            StQFullCycles: stqFullCycles;
+            ROBFullCycles: robFullCycles;
+            AluRS0FullCycles: aluRS0FullCycles;
+            AluRS1FullCycles: aluRS1FullCycles;
+            FpuMulDivRSFullCycles: fpuMulDivRSFullCycles;
+            MemRSFullCycles: memRSFullCycles;
+            EpochFullCycles: epochFullCycles;
+            SpecTagFullCycles: specTagFullCycles;
+            default: 0;
+        endcase);
+        sizePerfRespQ.enq(PerfResp {
             pType: pType,
             data: data
         });
@@ -698,6 +753,14 @@ module mkCore#(CoreId coreId)(Core);
             let r <- toGet(comPerfRespQ).get;
             resp = Valid(ProcPerfResp {
                 loc: ComStage,
+                pType: zeroExtend(pack(r.pType)),
+                data: r.data
+            });
+        end
+        else if(sizePerfRespQ.notEmpty) begin
+            let r <- toGet(sizePerfRespQ).get;
+            resp = Valid (ProcPerfResp {
+                loc: CoreSize,
                 pType: zeroExtend(pack(r.pType)),
                 data: r.data
             });

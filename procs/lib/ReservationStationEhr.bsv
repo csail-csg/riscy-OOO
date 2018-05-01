@@ -59,6 +59,9 @@ interface ReservationStation#(
     // parameter countValid is true.
     method Bit#(TLog#(TAdd#(size, 1))) approximateCount;
 
+    // performance: count full cycles
+    method Bool isFull_ehrPort0;
+
     interface SpeculationUpdate specUpdate;
 endinterface
 
@@ -254,6 +257,10 @@ module mkReservationStation#(Bool lazySched, Bool lazyEnq, Bool countValid)(
     endmethod
 
     interface setRegReady = setRegReadyIfc;
+
+    method Bool isFull_ehrPort0;
+        return readVEhr(0, valid) == replicate(True);
+    endmethod
 
     interface SpeculationUpdate specUpdate;
         method Action incorrectSpeculation(Bool kill_all, SpecTag x);
