@@ -10,12 +10,19 @@ void *run_spike(void *spike) {
 }
 
 int main(int argc, char *argv[]) {
+
+    if(argc < 3) {
+        fprintf(stderr, "Usage: %s LOAD_LATENCY HTIF_ARG1 HTIF_ARG2 ...\n", argv[0]);
+        return 0;
+    }
+    int load_latency = atoi(argv[1]);
+
     // inst trace buffer
     sync_buffer_t<traced_inst_t> *inst_trace = new sync_buffer_t<traced_inst_t>(1024 * 1024);
 
     // run spike
     std::vector<std::string> htif_args;
-    for(int i = 1; i < argc; i++) {
+    for(int i = 2; i < argc; i++) {
         htif_args.push_back(std::string(argv[i]));
     }
     std::vector<std::pair<reg_t, mem_t*>> mems;
@@ -25,7 +32,7 @@ int main(int argc, char *argv[]) {
     pthread_create(&spike_tid, NULL, run_spike, spike);
 
     // run performance model
-    SimpleSim *perf = new SimpleSim(inst_trace);
+    SimpleSim *perf = new SimpleSim(inst_trace, load_latency);
     perf->run();
 
     return 0;
