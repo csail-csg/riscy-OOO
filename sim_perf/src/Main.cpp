@@ -17,14 +17,14 @@ int main(int argc, char *argv[]) {
     }
     int load_latency = atoi(argv[1]);
 
-    // create performance model
-    SimBW *perf = new SimBW(load_latency);
+    // parse args & create performance model
+    std::vector<std::string> htif_args;
+    SimBase *perf = SimBase::create(argc, argv, htif_args);
+    if(!perf) {
+        return -1;
+    }
 
     // create and run spike
-    std::vector<std::string> htif_args;
-    for(int i = 2; i < argc; i++) {
-        htif_args.push_back(std::string(argv[i]));
-    }
     std::vector<std::pair<reg_t, mem_t*>> mems;
     mems.push_back(std::make_pair(reg_t(DRAM_BASE), new mem_t(reg_t(2048) << 20)));
     sync_buffer_t<traced_inst_t>* trace[] = { &(perf->inst_trace) };

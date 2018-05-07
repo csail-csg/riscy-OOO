@@ -1,6 +1,57 @@
 #include "SimBW.h"
+#include <unistd.h>
+#include <string.h>
 
-SimBW::SimBW(int lat_load_to_use) :
+void SimBW::usage(char *prog) {
+    fprintf(stderr, "Usage: %s BW --lat LOAD_TO_USE_LAT "
+            "--out OUT_FILE [--ff FAST_FORWARD_INSTS] "
+            "[--sim SIM_INSTS] -- HTIF_ARGS\n", prog);
+}
+
+SimBW* SimBW::create(int argc, char **argv,
+                     std::vector<std::string> &htif_args) {
+    int load_lat = 0;
+    char *out_file = NULL;
+    uint64_t forward_insts = 0;
+    uint64_t sim_insts = uint64_t(-1);
+
+    // start from argv[2]
+    int i = 2;
+    while(i < argc) {
+        if(strcmp(argv[i], "--lat") == 0 && i + 1 < argc) {
+            load_lat = atoi(argv[i + 1]);
+            i += 2;
+        } else if(strcmp(argv[i], "--out") == 0 && i + 1 < argc) {
+            out_file = argv[i + 1];
+            i += 2;
+        } else if(strcmp(argv[i], "--ff") == 0 && i + 1 < argc) {
+            forward_insts = std::stoull(argv[i + 1]);
+            i += 2;
+        } else if(strcmp(argv[i], "--sim") == 0 && i + 1 < argc) {
+            sim_insts = std::stoull(argv[i + 1]);
+            i += 2;
+        } else if(strcmp(argv[i], "--") == 0) {
+            i++;
+            break;
+        } else {
+            usage(argv[0]);
+            return NULL;
+        }
+    }
+    if(load_lat <= 0 || out_file == NULL) {
+        usage(argv[0]);
+        return NULL;
+    }
+
+    for(; i < argc; i++) {
+        htif_args.push_back(std::string(argv[i]));
+    }
+
+    return new SimBW(load_lat, forward_insts, sim_insts, out_file);
+}
+
+SimBW::SimBW(int lat_load_to_use, uint64_t forward_insts,
+             uint64_t sim_insts, const char *file) :
     latency_load_to_use(lat_load_to_use),
     rob(rob_size + 1),
     rob_enq_idx(0),
@@ -8,13 +59,21 @@ SimBW::SimBW(int lat_load_to_use) :
     dispatch_mem_port(dispatch_mem_bw),
     dispatch_alu_port(dispatch_alu_bw),
     writeback_port(writeback_bw),
+    forward_inst_num(forward_insts),
+    sim_inst_num(sim_insts),
     inst_count(0),
-    load_count(0)
+    load_count(0),
+    out_file(file)
 {
     for(int i = 0; i < reg_num; i++) {
         rt_busy[i] = NULL;
         rt_ready[i] = 0;
     }
+    fprintf(stderr, "\n[SimBW] init: load to use latency %d, "
+            "forward insts %llu, simulate insts %llu, "
+            "output file %s\n", lat_load_to_use,
+            (long long unsigned)forward_insts,
+            (long long unsigned)sim_insts, file);
 }
 
 void SimBW::run() {
@@ -27,21 +86,33 @@ void SimBW::fast_forward() {
     while(true) {
         traced_inst_t &inst = inst_trace.consume();
         if(unlikely(inst.begin_stats)) {
-            fprintf(stderr, "[SimBW] Fastforward done, begin simulation\n");
-            return;
+            break;
         }
     }
+    for(uint64_t i = 0; i < forward_inst_num; i++) {
+        traced_inst_t &inst = inst_trace.consume();
+        if(unlikely(inst.end_stats)) {
+            fprintf(stderr, "\n[SimBW] hit end sim before forwarding is done, exiting ...\n");
+            exit(0);
+        }
+    }
+    fprintf(stderr, "\n[SimBW] Fastforward done, begin simulation\n");
 }
 
 void SimBW::dump_stats() {
-    fprintf(stderr, "[SimBW] Simulation done. "
-            "inst count %llu, cycle %llu, load count %llu\n",
-            (long long unsigned)inst_count, (long long unsigned)sim_cycle,
-            (long long unsigned)load_count);
+    sleep(1);
+    fprintf(stderr, "\n[SimBW] Simulation done\n");
+    FILE *fp = fopen(out_file.c_str(), "w");
+    fprintf(fp, "load to use latency = %d\n", latency_load_to_use);
+    fprintf(fp, "forwarded insts = %llu\n", (long long unsigned)forward_inst_num);
+    fprintf(fp, "simulated insts = %llu\n", (long long unsigned)inst_count);
+    fprintf(fp, "cycles = %llu\n", (long long unsigned)sim_cycle);
+    fprintf(fp, "load insts = %llu\n", (long long unsigned)load_count);
+    fclose(fp);
 }
 
 void SimBW::sim() {
-    while(true) {
+    while(inst_count < sim_inst_num) {
         bool end_sim = commit();
         if(unlikely(end_sim)) {
             return;

@@ -50,11 +50,14 @@ struct RenamedInst {
 
 class SimBW : public SimBase {
 public:
-    SimBW(int lat_load_to_use);
+    static SimBW* create(int argc, char **argv, std::vector<std::string> &htif_args);
+    SimBW(int lat_load_to_use, uint64_t forward_insts, uint64_t sim_insts, const char *file);
     virtual ~SimBW() {}
     virtual void run();
 
 protected:
+    static void usage(char *prog);
+
     void fast_forward();
     void sim();
     void dump_stats();
@@ -120,7 +123,13 @@ protected:
         store = opcode == 8 || opcode == 9; // Store/StoreFp
     }
 
+    // forward/sim params
+    const uint64_t forward_inst_num;
+    const uint64_t sim_inst_num;
+
     // performance stats
     uint64_t inst_count;
     uint64_t load_count;
+
+    std::string out_file;
 };
