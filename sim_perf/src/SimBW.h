@@ -130,6 +130,7 @@ protected:
     // performance stats
     uint64_t inst_count;
     uint64_t load_count;
+    time_t real_time;
 
     std::string out_file;
 };

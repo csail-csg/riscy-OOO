@@ -78,7 +78,11 @@ SimBW::SimBW(int lat_load_to_use, uint64_t forward_insts,
 
 void SimBW::run() {
     fast_forward();
+
+    real_time = time(0);
     sim();
+    real_time = time(0) - real_time;
+
     dump_stats();
 }
 
@@ -108,6 +112,7 @@ void SimBW::dump_stats() {
     fprintf(fp, "simulated insts = %llu\n", (long long unsigned)inst_count);
     fprintf(fp, "cycles = %llu\n", (long long unsigned)sim_cycle);
     fprintf(fp, "load insts = %llu\n", (long long unsigned)load_count);
+    fprintf(fp, "real time seconds = %llu\n", (long long unsigned)real_time);
     fclose(fp);
 }
 
