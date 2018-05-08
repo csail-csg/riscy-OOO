@@ -1,3 +1,5 @@
+#if 0
+
 #pragma once
 
 #include <stdint.h>
@@ -52,3 +54,6 @@ protected:
 
     const int bandwidth; // limited processing bandwidth
 };
+
+
+#endif

@@ -69,6 +69,11 @@ SimBW::SimBW(int lat_load_to_use, uint64_t forward_insts,
         rt_busy[i] = NULL;
         rt_ready[i] = 0;
     }
+
+    dispatch_mem_port.set_callback(SimBW::call_dispatch, this);
+    dispatch_alu_port.set_callback(SimBW::call_dispatch, this);
+    writeback_port.set_callback(SimBW::call_writeback, this);
+
     fprintf(stderr, "\n[SimBW] init: load to use latency %d, "
             "forward insts %llu, simulate insts %llu, "
             "output file %s\n", lat_load_to_use,
@@ -207,7 +212,7 @@ void SimBW::rename_inst(const traced_inst_t &trace, RenamedInst *inst) {
 
     // dispatch the inst if all src ready
     if(inst->src_pend_num == 0) {
-        schedule_dispatch(inst, inst->src_ready_time);
+        schedule_dispatch(inst->src_ready_time, inst);
     }
 
     // stats
@@ -225,7 +230,7 @@ void SimBW::dispatch(RenamedInst *inst) {
         young_inst->src_ready_time = std::max(young_inst->src_ready_time, ready_to_use_time);
         // schedule younger inst to dispatch if all src ready
         if(young_inst->src_pend_num == 0) {
-            schedule_dispatch(young_inst, young_inst->src_ready_time);
+            schedule_dispatch(young_inst->src_ready_time, young_inst);
         }
     }
 
@@ -237,7 +242,7 @@ void SimBW::dispatch(RenamedInst *inst) {
     }
 
     // schedule write back
-    schedule_writeback(inst, sim_cycle + inst->latency_to_wb);
+    schedule_writeback(sim_cycle + inst->latency_to_wb, inst);
 }
 
 void SimBW::writeback(RenamedInst *inst) {

@@ -1,5 +1,10 @@
+#pragma once
+
 #include "SimBase.h"
-#include "Port.h"
+#include <vector>
+#include <queue>
+
+class Port;
 
 struct RenamedInst {
     // All src operands that depends on an older inst forms a linked list.
@@ -48,12 +53,74 @@ struct RenamedInst {
     }
 };
 
+class SimBW;
+
+class Port {
+public:
+    Port(int bw) : bandwidth(bw), callback(NULL), sim(NULL) {}
+    ~Port() {}
+
+    typedef void (*Callback)(SimBW*, RenamedInst*);
+    void set_callback(Callback cb, SimBW *s) {
+        callback = cb;
+        sim = s;
+    }
+
+    // schedule new event at future
+    void schedule(uint64_t time, RenamedInst* inst) {
+        event_queue.push(Event(time, inst));
+    }
+
+    // process events in queue that are ready at current time
+    void process() {
+        uint64_t cur_time = SimBase::cur_cycle();
+        for(int i = 0; i < bandwidth && !event_queue.empty(); i++) {
+            // When processing a callback, we first pop it out, because the
+            // callback may (though unlikely) insert a new event with a smaller
+            // timestamp to this event queue
+            Event event = event_queue.top();
+            if(event.first <= cur_time) {
+                event_queue.pop();
+                callback(sim, event.second);
+            } else {
+                break; // no ready event
+            }
+        }
+    }
+
+protected:
+    // callback
+    Callback callback;
+    SimBW *sim;
+
+    // event queue
+    typedef std::pair<uint64_t, RenamedInst*> Event; // time + callback
+    struct CompareEvent {
+        bool inline operator()(const Event &a, const Event &b) {
+            // a has less priority than b when a's time is larger
+            return a.first > b.first;
+        }
+    };
+    typedef std::priority_queue<Event, std::vector<Event>, CompareEvent> EventQueue;
+    EventQueue event_queue;
+
+    const int bandwidth; // limited processing bandwidth
+};
+
 class SimBW : public SimBase {
 public:
     static SimBW* create(int argc, char **argv, std::vector<std::string> &htif_args);
     SimBW(int lat_load_to_use, uint64_t forward_insts, uint64_t sim_insts, const char *file);
     virtual ~SimBW() {}
     virtual void run();
+
+    // static version of callback (avoid using std::bind)
+    static void call_dispatch(SimBW *sim, RenamedInst *inst) {
+        sim->dispatch(inst);
+    }
+    static void call_writeback(SimBW *sim, RenamedInst *inst) {
+        sim->writeback(inst);
+    }
 
 protected:
     static void usage(char *prog);
@@ -109,11 +176,11 @@ protected:
     Port writeback_port;
 
     // helper to schedule callback on port
-    void inline schedule_dispatch(RenamedInst *inst, uint64_t time) {
-        inst->dispatch_port->schedule(time, std::bind(&SimBW::dispatch, this, inst));
+    void inline schedule_dispatch(uint64_t time, RenamedInst *inst) {
+        inst->dispatch_port->schedule(time, inst);
     }
-    void inline schedule_writeback(RenamedInst *inst, uint64_t time) {
-        writeback_port.schedule(time, std::bind(&SimBW::writeback, this, inst));
+    void inline schedule_writeback(uint64_t time, RenamedInst *inst) {
+        writeback_port.schedule(time, inst);
     }
 
     // check load or store
