@@ -29,6 +29,7 @@ import Vector::*;
 import BrPred::*;
 import Bht::*;
 import GSelectPred::*;
+import GSharePred::*;
 import TourPred::*;
 
 export DirPredTrainInfo(..);

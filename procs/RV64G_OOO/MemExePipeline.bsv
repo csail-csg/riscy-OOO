@@ -48,6 +48,7 @@ import SpecPoisonFifo::*;
 import CCTypes::*;
 import L1CoCache::*;
 import Bypass::*;
+import LatencyTimer::*;
 
 typedef struct {
     // inst info
@@ -167,6 +168,26 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // we change cache request in case of single core, becaues our MSI protocol
     // is not good with single core
     Bool multicore = valueof(CoreNum) > 1;
+
+`ifdef PERF_COUNT
+    // load issue stall
+    Count#(Data) exeLdStallByLdCnt <- mkCount(0);
+    Count#(Data) exeLdStallByStCnt <- mkCount(0);
+    Count#(Data) exeLdStallBySBCnt <- mkCount(0);
+    // load forward count
+    Count#(Data) exeLdForwardCnt <- mkCount(0);
+    // load/store memory total latency (max 1K cycle latency for 1 Ld/St)
+    LatencyTimer#(LdQSize, 10) ldMemLatTimer <- mkLatencyTimer;
+    LatencyTimer#(SBSize, 10) stMemLatTimer <- mkLatencyTimer;
+    Count#(Data) exeLdMemLat <- mkCount(0);
+    Count#(Data) exeStMemLat <- mkCount(0);
+    // load to use latency: dispatch to resp
+    LatencyTimer#(LdQSize, 10) ldToUseLatTimer <- mkLatencyTimer;
+    Count#(Data) exeLdToUseLat <- mkCount(0);
+    Count#(Data) exeLdToUseCnt <- mkCount(0); // number of Ld resp written to reg file
+    // address translate exception
+    Count#(Data) exeTlbExcepCnt <- mkCount(0);
+`endif
 
     // reservation station
     ReservationStationMem rsMem <- mkReservationStationMem;
@@ -291,26 +312,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endinterface);
     // non-blocking coherent D$
     DCoCache dMem <- mkDCoCache(procRespIfc);
-
-`ifdef PERF_COUNT
-    // load issue stall
-    Count#(Data) exeLdStallByLdCnt <- mkCount(0);
-    Count#(Data) exeLdStallByStCnt <- mkCount(0);
-    Count#(Data) exeLdStallBySBCnt <- mkCount(0);
-    // load forward count
-    Count#(Data) exeLdForwardCnt <- mkCount(0);
-    // load/store memory total latency (max 1K cycle latency for 1 Ld/St)
-    LatencyTimer#(LdQSize, 10) ldMemLatTimer <- mkLatencyTimer;
-    LatencyTimer#(SBSize, 10) stMemLatTimer <- mkLatencyTimer;
-    Count#(Data) exeLdMemLat <- mkCount(0);
-    Count#(Data) exeStMemLat <- mkCount(0);
-    // load to use latency: dispatch to resp
-    LatencyTimer#(LdQSize, 10) ldToUseLatTimer <- mkLatencyTimer;
-    Count#(Data) exeLdToUseLat <- mkCount(0);
-    Count#(Data) exeLdToUseCnt <- mkCount(0); // number of Ld resp written to reg file
-    // address translate exception
-    Count#(Data) exeTlbExcepCnt <- mkCount(0);
-`endif
 
     //=======================================================
     // Reservation Station Stuff
