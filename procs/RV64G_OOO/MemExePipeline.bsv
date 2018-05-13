@@ -228,6 +228,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             if(verbose) begin
                 $display("[Ld resp] ", fshow(id), "; ", fshow(d), "; ", fshow(info));
             end
+`ifdef PERF_COUNT
+            // perf: load mem latency
+            let lat <- ldMemLatTimer.done(tag);
+            if(inIfc.doStats) begin
+                exeLdMemLat.incr(zeroExtend(lat));
+            end
+`endif
         endmethod
         method Action respLrScAmo(DProcReqId id, Data d);
             respLrScAmoQ.enq(d);
@@ -243,6 +250,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
                 $display("[Store resp] idx ", fshow(id),
                          ", ", fshow(waitSt));
             end
+`ifdef PERF_COUNT
+            // perf: store mem latency
+            let lat <- stMemLatTimer.done(0);
+            if(inIfc.doStats) begin
+                exeStMemLat.incr(zeroExtend(lat));
+            end
+`endif
             // now figure out the data to be written
             Vector#(LineSzData, ByteEn) be = replicate(replicate(False));
             Line data = replicate(0);
@@ -256,6 +270,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             let e <- stb.deq(idx); // deq SB
             lsq.wakeupLdStalledBySB(idx); // wake up loads
             if(verbose) $display("[Store resp] idx = %x, ", idx, fshow(e));
+`ifdef PERF_COUNT
+            // perf: store mem latency
+            let lat <- stMemLatTimer.done(idx);
+            if(inIfc.doStats) begin
+                exeStMemLat.incr(zeroExtend(lat));
+            end
+`endif
             return tuple2(e.byteEn, unpack(e.data)); // return SB entry
         endmethod
 `endif
@@ -276,6 +297,17 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Count#(Data) exeLdStallByLdCnt <- mkCount(0);
     Count#(Data) exeLdStallByStCnt <- mkCount(0);
     Count#(Data) exeLdStallBySBCnt <- mkCount(0);
+    // load forward count
+    Count#(Data) exeLdForwardCnt <- mkCount(0);
+    // load/store memory total latency (max 1K cycle latency for 1 Ld/St)
+    LatencyTimer#(LdQSize, 10) ldMemLatTimer <- mkLatencyTimer;
+    LatencyTimer#(SBSize, 10) stMemLatTimer <- mkLatencyTimer;
+    Count#(Data) exeLdMemLat <- mkCount(0);
+    Count#(Data) exeStMemLat <- mkCount(0);
+    // load to use latency: dispatch to resp
+    LatencyTimer#(LdQSize, 10) ldToUseLatTimer <- mkLatencyTimer;
+    Count#(Data) exeLdToUseLat <- mkCount(0);
+    Count#(Data) exeLdToUseCnt <- mkCount(0); // number of Ld resp written to reg file
     // address translate exception
     Count#(Data) exeTlbExcepCnt <- mkCount(0);
 `endif
@@ -305,6 +337,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             },
             spec_bits: x.spec_bits
         });
+
+`ifdef PERF_COUNT
+        // perf: load to use latency
+        if(x.data.ldstq_tag matches tagged Ld .idx) begin
+            ldToUseLatTimer.start(idx);
+        end
+`endif
     endrule
 
     rule doRegReadMem;
@@ -512,12 +551,23 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             if(forward.dst matches tagged Valid .dst) begin
                 inIfc.setRegReadyAggr_forward(dst.indx);
             end
+`ifdef PERF_COUNT
+            // perf: load forward
+            if(inIfc.doStats) begin
+                exeLdForwardCnt.incr(1);
+            end
+`endif
         end
         else if(issRes == ToCache) begin
             reqLdQ.enq(tuple2(zeroExtend(info.tag), info.paddr));
+`ifdef PERF_COUNT
+            // perf: load mem latency
+            ldMemLatTimer.start(info.tag);
+`endif
         end
         else if(issRes matches tagged Stall .stallBy) begin
 `ifdef PERF_COUNT
+            // perf: load stall
             if(inIfc.doStats) begin
                 case(stallBy)
                     LdQ: exeLdStallByLdCnt.incr(1);
@@ -566,6 +616,14 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display(rule_name, " ", fshow(tag), "; ", fshow(data), "; ", fshow(res));
         if(res.dst matches tagged Valid .dst) begin
             inIfc.writeRegFile(dst.indx, res.data);
+`ifdef PERF_COUNT
+            // perf: load to use latency
+            let lat <- ldToUseLatTimer.done(tag);
+            if(inIfc.doStats) begin
+                exeLdToUseLat.incr(zeroExtend(lat));
+                exeLdToUseCnt.incr(1);
+            end
+`endif
         end
         if(res.wrongPath) begin
             doAssert(res.dst == Invalid, "wrong path resp cannot write reg");
@@ -762,6 +820,10 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // we leave deq to resp time
         // ROB should have already been set to executed
         if(verbose) $display("[doDeqStQ_St] ", fshow(lsqDeqSt));
+`ifdef PERF_COUNT
+        // perf: store mem latency
+        stMemLatTimer.start(0);
+`endif
     endrule
 
 `else
@@ -785,6 +847,10 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     rule doIssueSB;
         let {sbIdx, en} <- stb.issue;
         reqStQ.enq(tuple2(sbIdx, {en.addr, 0}));
+`ifdef PERF_COUNT
+        // perf: store mem latency
+        stMemLatTimer.start(sbIdx);
+`endif
     endrule
 `endif
 
@@ -980,6 +1046,11 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             ExeLdStallByLd: exeLdStallByLdCnt;
             ExeLdStallBySt: exeLdStallByStCnt;
             ExeLdStallBySB: exeLdStallBySBCnt;
+            ExeLdForward: exeLdForwardCnt;
+            ExeLdMemLat: exeLdMemLat;
+            ExeStMemLat: exeStMemLat;
+            ExeLdToUseLat: exeLdToUseLat;
+            ExeLdToUseCnt: exeLdToUseCnt;
             ExeTlbExcep: exeTlbExcepCnt;
 `endif
             default: 0;

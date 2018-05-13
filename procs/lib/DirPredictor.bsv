@@ -40,6 +40,9 @@ typedef BhtTrainInfo DirPredTrainInfo;
 `ifdef DIR_PRED_GSELECT
 typedef GSelectTrainInfo DirPredTrainInfo;
 `endif
+`ifdef DIR_PRED_GSHARE
+typedef GShareTrainInfo DirPredTrainInfo;
+`endif
 `ifdef DIR_PRED_TOUR
 typedef TourTrainInfo DirPredTrainInfo;
 `endif
@@ -51,6 +54,9 @@ module mkDirPredictor(DirPredictor#(DirPredTrainInfo));
 `endif
 `ifdef DIR_PRED_GSELECT
     let m <- mkGSelectPred;
+`endif
+`ifdef DIR_PRED_GSHARE
+    let m <- mkGSharePred;
 `endif
 `ifdef DIR_PRED_TOUR
     let m <- mkTourPred;

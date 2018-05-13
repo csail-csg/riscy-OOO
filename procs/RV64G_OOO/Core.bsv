@@ -645,7 +645,9 @@ module mkCore#(CoreId coreId)(Core);
             SupRenameCnt: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
             ExeTlbExcep,
-            ExeLdStallByLd, ExeLdStallBySt, ExeLdStallBySB: coreFix.memExeIfc.getPerf(pType);
+            ExeLdStallByLd, ExeLdStallBySt, ExeLdStallBySB,
+            ExeLdForward, ExeLdMemLat, ExeStMemLat,
+            ExeLdToUseLat, ExeLdToUseCnt: coreFix.memExeIfc.getPerf(pType);
             ExeIntMulCnt, ExeIntDivCnt,
             ExeFpFmaCnt, ExeFpDivCnt, ExeFpSqrtCnt: getFpuMulDivCnt(pType);
             default: 0;

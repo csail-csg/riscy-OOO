@@ -147,6 +147,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Count#(Data) comBrCnt <- mkCount(0);
     Count#(Data) comJmpCnt <- mkCount(0);
     Count#(Data) comJrCnt <- mkCount(0);
+    // mem inst
+    Count#(Data) comLdCnt <- mkCount(0);
+    Count#(Data) comStCnt <- mkCount(0);
+    Count#(Data) comLrCnt <- mkCount(0);
+    Count#(Data) comScCnt <- mkCount(0);
+    Count#(Data) comAmoCnt <- mkCount(0);
     // load mispeculation
     Count#(Data) comLdKillByLdCnt <- mkCount(0);
     Count#(Data) comLdKillByStCnt <- mkCount(0);
@@ -494,6 +500,11 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         SupCnt brCnt = 0;
         SupCnt jmpCnt = 0;
         SupCnt jrCnt = 0;
+        SupCnt ldCnt = 0;
+        SupCnt stCnt = 0;
+        SupCnt lrCnt = 0;
+        SupCnt scCnt = 0;
+        SupCnt amoCnt = 0;
 `endif
 
         // compute what actions to take
@@ -551,6 +562,11 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
                         Br: brCnt = brCnt + 1;
                         J : jmpCnt = jmpCnt + 1;
                         Jr: jrCnt = jrCnt + 1;
+                        Ld: ldCnt = ldCnt + 1;
+                        St: stCnt = stCnt + 1;
+                        Lr: lrCnt = lrCnt + 1;
+                        Sc: scCnt = scCnt + 1;
+                        Amo: amoCnt = amoCnt + 1;
                     endcase
 `endif
                 end
@@ -586,6 +602,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             comBrCnt.incr(zeroExtend(brCnt));
             comJmpCnt.incr(zeroExtend(jmpCnt));
             comJrCnt.incr(zeroExtend(jrCnt));
+            // mem stats
+            comLdCnt.incr(zeroExtend(ldCnt));
+            comStCnt.incr(zeroExtend(stCnt));
+            comLrCnt.incr(zeroExtend(lrCnt));
+            comScCnt.incr(zeroExtend(scCnt));
+            comAmoCnt.incr(zeroExtend(amoCnt));
             // inst count stats
             instCnt.incr(zeroExtend(comInstCnt));
             userInstCnt.incr(zeroExtend(comUserInstCnt));
@@ -606,6 +628,11 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             ComBrCnt: comBrCnt;
             ComJmpCnt: comJmpCnt;
             ComJrCnt: comJrCnt;
+            ComLdCnt: comLdCnt;
+            ComStCnt: comStCnt;
+            ComLrCnt: comLrCnt;
+            ComScCnt: comScCnt;
+            ComAmoCnt: comAmoCnt;
             ComLdKillByLd: comLdKillByLdCnt;
             ComLdKillBySt: comLdKillByStCnt;
             ComLdKillByCache: comLdKillByCacheCnt;

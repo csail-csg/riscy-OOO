@@ -79,6 +79,11 @@ typedef enum {
     ExeLdStallByLd,
     ExeLdStallBySt,
     ExeLdStallBySB,
+    ExeLdForward,
+    ExeLdMemLat,
+    ExeStMemLat,
+    ExeLdToUseLat,
+    ExeLdToUseCnt,
     ExeTlbExcep,
     ExeIntMulCnt,
     ExeIntDivCnt,
@@ -107,6 +112,11 @@ typedef enum {
     ComBrCnt,
     ComJmpCnt,
     ComJrCnt,
+    ComLdCnt,
+    ComStCnt,
+    ComLrCnt,
+    ComScCnt,
+    ComAmoCnt,
     ComLdKillByLd,
     ComLdKillBySt,
     ComLdKillByCache,
@@ -131,7 +141,7 @@ interface Perf#(type perfType);
 endinterface
 
 // query performance counters in the whole processor
-typedef Bit#(4) PerfType; // for all XXPerfType
+typedef Bit#(5) PerfType; // for all XXPerfType
 
 // which stage/module to query
 typedef enum {

@@ -184,6 +184,11 @@ public:
         init(ExeStage, ExeLdStallByLd, "Exe stage stall load num by LdQ");
         init(ExeStage, ExeLdStallBySt, "Exe stage stall load num by StQ");
         init(ExeStage, ExeLdStallBySB, "Exe stage stall load num by SB");
+        init(ExeStage, ExeLdForward, "Exe stage load forward num");
+        init(ExeStage, ExeLdMemLat, "Exe stage load mem total latency");
+        init(ExeStage, ExeStMemLat, "Exe stage store mem total latency");
+        init(ExeStage, ExeLdToUseLat, "Exe stage load to use total latency");
+        init(ExeStage, ExeLdToUseCnt, "Exe stage load to use num");
         init(ExeStage, ExeTlbExcep, "Exe stage TLB exception num");
         init(ExeStage, ExeIntMulCnt, "Exe stage int mul num");
         init(ExeStage, ExeIntDivCnt, "Exe stage int div num");
@@ -199,6 +204,11 @@ public:
         init(ComStage, ComBrCnt, "branch num");
         init(ComStage, ComJmpCnt, "jump num");
         init(ComStage, ComJrCnt, "jump reg num");
+        init(ComStage, ComLdCnt, "load num");
+        init(ComStage, ComStCnt, "store num");
+        init(ComStage, ComLrCnt, "load reserve num");
+        init(ComStage, ComScCnt, "store conditional num");
+        init(ComStage, ComAmoCnt, "amo num");
         init(ComStage, ComLdKillByLd, "Com stage kill load num by Ld");
         init(ComStage, ComLdKillBySt, "Com stage kill load num by St");
         init(ComStage, ComLdKillByCache, "Com stage kill load num by cache");

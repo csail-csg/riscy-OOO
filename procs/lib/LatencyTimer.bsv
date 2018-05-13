@@ -42,7 +42,8 @@ module mkLatencyTimer(LatencyTimer#(num, timeWidth)) provisos(
         if(startEn.wget matches tagged Valid .i) begin
             timerNext[i] = 0;
             startedNext[i] = True;
-            doAssert(!started[i], "timer must be invalid");
+            // do not assert this, because things may be killed
+            //doAssert(!started[i], "timer must be invalid");
         end
         // update states
         timer <= timerNext;

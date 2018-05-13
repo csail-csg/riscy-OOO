@@ -39,7 +39,9 @@
 
 `define LOG_BOOT_ROM_BYTES 12 // 4KB boot rom
 
-`define DIR_PRED_TOUR // branch predictor, other options are: BHT, TOUR
+// 16KB gshare branch predictor, other options are: BHT, TOUR, GSELECT. NOTE
+// that the predictors are of different size.
+`define DIR_PRED_GSHARE
 
 `define LOG_DEADLOCK_CYCLES 26 // 64M cycles for deadlock detection
 
@@ -178,6 +180,34 @@
     `define RS_ALU_SIZE 8
     `define RS_MEM_SIZE 8
     `define RS_FPUMULDIV_SIZE 16
+
+`endif
+
+`ifdef CORE_BOOM
+
+    // superscalar
+    `define sizeSup 2
+
+    // ROB
+    `define ROB_SIZE 80
+
+    // speculation
+    `define NUM_EPOCHS 12
+    `define NUM_SPEC_TAGS 12
+
+    // LSQ
+    `define LDQ_SIZE 16
+    `define STQ_SIZE 16
+    `define SB_SIZE 4
+
+    // reservation station sizes
+    `define RS_ALU_SIZE 16
+    `define RS_MEM_SIZE 16
+    `define RS_FPUMULDIV_SIZE 16
+
+    // change memory latency to 80
+    `undef DRAM_LATENCY
+    `define DRAM_LATENCY 80
 
 `endif
 
