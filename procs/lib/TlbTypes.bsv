@@ -21,6 +21,8 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+`include "ProcConfig.bsv"
+
 import Vector::*;
 import Types::*;
 import ProcTypes::*;
@@ -31,6 +33,10 @@ typedef struct{
     Bool  write;
 } TlbReq deriving(Eq, Bits, FShow);
 typedef Tuple2#(Addr, Maybe#(Exception)) TlbResp;
+
+// non-blocking DTLB
+typedef `DTLB_REQ_NUM DTlbReqNum;
+typedef Bit#(TLog#(DTlbReqNum)) DTlbReqIdx;
 
 // Only for Sv39
 typedef 27 VpnSz;

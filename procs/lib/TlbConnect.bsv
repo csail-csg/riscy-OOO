@@ -38,7 +38,7 @@ module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
     rule sendDTlbReq;
         DTlbRqToP r <- toGet(d.rqToP).get;
         l2.rqFromC.put(L2TlbRqFromC {
-            child: D,
+            child: D (r.id),
             vpn: r.vpn
         });
     endrule
@@ -51,9 +51,12 @@ module mkTlbConnect#(ITlbToParent i, DTlbToParent d, L2TlbToChildren l2)(Empty);
         });
     endrule
 
-    rule sendRsToDTlb(l2.rsToC.first.child == D);
+    rule sendRsToDTlb(l2.rsToC.first.child matches tagged D .id);
         L2TlbRsToC r <- toGet(l2.rsToC).get;
-        d.ldTransRsFromP.enq(DTlbTransRsFromP {entry: r.entry});
+        d.ldTransRsFromP.enq(DTlbTransRsFromP {
+            entry: r.entry,
+            id: id
+        });
     endrule
 
     rule sendRsToITlb(l2.rsToC.first.child == I);

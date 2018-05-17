@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 import Vector::*;
+import FIFO::*;
 import Types::*;
 import ProcTypes::*;
 import TlbTypes::*;
@@ -32,10 +33,18 @@ typedef struct {
     TlbEntry entry; // hit entry
 } FullAssocTlbResp#(type indexT) deriving(Bits, Eq, FShow);
 
+// flush, addEntry, (translate + updateRepByHit) are mutually exclusive
+// precedence: flush < addEntry < (translate + updateRepByHit)
+// This avoids bypass from addEntry to translate, and avoids races on LRU bits
+
+// translate CF updateRepByHit.
+// updateRepByHit is separted from translate to avoid making translate an
+// actionvalue method which may create potential guard lifting problems.
+
 interface FullAssocTlb#(numeric type n);
     method Action flush;
     method FullAssocTlbResp#(Bit#(TLog#(n))) translate(Vpn vpn, Asid asid);
-    method Action updateRep(Bit#(TLog#(n)) index); // update replacement info
+    method Action updateRepByHit(Bit#(TLog#(n)) index); // update replacement info when hit
     method Action addEntry(TlbEntry x);
 endinterface
 
@@ -60,14 +69,29 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
         lruBit <= val;
     endaction
     endfunction
+    // Updating LRU bits is on critical path, so delay it a cycle
+    FIFO#(tlbIdxT) updRepQ <- mkFIFO;
+
+    // fire signal for each method
+    PulseWire flushEn <- mkPulseWire;
+    PulseWire addEntryEn <- mkRWire;
+
+    rule doUpdateRep(!flushEn);
+        updRepQ.deq;
+        updateLRU(updRepQ.first);
+    endrule
 
     // function to match TLB entry
     method Action flush;
         writeVReg(validVec, replicate(False));
-        lruBit <= 0; // also reset LRU bits
+        // also reset LRU bits
+        lruBit <= 0; 
+        updRepQ.clear;
+        // record fire signal
+        flushEn.send;
     endmethod
 
-    method FullAssocTlbResp#(tlbIdxT) translate(Vpn vpn, Asid asid);
+    method FullAssocTlbResp#(tlbIdxT) translate(Vpn vpn, Asid asid) if(!flushEn && !addEntryEn);
         // find the matching entry
         function Bool isMatch(tlbIdxT i);
             TlbEntry entry = entryVec[i];
@@ -93,36 +117,50 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
         end
     endmethod
 
-    method Action addEntry(TlbEntry x);
-        // find a slot for this translation
-        // Since TLB is read-only cache, we can silently evict
-        tlbIdxT addIdx;
-        if(findIndex( \== (False) , readVReg(validVec) ) matches tagged Valid .idx) begin
-            // get empty slot
-            addIdx = pack(idx);
-        end
-        else begin
-            // find LRU slot (lruBit[i] = 0 means i is LRU slot)
-            Vector#(tlbSz, Bool) isLRU = unpack(~lruBit);
-            if(findIndex(id, isLRU) matches tagged Valid .idx) begin
-                addIdx = pack(idx);
-            end
-            else begin
-                addIdx = 0; // this is actually impossible
-                doAssert(False, "must have at least 1 LRU slot");
-            end
-        end
-        // update slot
-        validVec[addIdx] <= True;
-        entryVec[addIdx] <= x;
+    method Action updateRepByHit(tlbIdxT index) if(!flushEn && !addEntryEn);
+        updRepQ.enq(index);
+    endmethod
+
+    method Action addEntry(TlbEntry x) if(!flushEn);
         // check ppn and vpn lower bits are 0 for super pages
         doAssert(x.ppn == getMaskedPpn(x.ppn, x.level), "ppn lower bits not 0");
         doAssert(x.vpn == getMaskedVpn(x.vpn, x.level), "vpn lower bits not 0");
-        // update LRU bits
-        updateLRU(addIdx);
-    endmethod
 
-    method Action updateRep(tlbIdxT index);
-        updateLRU(index);
+        // first check if the entry already exists in TLB, this can happen
+        // because we may have multiple misses on the same TLB entry. Since
+        // lower bits of ppn/vpn of super pages in TLB should have been zeroed,
+        // we can directly compare the full addr.
+        function Bool sameEntry(tlbIdxT i);
+            let en = entryVec[i];
+            Bool same_page = en.vpn == x.vpn && en.level == x.level && en.asid == x.asid;
+            return validVec[i] && same_page;
+        endfunction
+        Vector#(tlbSz, tlbIdxT) idxVec = genWith(fromInteger);
+        // only add new entry when the entry is not already in TLB
+        if(!any(sameEntry, idxVec)) begin
+            // find a slot for this translation
+            // Since TLB is read-only cache, we can silently evict
+            tlbIdxT addIdx;
+            if(findIndex( \== (False) , readVReg(validVec) ) matches tagged Valid .idx) begin
+                // get empty slot
+                addIdx = pack(idx);
+            end
+            else begin
+                // find LRU slot (lruBit[i] = 0 means i is LRU slot)
+                Vector#(tlbSz, Bool) isLRU = unpack(~lruBit);
+                if(findIndex(id, isLRU) matches tagged Valid .idx) begin
+                    addIdx = pack(idx);
+                end
+                else begin
+                    addIdx = 0; // this is actually impossible
+                    doAssert(False, "must have at least 1 LRU slot");
+                end
+            end
+            // update slot
+            validVec[addIdx] <= True;
+            entryVec[addIdx] <= x;
+            // update LRU bits
+            updRepQ.enq(addIdx);
+        end
     endmethod
 endmodule

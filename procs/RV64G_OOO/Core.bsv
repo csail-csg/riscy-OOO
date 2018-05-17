@@ -357,7 +357,7 @@ module mkCore#(CoreId coreId)(Core);
         reservationStationFpuMulDiv[i] = coreFix.fpuMulDivExeIfc[i].rsFpuMulDivIfc;
     end
     ReservationStationMem reservationStationMem = coreFix.memExeIfc.rsMemIfc;
-    DTlb dTlb = coreFix.memExeIfc.dTlbIfc;
+    DTlbSynth dTlb = coreFix.memExeIfc.dTlbIfc;
     SplitLSQ lsq = coreFix.memExeIfc.lsqIfc;
     StoreBuffer stb = coreFix.memExeIfc.stbIfc;
     DCoCache dMem = coreFix.memExeIfc.dMemIfc;

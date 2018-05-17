@@ -39,9 +39,9 @@
 
 `define LOG_BOOT_ROM_BYTES 12 // 4KB boot rom
 
-// 16KB gshare branch predictor, other options are: BHT, TOUR, GSELECT. NOTE
+// tournament predictor, other options are: BHT, TOUR, GSELECT, GSHARE. NOTE
 // that the predictors are of different size.
-`define DIR_PRED_GSHARE
+`define DIR_PRED_TOUR
 
 `define LOG_DEADLOCK_CYCLES 26 // 64M cycles for deadlock detection
 
@@ -54,13 +54,14 @@
 
 `define TLB_SIZE 32 // L1 TLB size
 
-`define BOOKKEEPING_MEM_SIZE 2 // TLB has 1 cycle latency
-
 // FMA bookkeeping FIFO: add 1 to allow simultaneous enq/deq
 `define BOOKKEEPING_FP_FMA_SIZE TAdd#(`XILINX_FP_FMA_LATENCY, 1)
 // INT MUL bookkeeping FIFO: add 1 to allow simultaneous enq/deq, another 1
 // because of internal flow control in MUL unit
 `define BOOKKEEPING_INT_MUL_SIZE TAdd#(`XILINX_INT_MUL_LATENCY, 2)
+
+// non-blocking DTLB
+`define DTLB_REQ_NUM 4
 
 `define DRAM_MAX_READS TExp#(`LOG_LLC_WAYS) // max reads in DRAM, match LLC ways
 `define DRAM_MAX_WRITES 16 // write buffer size in AWS DRAM controller

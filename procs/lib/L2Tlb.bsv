@@ -65,7 +65,10 @@ interface TlbMemClient;
 endinterface
 
 // interface with children (I/D TLB)
-typedef enum {I, D} TlbChild deriving(Bits, Eq, FShow);
+typedef union tagged {
+    void I;
+    DTlbReqIdx D;
+} TlbChild deriving(Bits, Eq, FShow);
 typedef struct {
     TlbChild child;
     Vpn vpn;

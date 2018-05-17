@@ -39,14 +39,31 @@ import LatencyTimer::*;
 
 typedef `TLB_SIZE DTlbSize;
 
+// req & resp with core
+// D TLB also keeps the information of the requesting inst, so we don't need
+// extra bookkeeping outside D TLB.
+typedef struct {
+    instT inst;
+    SpecBits specBits;
+} DTlbReq#(type instT) deriving(Bits, Eq, FShow);
+
+typedef struct {
+    TlbResp resp;
+    instT inst;
+    SpecBits specBits;
+} DTlbResp#(type instT) deriving(Bits, Eq, FShow);
+
+// req & resp with L2 TLB
 typedef struct {
     Vpn vpn;
+    DTlbReqIdx id;
 } DTlbRqToP deriving(Bits, Eq, FShow);
 
 typedef struct {
     // may get page fault: i.e. hit invalid page or
     // get non-leaf page at last-level page table
     Maybe#(TlbEntry) entry; 
+    DTlbReqIdx id;
 } DTlbTransRsFromP deriving(Bits, Eq, FShow);
 
 interface DTlbToParent;
@@ -56,7 +73,7 @@ interface DTlbToParent;
     interface Client#(void, void) flush;
 endinterface
 
-interface DTlb;
+interface DTlb#(type instT);
     // system consistency related
     method Bool flush_done;
     method Action flush;
@@ -64,12 +81,15 @@ interface DTlb;
     method Bool noPendingReq;
 
     // req/resp with core
-    method Action procReq(TlbReq r);
-    method TlbResp procResp;
+    method Action procReq(DTlbReq#(instT) req);
+    method DTlbReq#(instT) procResp;
     method Action deqProcResp;
 
     // req/resp with L2 TLB
     interface DTlbToParent toParent;
+
+    // speculation
+    interface SpeculationUpdate specUpdate;
 
     // performance
     interface Perf#(L1TlbPerfType) perf;
@@ -81,8 +101,9 @@ module mkDTlbArray(DTlbArray);
     return m;
 endmodule
 
-(* synthesize *)
-module mkDTlb(DTlb::DTlb);
+module mkDTlb#(
+    function TlbReq getTlbReq(instT inst)
+)(DTlb::DTlb#(instT)) provisos(Bits#(instT, a__));
     Bool verbose = True;
 
     // TLB array
@@ -93,17 +114,50 @@ module mkDTlb(DTlb::DTlb);
     // after flushing ITLB itself, we want parent TLB to flush
     Reg#(Bool) waitFlushP <- mkReg(False);
 
-    // resp FIFO to proc
-    Fifo#(2, TlbResp) hitQ <- mkCFFifo;
-
     // current processor VM information
     Reg#(VMInfo) vm_info <- mkReg(defaultValue);
 
-    // blocking miss
-    Reg#(Maybe#(TlbReq)) miss <- mkReg(Invalid);
+    // pending reqs
+    // pendWaitP should be meaningful even when entry is invalid. pendWaitP =
+    // True means this entry is waiting for parent TLB resp. Thus, pendWaitP
+    // must be False when entry is invalid.
+    Vector#(DTlbReqNum, Ehr#(2, Bool)) pendValid <- replicateM(mkEhr(False));
+    Vector#(DTlbReqNum, Reg#(Bool)) pendWaitP <- replicateM(mkReg(False));
+    Vector#(DTlbReqNum, Reg#(Bool)) pendPoisoned <- replicateM(mkRegU);
+    Vector#(DTlbReqNum, Reg#(instT)) pendInst <- replicateM(mkRegU);
+    Vector#(DTlbReqNum, Reg#(TlbResp)) pendResp <- replicateM(mkRegU);
+    Vector#(DTlbReqNum, Ehr#(2, SpecBits)) pendSpecBits <- replicateM(mkEhr(?));
+
+    // ordering of methods/rules that access pend reqs
+    // procReq mutually exclusive with doPRs (no procReq when pRs ready)
+    // procResp < {doPRs, procReq}
+    // wrongSpec C {procReq, doPRs, procResp}
+    // correctSpec C wrongSpec
+    // correctSpec CF doPRs
+    // {procReq, procResp} < correctSpec (correctSpec is always at end)
+
+    RWire#(void) wrongSpec_procResp_conflict <- mkRWire;
+    RWire#(void) wrongSpec_doPRs_conflict <- mkRWire;
+    RWire#(void) wrongSpec_procReq_conflict <- mkRWire;
+
+    let pendValid_noMiss = getVEhrPort(pendValid, 0);
+    let pendValid_wrongSpec = getVEhrPort(pendValid, 0);
+    let pendValid_procResp = getVEhrPort(pendValid, 0); // write
+    let pendValid_doPRs = getVEhrPort(pendValid, 1); // assert
+    let pendValid_procReq = getVEhrPort(pendValid, 1); // write
+
+    let pendSpecBits_wrongSpec = getVEhrPort(pendSpecBits, 0);
+    let pendSpecBits_procResp = getVEhrPort(pendSpecBits, 0);
+    let pendSpecBits_procReq = getVEhrPort(pendSpecBits, 0); // write
+    let pendSpecBits_correctSpec = getVEhrPort(pendSpecBits, 1);
+
+    // free list of pend entries, to cut off path from procResp to procReq
+    Fifo#(DTlbReqNum, DTlbReqIdx) freeQ <- mkCFFifo;
+    Reg#(Bool) freeQInited <- mkReg(False);
+    Reg#(DTlbReqIdx) freeQInitIdx <- mkReg(0);
 
     // req & resp with parent TLB
-    Fifo#(2, DTlbRqToP) rqToPQ <- mkCFFifo;
+    Fifo#(DTlbReqNum, DTlbRqToP) rqToPQ <- mkCFFifo; // large enough so won't block on enq
     Fifo#(2, DTlbTransRsFromP) ldTransRsFromPQ <- mkCFFifo;
     // flush req/resp with parent TLB
     Fifo#(1, void) flushRqToPQ <- mkCFFifo;
@@ -135,8 +189,10 @@ module mkDTlb(DTlb::DTlb);
     endrule
 `endif
 
-    // do flush: start when all misses resolve & no pending write
-    rule doStartFlush(needFlush && !waitFlushP && !isValid(miss));
+    // do flush: start when all misses resolve
+    Bool noMiss = all(\== (False) , readVReg(pendValid_noMiss));
+
+    rule doStartFlush(needFlush && !waitFlushP && noMiss);
         tlb.flush;
         // request parent TLB to flush
         flushRqToPQ.enq(?);
@@ -144,33 +200,34 @@ module mkDTlb(DTlb::DTlb);
         if(verbose) $display("DTLB %m: flush begin");
     endrule
 
-    rule doFinishFlush(needFlush && waitFlushP && !isValid(miss));
+    rule doFinishFlush(needFlush && waitFlushP);
         flushRsFromPQ.deq;
         needFlush <= False;
         waitFlushP <= False;
         if(verbose) $display("DTLB %m: flush done");
     endrule
 
-    rule doTransPRs(miss matches tagged Valid .r);
+    // get resp from parent TLB
+    rule doPRs(ldTransRsFromPQ.notEmpty);
         ldTransRsFromPQ.deq;
         let pRs = ldTransRsFromPQ.first;
+        TlbReq r = getTlbReq(pendInst[pRs.id]);
 
-        if(pRs.entry matches tagged Valid .en) begin
-            // TODO When we have multiple misses in future, we first need to
-            // search TLB to check whether the PTE is already in TLB.  This may
-            // happen for mega/giga pages.  We don't want same PTE to occupy >1
-            // TLB entires.
-            
+        if(pendPoisoned[pRs.id]) begin
+            // poisoned inst, do nothing
+            if(verbose) $display("DTLB %m refill poisoned");
+        end
+        else if(pRs.entry matches tagged Valid .en) begin
             // check permission
             if(hasVMPermission(vm_info,
                                en.pteType,
                                en.ppn,
                                en.level,
                                r.write ? DataStore : DataLoad)) begin
-                // fill TLB
+                // fill TLB, and record resp
                 tlb.addEntry(en);
                 let trans_addr = translate(r.addr, en.ppn, en.level);
-                hitQ.enq(tuple2(trans_addr, Invalid));
+                pendTlbResp[pRs.id] <= tuple2(trans_addr, Invalid);
                 if(verbose) begin
                     $display("DTLB %m refill: ", fshow(r),
                              " ; ", fshow(trans_addr));
@@ -178,9 +235,8 @@ module mkDTlb(DTlb::DTlb);
             end
             else begin
                 // page fault
-                hitQ.enq(tuple2(
-                    ?, Valid (r.write ? StorePageFault : LoadPageFault)
-                ));
+                Exception fault = r.write ? StorePageFault : LoadPageFault;
+                pendTlbResp[pRs.id] <= tuple2(?, Valid (fault));
                 if(verbose) begin
                     $display("DTLB %m refill no permission: ", fshow(r));
                 end
@@ -188,13 +244,16 @@ module mkDTlb(DTlb::DTlb);
         end
         else begin
             // page fault
-            hitQ.enq(tuple2(
-                ?, Valid (r.write ? StorePageFault : LoadPageFault)
-            ));
+            Exception fault = r.write ? StorePageFault : LoadPageFault;
+            pendTlbResp[pRs.id] <= tuple2(?, Valid (fault));
             if(verbose) $display("DTLB %m refill page fault: ", fshow(r));
         end
-        // miss resolved
-        miss <= Invalid;
+
+        // get parent resp, miss resolved, reset wait bit
+        pendWaitP[pRs.id] <= False;
+
+        doAssert(pendValid_doPRs[pRs.id], "entry must be valid");
+        doAssert(pendWaitP[pRs.id], "entry must be waiting for resp");
 
 `ifdef PERF_COUNT
         let lat <- latTimer.done(0);
@@ -202,6 +261,43 @@ module mkDTlb(DTlb::DTlb);
             missLat.incr(zeroExtend(lat));
         end
 `endif
+
+        // conflict with wrong spec
+        wrongSpec_doPRs_conflict.wset(?);
+    endrule
+
+    // init freeQ
+    rule doInitFreeQ(!freeQInited);
+        freeQ.enq(freeQInitIdx);
+        freeQInitIdx <= freeQInitIdx + 1;
+        if(freeQInitIdx == fromInteger(valueof(DTlbReqNum) - 1)) begin
+            freeQInited <= True;
+        end
+    endrule
+
+    // idx of entries that are ready to resp to proc
+    function Maybe#(DTlbReqIdx) validProcRespIdx;
+        function Bool validResp(DTlbReqIdx i);
+            return pendValid_procResp[i] && !pendWaitP[i] && !pendPoisoned[i];
+        endfunction
+        Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
+        return find(validResp, idxVec);
+    endfunction
+
+    function Maybe#(DTlbReqIdx) poisonedProcRespIdx;
+        function Bool poisoedResp(DTlbReqIdx i);
+            return pendValid_procResp[i] && !pendWaitP[i] && pendPoisoned[i];
+        endfunction
+        Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
+        return find(poisonedResp, idxVec);
+    endfunction
+
+    // drop poisoned resp
+    rule doPoisonedProcResp(poisonedProcRespIdx matches tagged Valid .idx &&& freeQInited);
+        pendValid_procResp[idx] <= False;
+        freeQ.enq(idx);
+        // conflict with wrong spec
+        wrongSpec_procResp_conflict.wset(?);
     endrule
 
     method Action flush if(!needFlush);
@@ -218,14 +314,32 @@ module mkDTlb(DTlb::DTlb);
         vm_info <= vm;
     endmethod
 
-    method Bool noPendingReq = !isValid(miss);
+    // Since this method is called at commit stage to determine no in-flight
+    // TLB req, even poisoned req should be considered as pending, because it
+    // may be in L2 TLB.
+    method Bool noPendingReq = noMiss;
 
-    // We do not accept new req when flushing flag is set. We also make the
-    // guard more restrictive to reduce the time of computing guard, i.e. guard
-    // does not depend on whether TLB hit or miss.
-    method Action procReq(TlbReq r) if(
-        !needFlush && !isValid(miss) && hitQ.notFull && rqToPQ.notFull
+    // We do not accept new req when flushing flag is set. We also do not
+    // accept new req when parent resp is ready. This avoids bypass in TLB. We
+    // also check rqToPQ not full. This simplifies the guard, i.e., it does not
+    // depend on whether we hit in TLB or not.
+    method Action procReq(DTlbReq req) if(
+        !needFlush && !ldTransRsFromPQ.notEmpty && rqToPQ.notFull && freeQInited
     );
+        // allocate MSHR entry
+        freeQ.deq;
+        DTlbReqIdx idx = freeQ.first;
+        doAssert(!pendValid_procReq[idx], "free entry cannot be valid");
+        doAssert(!pendWaitP[idx], "entry cannot wait for parent resp");
+
+        pendValid_procReq[idx] <= True;
+        pendPoisoned[idx] <= False;
+        pendInst[idx] <= req.inst;
+        pendSpecBits_procReq[idx] <= req.specBits;
+        // pendWaitP and pendResp are set later in this method
+
+        // try to translate
+        TlbReq r = getTlbReq(req.inst);
         if (vm_info.sv39) begin
             let vpn = getVpn(r.addr);
             let trans_result = tlb.translate(vpn, vm_info.asid);
@@ -239,10 +353,11 @@ module mkDTlb(DTlb::DTlb);
                                     entry.level,
                                     r.write ? DataStore : DataLoad)) begin
                     // update TLB replacement info
-                    tlb.updateRep(trans_result.index);
+                    tlb.updateRepByHit(trans_result.index);
                     // translate addr
                     Addr trans_addr = translate(r.addr, entry.ppn, entry.level);
-                    hitQ.enq(tuple2(trans_addr, Invalid));
+                    pendWaitP[idx] <= False;
+                    pendResp[idx] <= tuple2(trans_addr, Invalid);
                     if(verbose) begin
                         $display("DTLB %m req (hit): ", fshow(r),
                                  " ; ", fshow(trans_result));
@@ -250,17 +365,18 @@ module mkDTlb(DTlb::DTlb);
                 end
                 else begin
                     // page fault
-                    hitQ.enq(tuple2(
-                        ?, Valid (r.write ? StorePageFault : LoadPageFault)
-                    ));
+                    Exception fault = r.write ? StorePageFault : LoadPageFault
+                    pendWaitP[idx] <= False;
+                    pendResp[idx] <= tuple2(?, Valid (fault))
                     if(verbose) $display("DTLB %m req no permission: ", fshow(r));
                 end
             end
             else begin
                 // TLB miss, req to parent TLB
-                miss <= Valid (r);
+                pendWaitP[idx] <= True;
                 rqToPQ.enq(DTlbRqToP {
-                    vpn: vpn
+                    vpn: vpn,
+                    id: idx
                 });
                 if(verbose) $display("DTLB %m req (miss): ", fshow(r));
 `ifdef PERF_COUNT
@@ -273,7 +389,8 @@ module mkDTlb(DTlb::DTlb);
         end
         else begin
             // bare mode
-            hitQ.enq(tuple2(r.addr, Invalid));
+            pendWaitP[idx] <= False;
+            pendResp[idx] <= tuple2(r.addr, Invalid);
             if(verbose) $display("DTLB %m req (bare): ", fshow(r));
         end
 `ifdef PERF_COUNT
@@ -281,13 +398,29 @@ module mkDTlb(DTlb::DTlb);
             accessCnt.incr(1);
         end
 `endif
+
+        // conflict with wrong spec
+        wrongSpec_procReq_conflict.wset(?);
     endmethod
 
-    method Action deqProcResp;
-        hitQ.deq;
+    method Action deqProcResp if(
+        validProcRespIdx matches tagged Valid .idx &&& freeQInited
+    );
+        pendValid_procResp[idx] <= False;
+        freeQ.enq(idx);
+        // conflict with wrong spec
+        wrongSpec_procResp_conflict.wset(?);
     endmethod
 
-    method procResp = hitQ.first;
+    method DTlbResp#(instT) procResp if(
+        validProcRespIdx matches tagged Valid .idx &&& freeQInited
+    );
+        return DTlbResp {
+            inst: pendInst[idx],
+            resp: pendResp[idx],
+            specBits: pendSpecBits_procResp[idx]
+        };
+    endmethod
 
     interface DTlbToParent toParent;
         interface rqToP = toFifoDeq(rqToPQ);
@@ -296,6 +429,28 @@ module mkDTlb(DTlb::DTlb);
             interface request = toGet(flushRqToPQ);
             interface response = toPut(flushRsFromPQ);
         endinterface
+    endinterface
+
+    interface SpeculationUpdate specUpdate;
+        method Action incorrectSpeculation(Bool kill_all, SpecTag x);
+            // poison entries
+            for(Integer i = 0 ; i < valueOf(DTlbReqNum) ; i = i+1) begin
+                if(kill_all || pendSpecBits_wrongSpec[i][x] == 1'b1) begin
+                    pendPoisoned[i] <= True;
+                end
+            end
+            // make conflicts with procReq, doPRs, procResp
+            wrongSpec_procReq_conflict.wset(?);
+            wrongSpec_doPRs_conflict.wset(?);
+            wrongSpec_procResp_conflict.wset(?);
+        endmethod
+        method Action correctSpeculation(SpecBits mask);
+            // clear spec bits for all entries
+            for(Integer i = 0 ; i < valueOf(size) ; i = i+1) begin
+                let new_spec_bits = pendSpecBits_correctSpec[i] & mask;
+                pendSpecBits_correctSpec[i] <= new_spec_bits;
+            end
+        endmethod
     endinterface
 
     interface Perf perf;

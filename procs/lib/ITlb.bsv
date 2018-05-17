@@ -248,7 +248,7 @@ module mkITlb(ITlb::ITlb);
                                            entry.level,
                                            InstFetch)) begin
                             // update replacement info
-                            tlb.updateRep(trans_result.index);
+                            tlb.updateRepByHit(trans_result.index);
                             // translate addr
                             Addr trans_addr = translate(
                                 vaddr, entry.ppn, entry.level

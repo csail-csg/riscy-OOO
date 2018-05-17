@@ -114,10 +114,19 @@ module mkMemRegToExeFifo(MemRegToExeFifo);
     return m;
 endmodule
 
-typedef SpecPoisonFifo#(`BOOKKEEPING_MEM_SIZE, MemExeToFinish) MemExeToFinFifo;
+typedef DTlb#(MemExeToFinish) DTlbSynth;
 (* synthesize *)
-module mkMemExeToFinFifo(MemExeToFinFifo);
-    let m <- mkSpecPoisonFifo(True); // do lazy enq
+module mkDTlbSynth(DTlbSynth);
+    function DTlbReq#(MemExeToFinish) getTlbReq(MemExeToFinish x);
+        return DTlbReq {
+            vaddr: x.vaddr,
+            write: (case(x.mem_func)
+                        St, Sc, Amo: True;
+                        default: False;
+                    endcase)
+        };
+    endfunction
+    let m <- mkDTlb(getTlbReq);
     return m;
 endmodule
 
@@ -154,7 +163,7 @@ interface MemExePipeline;
     // recv bypass from exe and finish stages of each ALU pipeline
     interface Vector#(TMul#(2, AluExeNum), RecvBypass) recvBypass;
     interface ReservationStationMem rsMemIfc;
-    interface DTlb dTlbIfc;
+    interface DTlbSynth dTlbIfc;
     interface SplitLSQ lsqIfc;
     interface StoreBuffer stbIfc;
     interface DCoCache dMemIfc;
@@ -201,7 +210,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Vector#(TMul#(2, AluExeNum), RWire#(Tuple2#(PhyRIndx, Data))) bypassWire <- replicateM(mkRWire);
 
     // TLB
-    DTlb dTlb <- mkDTlb;
+    DTlbSynth dTlb <- mkDTlbSynth;
 
     // store buffer only used in WEAK model
 `ifdef TSO_MM
@@ -392,15 +401,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         Addr vaddr = x.rVal1 + signExtend(x.imm);
         Data data = x.rVal2;
 
-        // send to TLB
-        dTlb.procReq(TlbReq{
-            addr: vaddr,
-            write: (case(x.mem_func)
-                        St, Sc, Amo: True;
-                        default: False;
-                    endcase)
-        });
-
         // get shifted data and BE
         // we can use virtual addr to shift, since page size > dword size
         ByteEn origBE = lsq.getOrigBE(x.ldstq_tag);
@@ -416,9 +416,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             lsq.updateData(stTag, d);
         end
 
-        // go to next stage
-        exeToFinQ.enq(ToSpecFifo {
-            data: MemExeToFinish {
+        // go to next stage by sending to TLB
+        dTlb.procReq(DTlbReq {
+            inst: MemExeToFinish {
                 mem_func: x.mem_func,
                 tag: x.tag,
                 ldstq_tag: x.ldstq_tag,
@@ -426,22 +426,17 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
                 vaddr: vaddr,
                 misaligned: memAddrMisaligned(vaddr, origBE)
             },
-            spec_bits: regToExe.spec_bits
+            specBits: regToExe.spec_bits
         });
     endrule
 
-    rule doFinishMem(!exeToFinQ.first_poisoned);
-        exeToFinQ.deq;
-        let exeToFin = exeToFinQ.first_data;
-        let x = exeToFin.data;
-        if(verbose) $display("[doFinishMem] ", fshow(exeToFin));
+    rule doFinishMem;
+        dTlb.deqProcResp
+        let dTlbResp = dTlb.procResp;
+        let x = dTlbResp.inst;
+        let {paddr, cause} = dTlbResp.resp;
 
-        // [sizhuo] use value method of TLB to update full_result
-        // this allows us to split if statement later in this rule
-        let {paddr, cause} = dTlb.procResp;
-        dTlb.deqProcResp;
-
-        if(verbose) $display("[doFinishMem - dTlb response] paddr %8x", paddr);
+        if(verbose) $display("[doFinishMem] ", fshow(dTlbResp));
         if(isValid(cause) && verbose) $display("  [doFinishMem - dTlb response] PAGEFAULT!");
 
         // check misalignment
@@ -509,14 +504,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             exeTlbExcepCnt.incr(1);
         end
 `endif
-    endrule
-
-    rule killPoisonedInstMem(exeToFinQ.first_poisoned);
-        exeToFinQ.deq;
-        let exeToFin = exeToFinQ.first_data;
-        if(verbose) $display("[killPoisonedInstMem] ", fshow(exeToFin));
-        // drain wrong path TLB resp
-        dTlb.deqProcResp;
     endrule
 
     //=======================================================
