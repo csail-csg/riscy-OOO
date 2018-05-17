@@ -117,9 +117,9 @@ endmodule
 typedef DTlb#(MemExeToFinish) DTlbSynth;
 (* synthesize *)
 module mkDTlbSynth(DTlbSynth);
-    function DTlbReq#(MemExeToFinish) getTlbReq(MemExeToFinish x);
-        return DTlbReq {
-            vaddr: x.vaddr,
+    function TlbReq getTlbReq(MemExeToFinish x);
+        return TlbReq {
+            addr: x.vaddr,
             write: (case(x.mem_func)
                         St, Sc, Amo: True;
                         default: False;
@@ -204,7 +204,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // pipeline fifos
     let dispToRegQ <- mkMemDispToRegFifo;
     let regToExeQ <- mkMemRegToExeFifo;
-    let exeToFinQ <- mkMemExeToFinFifo;
 
     // wire to recv bypass
     Vector#(TMul#(2, AluExeNum), RWire#(Tuple2#(PhyRIndx, Data))) bypassWire <- replicateM(mkRWire);
@@ -431,7 +430,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endrule
 
     rule doFinishMem;
-        dTlb.deqProcResp
+        dTlb.deqProcResp;
         let dTlbResp = dTlb.procResp;
         let x = dTlbResp.inst;
         let {paddr, cause} = dTlbResp.resp;
@@ -1025,7 +1024,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         rsMem.specUpdate,
         dispToRegQ.specUpdate,
         regToExeQ.specUpdate,
-        exeToFinQ.specUpdate,
+        dTlb.specUpdate,
         lsq.specUpdate
     ));
     method Data getPerf(ExeStagePerfType t);

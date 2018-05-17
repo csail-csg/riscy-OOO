@@ -271,7 +271,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                      "mega or giga page");
             pageHit(entry);
             tlb4KB.deqUpdate(None, ?, ?); // just deq 4KB array
-            tlbMG.updateRep(respMG.index); // update replacement in MG array
+            tlbMG.updateRepByHit(respMG.index); // update replacement in MG array
         end
         else if(resp4KB.hit) begin
             // hit on 4KB page

@@ -36,6 +36,9 @@ import Cntrs::*;
 import SafeCounter::*;
 import CacheUtils::*;
 import LatencyTimer::*;
+import HasSpecBits::*;
+import Vector::*;
+import Ehr::*;
 
 typedef `TLB_SIZE DTlbSize;
 
@@ -82,7 +85,7 @@ interface DTlb#(type instT);
 
     // req/resp with core
     method Action procReq(DTlbReq#(instT) req);
-    method DTlbReq#(instT) procResp;
+    method DTlbResp#(instT) procResp;
     method Action deqProcResp;
 
     // req/resp with L2 TLB
@@ -227,7 +230,7 @@ module mkDTlb#(
                 // fill TLB, and record resp
                 tlb.addEntry(en);
                 let trans_addr = translate(r.addr, en.ppn, en.level);
-                pendTlbResp[pRs.id] <= tuple2(trans_addr, Invalid);
+                pendResp[pRs.id] <= tuple2(trans_addr, Invalid);
                 if(verbose) begin
                     $display("DTLB %m refill: ", fshow(r),
                              " ; ", fshow(trans_addr));
@@ -236,7 +239,7 @@ module mkDTlb#(
             else begin
                 // page fault
                 Exception fault = r.write ? StorePageFault : LoadPageFault;
-                pendTlbResp[pRs.id] <= tuple2(?, Valid (fault));
+                pendResp[pRs.id] <= tuple2(?, Valid (fault));
                 if(verbose) begin
                     $display("DTLB %m refill no permission: ", fshow(r));
                 end
@@ -245,7 +248,7 @@ module mkDTlb#(
         else begin
             // page fault
             Exception fault = r.write ? StorePageFault : LoadPageFault;
-            pendTlbResp[pRs.id] <= tuple2(?, Valid (fault));
+            pendResp[pRs.id] <= tuple2(?, Valid (fault));
             if(verbose) $display("DTLB %m refill page fault: ", fshow(r));
         end
 
@@ -285,7 +288,7 @@ module mkDTlb#(
     endfunction
 
     function Maybe#(DTlbReqIdx) poisonedProcRespIdx;
-        function Bool poisoedResp(DTlbReqIdx i);
+        function Bool poisonedResp(DTlbReqIdx i);
             return pendValid_procResp[i] && !pendWaitP[i] && pendPoisoned[i];
         endfunction
         Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
@@ -323,7 +326,7 @@ module mkDTlb#(
     // accept new req when parent resp is ready. This avoids bypass in TLB. We
     // also check rqToPQ not full. This simplifies the guard, i.e., it does not
     // depend on whether we hit in TLB or not.
-    method Action procReq(DTlbReq req) if(
+    method Action procReq(DTlbReq#(instT) req) if(
         !needFlush && !ldTransRsFromPQ.notEmpty && rqToPQ.notFull && freeQInited
     );
         // allocate MSHR entry
@@ -365,9 +368,9 @@ module mkDTlb#(
                 end
                 else begin
                     // page fault
-                    Exception fault = r.write ? StorePageFault : LoadPageFault
+                    Exception fault = r.write ? StorePageFault : LoadPageFault;
                     pendWaitP[idx] <= False;
-                    pendResp[idx] <= tuple2(?, Valid (fault))
+                    pendResp[idx] <= tuple2(?, Valid (fault));
                     if(verbose) $display("DTLB %m req no permission: ", fshow(r));
                 end
             end
@@ -446,7 +449,7 @@ module mkDTlb#(
         endmethod
         method Action correctSpeculation(SpecBits mask);
             // clear spec bits for all entries
-            for(Integer i = 0 ; i < valueOf(size) ; i = i+1) begin
+            for(Integer i = 0 ; i < valueOf(DTlbReqNum) ; i = i+1) begin
                 let new_spec_bits = pendSpecBits_correctSpec[i] & mask;
                 pendSpecBits_correctSpec[i] <= new_spec_bits;
             end

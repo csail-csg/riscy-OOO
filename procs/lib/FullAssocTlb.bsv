@@ -22,7 +22,7 @@
 // SOFTWARE.
 
 import Vector::*;
-import FIFO::*;
+import Ehr::*;
 import Types::*;
 import ProcTypes::*;
 import TlbTypes::*;
@@ -55,38 +55,41 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
     Vector#(tlbSz, Reg#(Bool))     validVec <- replicateM(mkReg(False));
     Vector#(tlbSz, Reg#(TlbEntry)) entryVec <- replicateM(mkRegU);
 
-    // bit-LRU replacement
-    Reg#(Bit#(tlbSz)) lruBit <- mkReg(0);
-    // when an entry is accesed, update LRU bits
-    function Action updateLRU(tlbIdxT idx);
-    action
-        Bit#(tlbSz) val = lruBit;
+    // bit-LRU replacement. To reduce cycle time, we update LRU bits in the
+    // next cycle after we touch an entry. However, when we have two
+    // consecutive cycles inserting new entries, the latter insertion should
+    // see the updates to LRU bits made by the former insertion; otherwise the
+    // latter will insert to the same slot as the former one.
+    Ehr#(2, Bit#(tlbSz)) lruBit <- mkEhr(0);
+    Reg#(Bit#(tlbSz)) lruBit_upd = lruBit[0]; // write
+    Reg#(Bit#(tlbSz)) lruBit_add = lruBit[1]; // read
+    // reg as 1 cycle delay for update LRU
+    Ehr#(2, Maybe#(tlbIdxT)) updRepIdx <- mkEhr(Invalid);
+    Reg#(Maybe#(tlbIdxT)) updRepIdx_deq = updRepIdx[0];
+    Reg#(Maybe#(tlbIdxT)) updRepIdx_enq = updRepIdx[1];
+
+    // fire signal for each method
+    PulseWire flushEn <- mkPulseWire;
+    PulseWire addEntryEn <- mkPulseWire;
+
+    rule doUpdateRep(!flushEn &&& updRepIdx_deq matches tagged Valid .idx);
+        updRepIdx_deq <= Invalid;
+        // update LRU bits
+        Bit#(tlbSz) val = lruBit_upd;
         val[idx] = 1;
         if(val == maxBound) begin
             val = 0;
             val[idx] = 1;
         end
-        lruBit <= val;
-    endaction
-    endfunction
-    // Updating LRU bits is on critical path, so delay it a cycle
-    FIFO#(tlbIdxT) updRepQ <- mkFIFO;
-
-    // fire signal for each method
-    PulseWire flushEn <- mkPulseWire;
-    PulseWire addEntryEn <- mkRWire;
-
-    rule doUpdateRep(!flushEn);
-        updRepQ.deq;
-        updateLRU(updRepQ.first);
+        lruBit_upd <= val;
     endrule
 
     // function to match TLB entry
     method Action flush;
         writeVReg(validVec, replicate(False));
         // also reset LRU bits
-        lruBit <= 0; 
-        updRepQ.clear;
+        lruBit_upd <= 0;
+        updRepIdx_deq <= Invalid;
         // record fire signal
         flushEn.send;
     endmethod
@@ -117,11 +120,11 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
         end
     endmethod
 
-    method Action updateRepByHit(tlbIdxT index) if(!flushEn && !addEntryEn);
-        updRepQ.enq(index);
+    method Action updateRepByHit(tlbIdxT index) if(!flushEn && !addEntryEn && updRepIdx_enq == Invalid);
+        updRepIdx_enq <= Valid (index);
     endmethod
 
-    method Action addEntry(TlbEntry x) if(!flushEn);
+    method Action addEntry(TlbEntry x) if(!flushEn && updRepIdx_enq == Invalid);
         // check ppn and vpn lower bits are 0 for super pages
         doAssert(x.ppn == getMaskedPpn(x.ppn, x.level), "ppn lower bits not 0");
         doAssert(x.vpn == getMaskedVpn(x.vpn, x.level), "vpn lower bits not 0");
@@ -147,7 +150,7 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
             end
             else begin
                 // find LRU slot (lruBit[i] = 0 means i is LRU slot)
-                Vector#(tlbSz, Bool) isLRU = unpack(~lruBit);
+                Vector#(tlbSz, Bool) isLRU = unpack(~lruBit_add);
                 if(findIndex(id, isLRU) matches tagged Valid .idx) begin
                     addIdx = pack(idx);
                 end
@@ -160,7 +163,9 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
             validVec[addIdx] <= True;
             entryVec[addIdx] <= x;
             // update LRU bits
-            updRepQ.enq(addIdx);
+            updRepIdx_enq <= Valid (addIdx);
         end
+        // record firing
+        addEntryEn.send;
     endmethod
 endmodule
