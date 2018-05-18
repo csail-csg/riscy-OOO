@@ -144,7 +144,10 @@ module mkFullAssocTlb#(
         // we can directly compare the full addr.
         function Bool sameEntry(tlbIdxT i);
             let en = entryVec[i];
-            Bool same_page = en.vpn == x.vpn && en.level == x.level && en.asid == x.asid;
+            Bool same_page = en.vpn == x.vpn &&
+                             en.level == x.level &&
+                             en.asid == x.asid &&
+                             en.pteType.global == x.pteType.global;
             return validVec[i] && same_page;
         endfunction
         Vector#(tlbSz, tlbIdxT) idxVec = genWith(fromInteger);

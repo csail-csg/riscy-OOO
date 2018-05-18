@@ -40,6 +40,56 @@ module mkTbUnit(Empty);
     Reg#(Vpn) testVpn <- mkReg(0);
 
     Stmt test = (seq
+        //
+        // test not adding repeated entry
+        //
+        tlb.flush;
+
+        // fill in VPNs: 0 ~ tlbSize-1
+        testVpn <= 0;
+        while(testVpn < fromInteger(tlbSize))
+        action
+            tlb.addEntry(getTlbEntry(testVpn));
+            testVpn <= testVpn + 1;
+        endaction
+
+        // check all VPNs hit
+        testVpn <= 0;
+        while(testVpn < fromInteger(tlbSize))
+        action
+            let res = tlb.translate(testVpn, 0);
+            doAssert(res.hit, "must hit");
+            doAssert(res.index == truncate(testVpn), "hit index = vpn");
+            doAssert(res.entry == getTlbEntry(testVpn), "entry must match");
+            tlb.updateRepByHit(res.index);
+            testVpn <= testVpn + 1;
+        endaction
+
+        // fill in existing VPN
+        testVpn <= 0;
+        while(testVpn < fromInteger(tlbSize))
+        action
+            tlb.addEntry(getTlbEntry(fromInteger(halfTlbSize)));
+            testVpn <= testVpn + 1;
+        endaction
+
+        // check all VPNs hit (i.e., nothing gets replaced)
+        testVpn <= 0;
+        while(testVpn < fromInteger(tlbSize))
+        action
+            let res = tlb.translate(testVpn, 0);
+            doAssert(res.hit, "must hit");
+            doAssert(res.index == truncate(testVpn), "hit index = vpn");
+            doAssert(res.entry == getTlbEntry(testVpn), "entry must match");
+            tlb.updateRepByHit(res.index);
+            testVpn <= testVpn + 1;
+        endaction
+
+
+        //
+        // test bit LRU replacement
+        //
+
         tlb.flush;
         
         // fill in VPNs: 0 ~ tlbSize/2-1. They should be added to tlb idx 0 ~
