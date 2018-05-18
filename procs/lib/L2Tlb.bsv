@@ -104,7 +104,7 @@ endinterface
 
 typedef FullAssocTlb#(8) L2FullAssocTlb;
 module mkL2FullAssocTlb(L2FullAssocTlb);
-    let m <- mkFullAssocTlb;
+    let m <- mkFullAssocTlb(True); // randomness in replacement
     return m;
 endmodule
 

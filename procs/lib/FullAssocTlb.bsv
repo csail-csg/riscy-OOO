@@ -48,7 +48,9 @@ interface FullAssocTlb#(numeric type n);
     method Action addEntry(TlbEntry x);
 endinterface
 
-module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
+module mkFullAssocTlb#(
+    Bool randRep // introduce randomness in bit LRU replacement
+)(FullAssocTlb#(tlbSz)) provisos(
     Add#(1, a__, tlbSz),
     Alias#(tlbIdxT, Bit#(TLog#(tlbSz)))
 );
@@ -67,6 +69,13 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
     Ehr#(2, Maybe#(tlbIdxT)) updRepIdx <- mkEhr(Invalid);
     Reg#(Maybe#(tlbIdxT)) updRepIdx_deq = updRepIdx[0];
     Reg#(Maybe#(tlbIdxT)) updRepIdx_enq = updRepIdx[1];
+    // randomly choose an LRU idx at replacement time
+    Reg#(tlbIdxT) randIdx <- mkReg(0);
+    if(randRep) begin
+        rule incRandIdx;
+            randIdx <= randIdx + 1;
+        endrule
+    end
 
     // fire signal for each method
     PulseWire flushEn <- mkPulseWire;
@@ -151,7 +160,10 @@ module mkFullAssocTlb(FullAssocTlb#(tlbSz)) provisos(
             else begin
                 // find LRU slot (lruBit[i] = 0 means i is LRU slot)
                 Vector#(tlbSz, Bool) isLRU = unpack(~lruBit_add);
-                if(findIndex(id, isLRU) matches tagged Valid .idx) begin
+                if(randRep && isLRU[randIdx]) begin
+                    addIdx = randIdx;
+                end
+                else if(findIndex(id, isLRU) matches tagged Valid .idx) begin
                     addIdx = pack(idx);
                 end
                 else begin

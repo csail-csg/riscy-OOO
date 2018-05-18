@@ -100,7 +100,7 @@ endinterface
 
 typedef FullAssocTlb#(DTlbSize) DTlbArray;
 module mkDTlbArray(DTlbArray);
-    let m <- mkFullAssocTlb;
+    let m <- mkFullAssocTlb(True); // randomness in replacement
     return m;
 endmodule
 

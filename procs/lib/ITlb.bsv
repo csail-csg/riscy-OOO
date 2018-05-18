@@ -76,7 +76,7 @@ endinterface
 
 typedef FullAssocTlb#(ITlbSize) ITlbArray;
 module mkITlbArray(ITlbArray);
-    let m <- mkFullAssocTlb;
+    let m <- mkFullAssocTlb(True); // randomness in replacement
     return m;
 endmodule
 
