@@ -53,8 +53,12 @@ typedef enum {
 
 typedef enum {
     L1TlbAccessCnt,
-    L1TlbMissCnt,
-    L1TlbMissLat
+    L1TlbMissParentCnt, // miss and send req to parent TLB
+    L1TlbMissParentLat,
+    L1TlbMissPeerCnt, // miss and wait for resp for peer entry
+    L1TlbMissPeerLat,
+    L1TlbHitUnderMissCnt,
+    L1TlbAllMissCycles // all TLB req entries are miss, so TLB is blocked
 } L1TlbPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {

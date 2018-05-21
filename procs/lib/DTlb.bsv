@@ -40,6 +40,14 @@ import HasSpecBits::*;
 import Vector::*;
 import Ehr::*;
 
+export DTlbReq(..);
+export DTlbResp(..);
+export DTlbRqToP(..);
+export DTlbTransRsFromP(..);
+export DTlbToParent(..);
+export DTlb(..);
+export mkDTlb;
+
 typedef `TLB_SIZE DTlbSize;
 
 // req & resp with core
@@ -104,6 +112,13 @@ module mkDTlbArray(DTlbArray);
     return m;
 endmodule
 
+// a pending tlb req may be in following states
+typedef union tagged {
+    void None;
+    void WaitParent;
+    DTlbReqIdx WaitPeer;
+} DTlbWait deriving(Bits, Eq, FShow);
+
 module mkDTlb#(
     function TlbReq getTlbReq(instT inst)
 )(DTlb::DTlb#(instT)) provisos(Bits#(instT, a__));
@@ -121,11 +136,12 @@ module mkDTlb#(
     Reg#(VMInfo) vm_info <- mkReg(defaultValue);
 
     // pending reqs
-    // pendWaitP should be meaningful even when entry is invalid. pendWaitP =
-    // True means this entry is waiting for parent TLB resp. Thus, pendWaitP
-    // must be False when entry is invalid.
+    // pendWait should be meaningful even when entry is invalid. pendWait =
+    // WaitParent True means this entry is waiting for parent TLB resp;
+    // pendWait = WaitPeer means this entry is waiting for a resp initiated by
+    // another req. Thus, pendWait must be None when entry is invalid.
     Vector#(DTlbReqNum, Ehr#(2, Bool)) pendValid <- replicateM(mkEhr(False));
-    Vector#(DTlbReqNum, Reg#(Bool)) pendWaitP <- replicateM(mkReg(False));
+    Vector#(DTlbReqNum, Reg#(DTlbWait)) pendWait <- replicateM(mkReg(None));
     Vector#(DTlbReqNum, Reg#(Bool)) pendPoisoned <- replicateM(mkRegU);
     Vector#(DTlbReqNum, Reg#(instT)) pendInst <- replicateM(mkRegU);
     Vector#(DTlbReqNum, Reg#(TlbResp)) pendResp <- replicateM(mkRegU);
@@ -162,6 +178,9 @@ module mkDTlb#(
     // req & resp with parent TLB
     Fifo#(DTlbReqNum, DTlbRqToP) rqToPQ <- mkCFFifo; // large enough so won't block on enq
     Fifo#(2, DTlbTransRsFromP) ldTransRsFromPQ <- mkCFFifo;
+    // When a resp comes, we first process for the initiating req, then process
+    // other reqs that in WaitPeer.
+    Reg#(Maybe#(DTlbReqIdx)) respForOtherReq <- mkReg(Invalid);
     // flush req/resp with parent TLB
     Fifo#(1, void) flushRqToPQ <- mkCFFifo;
     Fifo#(1, void) flushRsFromPQ <- mkCFFifo;
@@ -172,23 +191,35 @@ module mkDTlb#(
     Fifo#(1, PerfResp#(L1TlbPerfType)) perfRespQ <- mkCFFifo;
     Reg#(Bool) doStats <- mkConfigReg(False);
     Count#(Data) accessCnt <- mkCount(0);
-    Count#(Data) missCnt <- mkCount(0);
-    Count#(Data) missLat <- mkCount(0);
+    Count#(Data) missParentCnt <- mkCount(0);
+    Count#(Data) missParentLat <- mkCount(0);
+    Count#(Data) missPeerCnt <- mkCount(0);
+    Count#(Data) missPeerLat <- mkCount(0);
+    Count#(Data) hitUnderMissCnt <- mkCount(0);
+    Count#(Data) allMissCycles <- mkCount(0);
 
-    LatencyTimer#(2, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
+    LatencyTimer#(DTlbReqNum, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
 
     rule doPerf;
         let t <- toGet(perfReqQ).get;
         Data d = (case(t)
             L1TlbAccessCnt: (accessCnt);
-            L1TlbMissCnt: (missCnt);
-            L1TlbMissLat: (missLat);
+            L1TlbMissParentCnt: (missParentCnt);
+            L1TlbMissParentLat: (missParentLat);
+            L1TlbMissPeerCnt: (missPeerCnt);
+            L1TlbMissPeerLat: (missPeerLat);
+            L1TlbHitUnderMissCnt: (hitUnderMissCnt);
+            L1TlbAllMissCycles: (allMissCycles);
             default: (0);
         endcase);
         perfRespQ.enq(PerfResp {
             pType: t,
             data: d
         });
+    endrule
+
+    rule incrAllMissCycles(doStats && all(\/= (None), readVReg(pendWait)));
+        allMissCycles.incr(1);
     endrule
 `endif
 
@@ -200,25 +231,27 @@ module mkDTlb#(
         // request parent TLB to flush
         flushRqToPQ.enq(?);
         waitFlushP <= True;
-        if(verbose) $display("DTLB %m: flush begin");
+        if(verbose) $display("[DTLB] flush begin");
     endrule
 
     rule doFinishFlush(needFlush && waitFlushP);
         flushRsFromPQ.deq;
         needFlush <= False;
         waitFlushP <= False;
-        if(verbose) $display("DTLB %m: flush done");
+        if(verbose) $display("[DTLB] flush done");
     endrule
 
     // get resp from parent TLB
     rule doPRs(ldTransRsFromPQ.notEmpty);
-        ldTransRsFromPQ.deq;
         let pRs = ldTransRsFromPQ.first;
-        TlbReq r = getTlbReq(pendInst[pRs.id]);
+        // the current req being served is either the initiating req or other
+        // req pending on the same resp
+        let idx = respForOtherReq matches tagged Valid .i ? i : pRs.id;
+        TlbReq r = getTlbReq(pendInst[idx]);
 
-        if(pendPoisoned[pRs.id]) begin
+        if(pendPoisoned[idx]) begin
             // poisoned inst, do nothing
-            if(verbose) $display("DTLB %m refill poisoned");
+            if(verbose) $display("[DTLB] refill poisoned: idx %d; ", idx, fshow(r));
         end
         else if(pRs.entry matches tagged Valid .en) begin
             // check permission
@@ -230,38 +263,69 @@ module mkDTlb#(
                 // fill TLB, and record resp
                 tlb.addEntry(en);
                 let trans_addr = translate(r.addr, en.ppn, en.level);
-                pendResp[pRs.id] <= tuple2(trans_addr, Invalid);
+                pendResp[idx] <= tuple2(trans_addr, Invalid);
                 if(verbose) begin
-                    $display("DTLB %m refill: ", fshow(r),
-                             " ; ", fshow(trans_addr));
+                    $display("[DTLB] refill: idx %d; ", idx, fshow(r),
+                             "; ", fshow(trans_addr));
                 end
             end
             else begin
                 // page fault
                 Exception fault = r.write ? StorePageFault : LoadPageFault;
-                pendResp[pRs.id] <= tuple2(?, Valid (fault));
+                pendResp[idx] <= tuple2(?, Valid (fault));
                 if(verbose) begin
-                    $display("DTLB %m refill no permission: ", fshow(r));
+                    $display("[DTLB] refill no permission: idx %d; ", idx, fshow(r));
                 end
             end
         end
         else begin
             // page fault
             Exception fault = r.write ? StorePageFault : LoadPageFault;
-            pendResp[pRs.id] <= tuple2(?, Valid (fault));
-            if(verbose) $display("DTLB %m refill page fault: ", fshow(r));
+            pendResp[idx] <= tuple2(?, Valid (fault));
+            if(verbose) $display("[DTLB] refill page fault: idx %d; ", idx, fshow(r));
         end
 
         // get parent resp, miss resolved, reset wait bit
-        pendWaitP[pRs.id] <= False;
+        pendWait[idx] <= None;
 
-        doAssert(pendValid_doPRs[pRs.id], "entry must be valid");
-        doAssert(pendWaitP[pRs.id], "entry must be waiting for resp");
+        doAssert(pendValid_doPRs[idx], "entry must be valid");
+        if(isValid(respForOtherReq)) begin
+            doAssert(pendWait[idx] == WaitPeer (pRs.id), "entry must be waiting for resp");
+        end
+        else begin
+            doAssert(pendWait[idx] == WaitParent, "entry must be waiting for resp");
+        end
+
+        // find another req waiting for this resp
+        function Bool waitForResp(DTlbReqIdx i);
+            // we can ignore pendValid here, because not-None pendWait implies
+            // pendValid is true
+            return pendWait[i] == WaitPeer (pRs.id) && i != idx;
+        endfunction
+        Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
+        if(find(waitForResp, idxVec) matches tagged Valid .i) begin
+            // still have req waiting for this resp, keep processing
+            respForOtherReq <= Valid (i);
+            doAssert(pendValid_doPRs[i], "waiting entry must be valid");
+        end
+        else begin
+            // all req done, deq the pRs
+            respForOtherReq <= Invalid;
+            ldTransRsFromPQ.deq;
+        end
 
 `ifdef PERF_COUNT
-        let lat <- latTimer.done(0);
+        // perf: miss
+        let lat <- latTimer.done(idx);
         if(doStats) begin
-            missLat.incr(zeroExtend(lat));
+            if(isValid(reqForOtherReq)) begin
+                missPeerLat.incr(zeroExtend(lat));
+                missPeerCnt.incr(1);
+            end
+            else begin
+                missParentLat.incr(zeroExtend(lat));
+                missParentCnt.incr(1);
+            end
         end
 `endif
 
@@ -281,7 +345,7 @@ module mkDTlb#(
     // idx of entries that are ready to resp to proc
     function Maybe#(DTlbReqIdx) validProcRespIdx;
         function Bool validResp(DTlbReqIdx i);
-            return pendValid_procResp[i] && !pendWaitP[i] && !pendPoisoned[i];
+            return pendValid_procResp[i] && pendWait[i] == None && !pendPoisoned[i];
         endfunction
         Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
         return find(validResp, idxVec);
@@ -289,7 +353,7 @@ module mkDTlb#(
 
     function Maybe#(DTlbReqIdx) poisonedProcRespIdx;
         function Bool poisonedResp(DTlbReqIdx i);
-            return pendValid_procResp[i] && !pendWaitP[i] && pendPoisoned[i];
+            return pendValid_procResp[i] && pendWait[i] == None && pendPoisoned[i];
         endfunction
         Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
         return find(poisonedResp, idxVec);
@@ -333,13 +397,13 @@ module mkDTlb#(
         freeQ.deq;
         DTlbReqIdx idx = freeQ.first;
         doAssert(!pendValid_procReq[idx], "free entry cannot be valid");
-        doAssert(!pendWaitP[idx], "entry cannot wait for parent resp");
+        doAssert(pendWait[idx] == None, "entry cannot wait for parent resp");
 
         pendValid_procReq[idx] <= True;
         pendPoisoned[idx] <= False;
         pendInst[idx] <= req.inst;
         pendSpecBits_procReq[idx] <= req.specBits;
-        // pendWaitP and pendResp are set later in this method
+        // pendWait and pendResp are set later in this method
 
         // try to translate
         TlbReq r = getTlbReq(req.inst);
@@ -359,44 +423,72 @@ module mkDTlb#(
                     tlb.updateRepByHit(trans_result.index);
                     // translate addr
                     Addr trans_addr = translate(r.addr, entry.ppn, entry.level);
-                    pendWaitP[idx] <= False;
+                    pendWait[idx] <= None;
                     pendResp[idx] <= tuple2(trans_addr, Invalid);
                     if(verbose) begin
-                        $display("DTLB %m req (hit): ", fshow(r),
-                                 " ; ", fshow(trans_result));
+                        $display("[DTLB] req (hit): idx %d; ", idx, fshow(r),
+                                 "; ", fshow(trans_result));
                     end
+`ifdef PERF_COUNT
+                    // perf: hit under miss
+                    if(doStats && readVReg(pendWait) != replicate(None)) begin
+                        hitUnderMissCnt.incr(1);
+                    end
+`endif
                 end
                 else begin
                     // page fault
                     Exception fault = r.write ? StorePageFault : LoadPageFault;
-                    pendWaitP[idx] <= False;
+                    pendWait[idx] <= None;
                     pendResp[idx] <= tuple2(?, Valid (fault));
-                    if(verbose) $display("DTLB %m req no permission: ", fshow(r));
+                    if(verbose) $display("[DTLB] req no permission: idx %d; ", idx, fshow(r));
                 end
             end
             else begin
-                // TLB miss, req to parent TLB
-                pendWaitP[idx] <= True;
-                rqToPQ.enq(DTlbRqToP {
-                    vpn: vpn,
-                    id: idx
-                });
-                if(verbose) $display("DTLB %m req (miss): ", fshow(r));
-`ifdef PERF_COUNT
-                latTimer.start(0);
-                if(doStats) begin
-                    missCnt.incr(1);
+                // TLB miss, req to parent TLB only if there is no existing req
+                // for the same VPN already waiting for parent TLB resp
+                function Bool reqSamePage(DTlbReqIdx i);
+                    // we can ignore pendValid here, because not-None pendWait implies
+                    // pendValid is true
+                    let r_i = getTlbReq(pendInst[i]);
+                    return pendWait[i] == WaitParent && getVpn(r.addr) == getVpn(r_i.addr);
+                endfunction
+                Vector#(DTlbReqNum, DTlbReqIdx) idxVec = genWith(fromInteger);
+                if(find(reqSamePage, idxVec) matches tagged Valid .i) begin
+                    // peer entry has already requested, so don't send duplicate req
+                    pendWait[idx] <= WaitPeer (i);
+                    doAssert(pendValid_procReq[i], "peer entry must be valid");
+                    if(verbose) begin
+                        $display("[DTLB] req miss, pend on peer: idx %d, ",
+                                 idx, "; ", fshow(r), "; ", fshow(i));
+                    end
                 end
+                else begin
+                    // this is the first req for this VPN
+                    pendWait[idx] <= WaitParent;
+                    rqToPQ.enq(DTlbRqToP {
+                        vpn: vpn,
+                        id: idx
+                    });
+                    if(verbose) begin
+                        $display("[DTLB] req miss, send to parent: idx %d, ",
+                                 idx, fshow(r));
+                    end
+                end
+`ifdef PERF_COUNT
+                // perf: miss
+                latTimer.start(idx);
 `endif
             end
         end
         else begin
             // bare mode
-            pendWaitP[idx] <= False;
+            pendWait[idx] <= None;
             pendResp[idx] <= tuple2(r.addr, Invalid);
             if(verbose) $display("DTLB %m req (bare): ", fshow(r));
         end
 `ifdef PERF_COUNT
+        // perf: access
         if(doStats) begin
             accessCnt.incr(1);
         end

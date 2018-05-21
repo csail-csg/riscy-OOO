@@ -229,11 +229,134 @@ module mkTbUnit(Empty);
             doAssert(excep == Invalid, "excep match");
         endaction
         
-        // kill everything
+        // kill everything, and there should not be any pending req
         tlb.specUpdate.incorrectSpeculation(True, ?);
-
-        // there should not be any pending req
         await(tlb.noPendingReq);
+
+        // 3 reqs on same VPN 5, one req on another VPN 6
+        tlb.procReq(getDTlbReq(5, 8, 0));
+        tlb.procReq(getDTlbReq(5, 9, 0));
+        tlb.procReq(getDTlbReq(5, 10, 0));
+        tlb.procReq(getDTlbReq(6, 11, 0));
+        // parent resp to VPN 5, and get resp for tests 8, 9, 10 (8 is very
+        // likely to come first)
+        action
+            tlb.toParent.rqToP.deq;
+            let r = tlb.toParent.rqToP.first;
+            doAssert(r.vpn == 5, "vpn match");
+            tlb.toParent.ldTransRsFromP.enq(DTlbTransRsFromP {
+                entry: Valid (getTlbEntry(r.vpn)),
+                id: r.id
+            });
+        endaction
+        action
+            tlb.deqProcResp;
+            let r = tlb.procResp;
+            doAssert(r.inst.vpn == 5 && r.inst.id == 8, "inst match");
+            doAssert(r.specBits == 0, "spec bits match");
+            let {paddr, excep} = r.resp;
+            doAssert(paddr == getPAddr(5), "ppn match"); 
+            doAssert(excep == Invalid, "excep match");
+        endaction
+        action
+            tlb.deqProcResp;
+            let r = tlb.procResp;
+            doAssert(r.inst.vpn == 5 && (r.inst.id == 9 || r.inst.id == 10), "inst match");
+            doAssert(r.specBits == 0, "spec bits match");
+            let {paddr, excep} = r.resp;
+            doAssert(paddr == getPAddr(5), "ppn match"); 
+            doAssert(excep == Invalid, "excep match");
+        endaction
+        action
+            tlb.deqProcResp;
+            let r = tlb.procResp;
+            doAssert(r.inst.vpn == 5 && (r.inst.id == 9 || r.inst.id == 10), "inst match");
+            doAssert(r.specBits == 0, "spec bits match");
+            let {paddr, excep} = r.resp;
+            doAssert(paddr == getPAddr(5), "ppn match"); 
+            doAssert(excep == Invalid, "excep match");
+        endaction
+        // parent resp to VPN 6, and get resp for test 11
+        action
+            tlb.toParent.rqToP.deq;
+            let r = tlb.toParent.rqToP.first;
+            doAssert(r.vpn == 6, "vpn match");
+            tlb.toParent.ldTransRsFromP.enq(DTlbTransRsFromP {
+                entry: Valid (getTlbEntry(r.vpn)),
+                id: r.id
+            });
+        endaction
+        action
+            tlb.deqProcResp;
+            let r = tlb.procResp;
+            doAssert(r.inst.vpn == 6 && r.inst.id == 11, "inst match");
+            doAssert(r.specBits == 0, "spec bits match");
+            let {paddr, excep} = r.resp;
+            doAssert(paddr == getPAddr(6), "ppn match"); 
+            doAssert(excep == Invalid, "excep match");
+        endaction
+
+        // two tests on VPN 7, and another two on VPN 8
+        tlb.procReq(getDTlbReq(7, 12, 0));
+        tlb.procReq(getDTlbReq(7, 13, 0));
+        tlb.procReq(getDTlbReq(8, 14, 0));
+        tlb.procReq(getDTlbReq(8, 15, 0));
+        // parent resp to VPNs
+        action
+            tlb.toParent.rqToP.deq;
+            let r = tlb.toParent.rqToP.first;
+            doAssert(r.vpn == 7, "vpn match");
+            tlb.toParent.ldTransRsFromP.enq(DTlbTransRsFromP {
+                entry: Valid (getTlbEntry(r.vpn)),
+                id: r.id
+            });
+        endaction
+        action
+            tlb.toParent.rqToP.deq;
+            let r = tlb.toParent.rqToP.first;
+            doAssert(r.vpn == 8, "vpn match");
+            tlb.toParent.ldTransRsFromP.enq(DTlbTransRsFromP {
+                entry: Valid (getTlbEntry(r.vpn)),
+                id: r.id
+            });
+        endaction
+        // TLB resp should come in order of 12 -> 15
+        action
+            tlb.deqProcResp;
+            let r = tlb.procResp;
+            doAssert(r.inst.vpn == 7 && r.inst.id == 12, "inst match");
+            doAssert(r.specBits == 0, "spec bits match");
+            let {paddr, excep} = r.resp;
+            doAssert(paddr == getPAddr(7), "ppn match"); 
+            doAssert(excep == Invalid, "excep match");
+        endaction
+        action
+            tlb.deqProcResp;
+            let r = tlb.procResp;
+            doAssert(r.inst.vpn == 7 && r.inst.id == 13, "inst match");
+            doAssert(r.specBits == 0, "spec bits match");
+            let {paddr, excep} = r.resp;
+            doAssert(paddr == getPAddr(7), "ppn match"); 
+            doAssert(excep == Invalid, "excep match");
+        endaction
+        action
+            tlb.deqProcResp;
+            let r = tlb.procResp;
+            doAssert(r.inst.vpn == 8 && r.inst.id == 14, "inst match");
+            doAssert(r.specBits == 0, "spec bits match");
+            let {paddr, excep} = r.resp;
+            doAssert(paddr == getPAddr(8), "ppn match"); 
+            doAssert(excep == Invalid, "excep match");
+        endaction
+        action
+            tlb.deqProcResp;
+            let r = tlb.procResp;
+            doAssert(r.inst.vpn == 8 && r.inst.id == 15, "inst match");
+            doAssert(r.specBits == 0, "spec bits match");
+            let {paddr, excep} = r.resp;
+            doAssert(paddr == getPAddr(8), "ppn match"); 
+            doAssert(excep == Invalid, "excep match");
+        endaction
 
         $fdisplay(stderr, "PASS");
     endseq);

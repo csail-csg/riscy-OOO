@@ -38,9 +38,9 @@ module mkLatencyTimer(LatencyTimer#(num, timeWidth)) provisos(
                 timerNext[i] = t + 1;
             end
         end
-        // apply start
+        // apply start: new timer should be 1 (counting this cycle)
         if(startEn.wget matches tagged Valid .i) begin
-            timerNext[i] = 0;
+            timerNext[i] = 1;
             startedNext[i] = True;
             // do not assert this, because things may be killed
             //doAssert(!started[i], "timer must be invalid");
