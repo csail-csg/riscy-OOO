@@ -218,8 +218,9 @@ module mkDTlb#(
         });
     endrule
 
-    rule incrAllMissCycles(doStats && all(\/= (None), readVReg(pendWait)));
-        allMissCycles.incr(1);
+    rule incrAllMissCycles(doStats);
+        function Bool isMiss(DTlbWait x) = x != None;
+        when(all(isMiss, readVReg(pendWait)), allMissCycles.incr(1));
     endrule
 `endif
 
@@ -242,11 +243,13 @@ module mkDTlb#(
     endrule
 
     // get resp from parent TLB
+    // At high level, this rule is always exclusive with doStartFlush, though
+    // we don't bother to make compiler understand this...
     rule doPRs(ldTransRsFromPQ.notEmpty);
         let pRs = ldTransRsFromPQ.first;
         // the current req being served is either the initiating req or other
         // req pending on the same resp
-        let idx = respForOtherReq matches tagged Valid .i ? i : pRs.id;
+        let idx = fromMaybe(pRs.id, respForOtherReq);
         TlbReq r = getTlbReq(pendInst[idx]);
 
         if(pendPoisoned[idx]) begin
@@ -318,7 +321,7 @@ module mkDTlb#(
         // perf: miss
         let lat <- latTimer.done(idx);
         if(doStats) begin
-            if(isValid(reqForOtherReq)) begin
+            if(isValid(respForOtherReq)) begin
                 missPeerLat.incr(zeroExtend(lat));
                 missPeerCnt.incr(1);
             end

@@ -123,8 +123,8 @@ module mkITlb(ITlb::ITlb);
         let t <- toGet(perfReqQ).get;
         Data d = (case(t)
             L1TlbAccessCnt: (accessCnt);
-            L1TlbMissCnt: (missCnt);
-            L1TlbMissLat: (missLat);
+            L1TlbMissParentCnt: (missCnt);
+            L1TlbMissParentLat: (missLat);
             default: (0);
         endcase);
         perfRespQ.enq(PerfResp {

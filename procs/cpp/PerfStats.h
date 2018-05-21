@@ -156,13 +156,17 @@ public:
 
         // ITlb
         init(ITlb, L1TlbAccessCnt, "ITlb access num");
-        init(ITlb, L1TlbMissCnt, "ITlb miss num");
-        init(ITlb, L1TlbMissLat, "ITlb miss total latency");
+        init(ITlb, L1TlbMissParentCnt, "ITlb miss parent num");
+        init(ITlb, L1TlbMissParentLat, "ITlb miss parent total latency");
 
         // DTlb
         init(DTlb, L1TlbAccessCnt, "DTlb access num");
-        init(DTlb, L1TlbMissCnt, "DTlb miss num");
-        init(DTlb, L1TlbMissLat, "DTlb miss total latency");
+        init(DTlb, L1TlbMissParentCnt, "DTlb miss parent num");
+        init(DTlb, L1TlbMissParentLat, "DTlb miss parent total latency");
+        init(DTlb, L1TlbMissPeerCnt, "DTlb miss peer num");
+        init(DTlb, L1TlbMissPeerLat, "DTlb miss peer total latency");
+        init(DTlb, L1TlbHitUnderMissCnt, "DTlb hit under miss num");
+        init(DTlb, L1TlbAllMissCycles, "DTlb blocked by miss cycles");
         
         // L2Tlb
         init(L2Tlb, L2TlbInstMissCnt, "L2Tlb inst access miss num");
