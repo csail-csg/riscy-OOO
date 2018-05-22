@@ -32,7 +32,6 @@ endinterface
 // split translation cache
 
 // translation cache for a specific level L. This stores the PTEs at level L.
-// This is indexed by vpn_vec[level], so level L > 0.
 interface SingleSplitTransCache;
     method ActionValue#(Maybe#(Ppn)) req(Vpn vpn);
     method Action addEntry(Vpn vpn, Ppn ppn);
@@ -151,6 +150,7 @@ module mkSplitTransCache(TranslationCache);
         for(PageWalkLevel i = 0; i < maxPageWalkLevel; i = i+1) begin
             hits[i] <- caches[i].req(vpn); // cached page walk level i+1
         end
+        // XXX hit in lower level has priority
         if(findIndex(isValid, hits) matches tagged Valid .idx) begin
             resp = TranslationCacheResp {
                 startLevel: zeroExtend(pack(idx)),
