@@ -314,8 +314,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         // info
         VMInfo vm_info = cRq.child == I ? vm_info_I : vm_info_D;
         PageWalkLevel level = resp.startLevel;
-        Ppn basePpn = level < maxPageWalkLevel ? resp.basePpn : vm_info.basePPN;
-        Addr baseAddr = getPTBaseAddr(basePpn);
+        Addr baseAddr = getPTBaseAddr(level < maxPageWalkLevel ? resp.ppn : vm_info.basePPN);
         Addr pteAddr = getPTEAddr(baseAddr, cRq.vpn, level);
         memReqQ.enq(TlbMemReq {
             addr: pteAddr,

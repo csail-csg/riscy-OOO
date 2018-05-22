@@ -12,7 +12,7 @@ import TlbTypes::*;
 
 typedef struct {
     PageWalkLevel startLevel;
-    Ppn basePpn; // only valid when startLevel < maxPageWalkLevel
+    Ppn ppn; // only valid when startLevel < maxPageWalkLevel
 } TranslationCacheResp deriving(Bits, Eq, FShow);
 
 interface TranslationCache;
@@ -39,16 +39,15 @@ interface SingleSplitTransCache;
     method Action flush;
 endinterface
 
-typedef 24 SplitTransCacheSize; // from ISCA 2010 paper
+typedef 24 SplitTransCacheSize; // size from ISCA 2010 paper
 typedef Bit#(TLog#(SplitTransCacheSize)) SplitTransCacheIdx;
 
-(* synthesize *)
 module mkSingleSplitTransCache#(PageWalkLevel level)(SingleSplitTransCache);
     staticAssert(level > 0 && level <= maxPageWalkLevel, "illegal level");
 
-    Vector#(SplitTransCacheIdx, Reg#(Bool)) validVec <- replicateM(mkReg(False));
-    Vector#(SplitTransCacheIdx, Reg#(Vpn)) vpnVec <- replicateM(mkRegU);
-    Vector#(SplitTransCacheIdx, Reg#(Ppn)) ppnVec <- replicateM(mkRegU);
+    Vector#(SplitTransCacheSize, Reg#(Bool)) validVec <- replicateM(mkReg(False));
+    Vector#(SplitTransCacheSize, Reg#(Vpn)) vpnVec <- replicateM(mkRegU);
+    Vector#(SplitTransCacheSize, Reg#(Ppn)) ppnVec <- replicateM(mkRegU);
 
     // bit-LRU replacement. To reduce cycle time, we update LRU bits in the
     // next cycle after we touch an entry. However, when we have two
@@ -140,8 +139,8 @@ endmodule
 (* synthesize *)
 module mkSplitTransCache(TranslationCache);
     Vector#(TSub#(NumPageWalkLevels, 1), SingleSplitTransCache) caches;
-    for(Integer i = 0; i < maxPageWalkLevel; i = i+1) begin
-        caches[i] <- mkSingleSplitTransCache(fromInteger(i + 1));
+    for(PageWalkLevel i = 0; i < maxPageWalkLevel; i = i+1) begin
+        caches[i] <- mkSingleSplitTransCache(i + 1);
     end
 
     Fifo#(1, TranslationCacheResp) respQ <- mkPipelineFifo;
@@ -149,12 +148,12 @@ module mkSplitTransCache(TranslationCache);
     method Action req(Vpn vpn);
         TranslationCacheResp resp;
         Vector#(TSub#(NumPageWalkLevels, 1), Maybe#(Ppn)) hits;
-        for(Integer i = 0; i < maxPageWalkLevel; i = i+1) begin
+        for(PageWalkLevel i = 0; i < maxPageWalkLevel; i = i+1) begin
             hits[i] <- caches[i].req(vpn); // cached page walk level i+1
         end
         if(findIndex(isValid, hits) matches tagged Valid .idx) begin
             resp = TranslationCacheResp {
-                startLevel: pack(idx),
+                startLevel: zeroExtend(pack(idx)),
                 ppn: validValue(hits[idx])
             };
         end
@@ -173,15 +172,19 @@ module mkSplitTransCache(TranslationCache);
         respQ.deq;
     endmethod
 
-    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn);
+    // the guard makes resp < addEntry, so pending req is ordered before the
+    // newly add entry (so in case of miss, the pending req could mark itself
+    // waiting on the page walk that is just about to addEntry, and get the
+    // bypass)
+    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn) if(respQ.notFull);
         doAssert(level > 0, "cannot be level 0");
         doAssert(level <= maxPageWalkLevel, "level too large");
         caches[level - 1].addEntry(vpn, ppn);
     endmethod
         
     method Action flush;
-        for(Integer i = 0; i < maxPageWalkLevel; i = i+1) begin
-            cacheds[i].flush;
+        for(PageWalkLevel i = 0; i < maxPageWalkLevel; i = i+1) begin
+            caches[i].flush;
         end
     endmethod
 
