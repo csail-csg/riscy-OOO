@@ -1,0 +1,189 @@
+
+import Vector::*;
+import Assert::*;
+import Ehr::*;
+import Fifo::*;
+import Types::*;
+import ProcTypes::*;
+import TlbTypes::*;
+
+// vpn -> ppn of the page containing the intermediate page table
+// entry at the lowest walk level
+
+typedef struct {
+    PageWalkLevel startLevel;
+    Ppn basePpn; // only valid when startLevel < maxPageWalkLevel
+} TranslationCacheResp deriving(Bits, Eq, FShow);
+
+interface TranslationCache;
+    method Action req(Vpn vpn);
+    method TranslationCacheResp resp;
+    method Action deqResp;
+    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn);
+    method Action flush;
+    method Bool flush_done;
+endinterface
+
+// ordering:
+// resp < {req, addEntry}
+// req C addEntry
+// flush C {req, addEntry} (flush is likely to have higher urgency)
+
+// split translation cache
+
+// translation cache for a specific level L. This stores the PTEs at level L.
+// This is indexed by vpn_vec[level], so level L > 0.
+interface SingleSplitTransCache;
+    method ActionValue#(Maybe#(Ppn)) req(Vpn vpn);
+    method Action addEntry(Vpn vpn, Ppn ppn);
+    method Action flush;
+endinterface
+
+typedef 24 SplitTransCacheSize; // from ISCA 2010 paper
+typedef Bit#(TLog#(SplitTransCacheSize)) SplitTransCacheIdx;
+
+(* synthesize *)
+module mkSingleSplitTransCache#(PageWalkLevel level)(SingleSplitTransCache);
+    staticAssert(level > 0 && level <= maxPageWalkLevel, "illegal level");
+
+    Vector#(SplitTransCacheIdx, Reg#(Bool)) validVec <- replicateM(mkReg(False));
+    Vector#(SplitTransCacheIdx, Reg#(Vpn)) vpnVec <- replicateM(mkRegU);
+    Vector#(SplitTransCacheIdx, Reg#(Ppn)) ppnVec <- replicateM(mkRegU);
+
+    // bit-LRU replacement. To reduce cycle time, we update LRU bits in the
+    // next cycle after we touch an entry. However, when we have two
+    // consecutive cycles inserting new entries, the latter insertion should
+    // see the updates to LRU bits made by the former insertion; otherwise the
+    // latter will insert to the same slot as the former one.
+    Ehr#(2, Bit#(SplitTransCacheSize)) lruBit <- mkEhr(0);
+    Reg#(Bit#(SplitTransCacheSize)) lruBit_upd = lruBit[0]; // write
+    Reg#(Bit#(SplitTransCacheSize)) lruBit_add = lruBit[1]; // read
+    // reg as 1 cycle delay for update LRU
+    Ehr#(2, Maybe#(SplitTransCacheIdx)) updRepIdx <- mkEhr(Invalid);
+    Reg#(Maybe#(SplitTransCacheIdx)) updRepIdx_deq = updRepIdx[0];
+    Reg#(Maybe#(SplitTransCacheIdx)) updRepIdx_enq = updRepIdx[1];
+    // randomly choose an LRU idx at replacement time
+    Reg#(SplitTransCacheIdx) randIdx <- mkReg(0);
+
+    // don't do anything at flush time
+    PulseWire flushEn <- mkPulseWire;
+
+    rule incRandIdx;
+        randIdx <= randIdx + 1;
+    endrule
+
+    rule doUpdateRep(updRepIdx_deq matches tagged Valid .idx &&& !flushEn);
+        updRepIdx_deq <= Invalid;
+        // update LRU bits
+        Bit#(SplitTransCacheSize) val = lruBit_upd;
+        val[idx] = 1;
+        if(val == maxBound) begin
+            val = 0;
+            val[idx] = 1;
+        end
+        lruBit_upd <= val;
+    endrule
+
+    method ActionValue#(Maybe#(Ppn)) req(Vpn vpn) if(updRepIdx_enq == Invalid && !flushEn);
+        function Bool hit(SplitTransCacheIdx i);
+            let vpn_match = getMaskedVpn(vpn, level) == getMaskedVpn(vpnVec[i], level);
+            return validVec[i] && vpn_match;
+        endfunction
+        Vector#(SplitTransCacheSize, SplitTransCacheIdx) idxVec = genWith(fromInteger);
+        if(find(hit, idxVec) matches tagged Valid .i) begin
+            updRepIdx_enq <= Valid (i); // update LRU
+            return Valid (ppnVec[i]);
+        end
+        else begin
+            return Invalid;
+        end
+    endmethod
+        
+    method Action addEntry(Vpn vpn, Ppn ppn) if(updRepIdx_enq == Invalid && !flushEn);
+        SplitTransCacheIdx addIdx;
+        if(findIndex( \== (False) , readVReg(validVec) ) matches tagged Valid .idx) begin
+            // get empty slot
+            addIdx = pack(idx);
+        end
+        else begin
+            // find LRU slot (lruBit[i] = 0 means i is LRU slot)
+            Vector#(SplitTransCacheSize, Bool) isLRU = unpack(~lruBit_add);
+            if(isLRU[randIdx]) begin
+                addIdx = randIdx;
+            end
+            else if(findIndex(id, isLRU) matches tagged Valid .idx) begin
+                addIdx = pack(idx);
+            end
+            else begin
+                addIdx = 0; // this is actually impossible
+                doAssert(False, "must have at least 1 LRU slot");
+            end
+        end
+        // update slot
+        validVec[addIdx] <= True;
+        vpnVec[addIdx] <= getMaskedVpn(vpn, level);
+        ppnVec[addIdx] <= getMaskedPpn(ppn, level);
+        // update LRU bits
+        updRepIdx_enq <= Valid (addIdx);
+    endmethod
+
+    method Action flush;
+        writeVReg(validVec, replicate(False));
+        // also reset LRU bits
+        lruBit_upd <= 0;
+        updRepIdx_deq <= Invalid;
+        // signal fire
+        flushEn.send;
+    endmethod
+endmodule
+
+(* synthesize *)
+module mkSplitTransCache(TranslationCache);
+    Vector#(TSub#(NumPageWalkLevels, 1), SingleSplitTransCache) caches;
+    for(Integer i = 0; i < maxPageWalkLevel; i = i+1) begin
+        caches[i] <- mkSingleSplitTransCache(fromInteger(i + 1));
+    end
+
+    Fifo#(1, TranslationCacheResp) respQ <- mkPipelineFifo;
+
+    method Action req(Vpn vpn);
+        TranslationCacheResp resp;
+        Vector#(TSub#(NumPageWalkLevels, 1), Maybe#(Ppn)) hits;
+        for(Integer i = 0; i < maxPageWalkLevel; i = i+1) begin
+            hits[i] <- caches[i].req(vpn); // cached page walk level i+1
+        end
+        if(findIndex(isValid, hits) matches tagged Valid .idx) begin
+            resp = TranslationCacheResp {
+                startLevel: pack(idx),
+                ppn: validValue(hits[idx])
+            };
+        end
+        else begin
+            resp = TranslationCacheResp {
+                startLevel: maxPageWalkLevel,
+                ppn: ?
+            };
+        end
+        respQ.enq(resp);
+    endmethod
+
+    method TranslationCacheResp resp = respQ.first;
+
+    method Action deqResp;
+        respQ.deq;
+    endmethod
+
+    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn);
+        doAssert(level > 0, "cannot be level 0");
+        doAssert(level <= maxPageWalkLevel, "level too large");
+        caches[level - 1].addEntry(vpn, ppn);
+    endmethod
+        
+    method Action flush;
+        for(Integer i = 0; i < maxPageWalkLevel; i = i+1) begin
+            cacheds[i].flush;
+        end
+    endmethod
+
+    method Bool flush_done = True;
+endmodule

@@ -48,7 +48,8 @@ typedef Bit#(PageOffsetSz) PageOffset;
 typedef 9 VpnIdxSz; // Vpn is broken down to 3 indexes to 3 levels of page table 
 typedef Bit#(VpnIdxSz) VpnIdx;
 typedef Bit#(2) PageWalkLevel; // 2: 1GB page, 1: 2MB page, 0: 4KB page
-PageWalkLevel maxPageWalkLevel = 2;
+typedef 3 NumPageWalkLevels;
+PageWalkLevel maxPageWalkLevel = fromInteger(valueof(NumPageWalkLevels) - 1);
 
 typedef struct {
     Bool dirty;
@@ -88,7 +89,7 @@ function Addr getPTBaseAddr(Ppn basePpn);
 endfunction
 
 function Addr getPTEAddr(Addr baseAddr, Vpn vpn, PageWalkLevel level);
-    Vector#(3, VpnIdx) vpnVec = unpack(vpn); // index 0 is LSB
+    Vector#(NumPageWalkLevels, VpnIdx) vpnVec = unpack(vpn); // index 0 is LSB
     return baseAddr + (zeroExtend(vpnVec[level]) << 3); // PTE is 2^3 bytes
 endfunction
 

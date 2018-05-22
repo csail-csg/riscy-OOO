@@ -39,6 +39,7 @@ import SafeCounter::*;
 import CacheUtils::*;
 import SetAssocTlb::*;
 import L2SetAssocTlb::*;
+import TranslationCache::*;
 import LatencyTimer::*;
 
 // for SV39 only
@@ -119,6 +120,8 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     L2SetAssocTlb tlb4KB <- mkL2SetAssocTlb;
     // fully associative TLB for mega and giga pages
     L2FullAssocTlb tlbMG <- mkL2FullAssocTlb;
+    // MMU translation cache
+    TranslationCache transCache <- mkSplitTransCache;
 
     // flush
     Reg#(Bool) iFlushReq <- mkReg(False);
@@ -138,10 +141,9 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 
     // page walk currently being prcessed
     Reg#(Bool) miss <- mkReg(False);
+    Reg#(Bool) waitMem <- mkReg(False);
     // "i" in riscv spec's page walk algorithm
     Reg#(PageWalkLevel) walkLevel <- mkRegU;
-    // page table base addr ("a" in spec's algorithm)
-    Reg#(Addr) ptBaseAddr <- mkRegU;
     
     // current processor VM information
     Reg#(VMInfo) vm_info_I <- mkReg(defaultValue);
@@ -201,9 +203,10 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         waitFlushDone <= True;
         tlb4KB.flush;
         tlbMG.flush;
+        transCache.flush;
     endrule
 
-    rule doWaitFlush(flushing && waitFlushDone && tlb4KB.flush_done);
+    rule doWaitFlush(flushing && waitFlushDone && tlb4KB.flush_done && transCache.flush_done);
         waitFlushDone <= False;
         flushDoneQ.enq(?);
         iFlushReq <= False;
@@ -282,18 +285,11 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             tlb4KB.deqUpdate(RepInfoOnly, resp4KB.way, ?);
         end
         else begin
-            // miss, start page walk
-            PageWalkLevel level = maxPageWalkLevel;
-            Addr baseAddr = getPTBaseAddr(vm_info.basePPN);
+            // miss, first check translation cache
             miss <= True;
-            walkLevel <= level;
-            ptBaseAddr <= baseAddr;
-            // req memory (LLC)
-            Addr pteAddr = getPTEAddr(baseAddr, cRq.vpn, level);
-            memReqQ.enq(TlbMemReq {
-                addr: pteAddr,
-                id: Null
-            });
+            waitMem <= False;
+            transCache.req(cRq.vpn);
+
             // XXX we keep the 4KB array resp (not deq), because page walk
             // is done in a blocking way
 `ifdef PERF_COUNT
@@ -310,7 +306,26 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         end
     endrule
 
-    rule doPageWalk(pendReq matches tagged Valid .cRq &&& miss);
+    rule doTranslationCacheResp(pendReq matches tagged Valid .cRq &&& miss &&& !waitMem);
+        transCache.deqResp;
+        let resp = transCache.resp;
+        // start page walk based on the translation cache resp. Note that if
+        // the startLevel in resp is max, then we should use the base ppn in vm
+        // info
+        VMInfo vm_info = cRq.child == I ? vm_info_I : vm_info_D;
+        PageWalkLevel level = resp.startLevel;
+        Ppn basePpn = level < maxPageWalkLevel ? resp.basePpn : vm_info.basePPN;
+        Addr baseAddr = getPTBaseAddr(basePpn);
+        Addr pteAddr = getPTEAddr(baseAddr, cRq.vpn, level);
+        memReqQ.enq(TlbMemReq {
+            addr: pteAddr,
+            id: Null
+        });
+        walkLevel <= level;
+        waitMem <= True;
+    endrule
+
+    rule doPageWalk(pendReq matches tagged Valid .cRq &&& miss &&& waitMem);
         doAssert(!flushing, "cannot have pending req when flushing");
 
         // handle page fault
@@ -326,6 +341,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // req is done
             pendReq <= Invalid;
             miss <= False;
+            waitMem <= False;
 `ifdef PERF_COUNT
             // incr miss latency
             incrMissLat(cRq.child);
@@ -342,7 +358,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 
         if(verbose) begin
             $display("L2TLB page walk: ", fshow(vm_info), " ; ", fshow(cRq), " ; ",
-                     fshow(walkLevel), " ; ", fshow(ptBaseAddr), " ; ", fshow(pte));
+                     fshow(walkLevel), " ; ", fshow(pte));
         end
 
         if(!vm_info.sv39) begin
@@ -364,15 +380,15 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 else begin
                     // continue page walk, update page walk state
                     Addr newPTBase = getPTBaseAddr(pte.ppn);
-                    Bit#(2) newWalkLevel = walkLevel - 1;
-                    walkLevel <= newWalkLevel;
-                    ptBaseAddr <= newPTBase;
-                    // req memory for PTE
+                    PageWalkLevel newWalkLevel = walkLevel - 1;
                     Addr newPTEAddr = getPTEAddr(newPTBase, cRq.vpn, newWalkLevel);
                     memReqQ.enq(TlbMemReq {
                         addr: newPTEAddr,
                         id: Null
                     });
+                    walkLevel <= newWalkLevel;
+                    // add to translation cache
+                    transCache.addEntry(cRq.vpn, walkLevel, pte.ppn);
                 end
             end
             else begin
@@ -405,6 +421,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 // req is done, miss is resolved
                 pendReq <= Invalid;
                 miss <= False;
+                waitMem <= False;
 `ifdef PERF_COUNT
                 // incr miss latency
                 incrMissLat(cRq.child);
