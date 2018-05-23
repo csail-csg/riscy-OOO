@@ -64,8 +64,12 @@ typedef enum {
 typedef enum {
     L2TlbInstMissCnt,
     L2TlbInstMissLat,
+    L2TlbInstPageWalks,
+    L2TlbInstSavedPageWalks,
     L2TlbDataMissCnt,
-    L2TlbDataMissLat
+    L2TlbDataMissLat,
+    L2TlbDataPageWalks,
+    L2TlbDataSavedPageWalks
 } L2TlbPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {

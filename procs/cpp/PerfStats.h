@@ -171,8 +171,12 @@ public:
         // L2Tlb
         init(L2Tlb, L2TlbInstMissCnt, "L2Tlb inst access miss num");
         init(L2Tlb, L2TlbInstMissLat, "L2Tlb inst access miss total latency");
+        init(L2Tlb, L2TlbInstPageWalks, "L2Tlb inst page walk num");
+        init(L2Tlb, L2TlbInstSavedPageWalks, "L2Tlb inst saved page walk num");
         init(L2Tlb, L2TlbDataMissCnt, "L2Tlb data access miss num");
         init(L2Tlb, L2TlbDataMissLat, "L2Tlb data access miss total latency");
+        init(L2Tlb, L2TlbDataPageWalks, "L2Tlb data page walk num");
+        init(L2Tlb, L2TlbDataSavedPageWalks, "L2Tlb data saved page walk num");
 
         // DecStage
         init(DecStage, DecRedirectBr, "Dec stage redirect branch num");

@@ -160,8 +160,12 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Reg#(Bool) doStats <- mkConfigReg(False);
     Count#(Data) instMissCnt <- mkCount(0);
     Count#(Data) instMissLat <- mkCount(0);
+    Count#(Data) instPageWalks <- mkCount(0);
+    Count#(Data) instSavedPageWalks <- mkCount(0);
     Count#(Data) dataMissCnt <- mkCount(0);
     Count#(Data) dataMissLat <- mkCount(0);
+    Count#(Data) dataPageWalks <- mkCount(0);
+    Count#(Data) dataSavedPageWalks <- mkCount(0);
 
     LatencyTimer#(2, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
 
@@ -184,8 +188,12 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         Data d = (case(t)
             L2TlbInstMissCnt: (instMissCnt);
             L2TlbInstMissLat: (instMissLat);
+            L2TlbInstPageWalks: (instPageWalks);
+            L2TlbInstSavedPageWalks: (instSavedPageWalks);
             L2TlbDataMissCnt: (dataMissCnt);
             L2TlbDataMissLat: (dataMissLat);
+            L2TlbDataPageWalks: (dataPageWalks);
+            L2TlbDataSavedPageWalks: (dataSavedPageWalks);
             default: (0);
         endcase);
         perfRespQ.enq(PerfResp {
@@ -322,6 +330,18 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         });
         walkLevel <= level;
         waitMem <= True;
+`ifdef PERF_COUNT
+        // perf: saved page walks
+        if(doStats) begin
+            Data saved = zeroExtend(maxPageWalkLevel - level);
+            if(cRq.child == I) begin
+                instSavedPageWalks.incr(saved);
+            end
+            else begin
+                dataSavedPageWalks.incr(saved);
+            end
+        end
+`endif
     endrule
 
     rule doPageWalk(pendReq matches tagged Valid .cRq &&& miss &&& waitMem);
@@ -427,6 +447,17 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 `endif
             end
         end
+`ifdef PERF_COUNT
+        // perf: page walk done once
+        if(doStats) begin
+            if(cRq.child == I) begin
+                instPageWalks.incr(1);
+            end
+            else begin
+                dataPageWalks.incr(1);
+            end
+        end
+`endif
     endrule
 
     method Action updateVMInfo(VMInfo vmI, VMInfo vmD); //if(!isValid(pendReq));
