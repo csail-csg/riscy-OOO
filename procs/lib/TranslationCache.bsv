@@ -120,7 +120,7 @@ module mkSingleSplitTransCache#(PageWalkLevel level)(SingleSplitTransCache);
         // update slot
         validVec[addIdx] <= True;
         vpnVec[addIdx] <= getMaskedVpn(vpn, level);
-        ppnVec[addIdx] <= getMaskedPpn(ppn, level);
+        ppnVec[addIdx] <= ppn; // don't mask ppn, intermidate PTE point to a 4KB page
         // update LRU bits
         updRepIdx_enq <= Valid (addIdx);
     endmethod
