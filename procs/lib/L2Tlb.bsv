@@ -121,7 +121,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // fully associative TLB for mega and giga pages
     L2FullAssocTlb tlbMG <- mkL2FullAssocTlb;
     // MMU translation cache
-    TranslationCache transCache <- mkSplitTransCache;
+    TranslationCache transCache <- mkNullTransCache;
 
     // flush
     Reg#(Bool) iFlushReq <- mkReg(False);
@@ -162,10 +162,14 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Count#(Data) instMissLat <- mkCount(0);
     Count#(Data) instPageWalks <- mkCount(0);
     Count#(Data) instSavedPageWalks <- mkCount(0);
+    Count#(Data) instHugePageHitCnt <- mkCount(0);
+    Count#(Data) instHugePageMissCnt <- mkCount(0);
     Count#(Data) dataMissCnt <- mkCount(0);
     Count#(Data) dataMissLat <- mkCount(0);
     Count#(Data) dataPageWalks <- mkCount(0);
     Count#(Data) dataSavedPageWalks <- mkCount(0);
+    Count#(Data) dataHugePageHitCnt <- mkCount(0);
+    Count#(Data) dataHugePageMissCnt <- mkCount(0);
 
     LatencyTimer#(2, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
 
@@ -190,10 +194,14 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             L2TlbInstMissLat: (instMissLat);
             L2TlbInstPageWalks: (instPageWalks);
             L2TlbInstSavedPageWalks: (instSavedPageWalks);
+            L2TlbInstHugePageHits: (instHugePageHitCnt);
+            L2TlbInstHugePageMisses: (instHugePageMissCnt);
             L2TlbDataMissCnt: (dataMissCnt);
             L2TlbDataMissLat: (dataMissLat);
             L2TlbDataPageWalks: (dataPageWalks);
             L2TlbDataSavedPageWalks: (dataSavedPageWalks);
+            L2TlbDataHugePageHits: (dataHugePageHitCnt);
+            L2TlbDataHugePageMisses: (dataHugePageMissCnt);
             default: (0);
         endcase);
         perfRespQ.enq(PerfResp {
@@ -283,6 +291,16 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             pageHit(entry);
             tlb4KB.deqUpdate(None, ?, ?); // just deq 4KB array
             tlbMG.updateRepByHit(respMG.index); // update replacement in MG array
+`ifdef PERF_COUNT
+            if(doStats) begin
+                if(cRq.child == I) begin
+                    instHugePageHitCnt.incr(1);
+                end
+                else begin
+                    dataHugePageHitCnt.incr(1);
+                end
+            end
+`endif
         end
         else if(resp4KB.hit) begin
             // hit on 4KB page
@@ -432,6 +450,16 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                     tlbMG.addEntry(entry);
                     // deq 4KB TLB
                     tlb4KB.deqUpdate(None, ?, ?);
+`ifdef PERF_COUNT
+                    if(doStats) begin
+                        if(cRq.child == I) begin
+                            instHugePageMissCnt.incr(1);
+                        end
+                        else begin
+                            dataHugePageMissCnt.incr(1);
+                        end
+                    end
+`endif
                 end
                 else begin
                     // 4KB page, add to 4KB TLB & deq

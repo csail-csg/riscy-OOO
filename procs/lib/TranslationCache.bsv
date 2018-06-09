@@ -190,3 +190,28 @@ module mkSplitTransCache(TranslationCache);
 
     method Bool flush_done = True;
 endmodule
+
+(* synthesize *)
+module mkNullTransCache(TranslationCache);
+    Fifo#(1, void) reqQ <- mkPipelineFifo;
+
+    method Action req(Vpn vpn);
+        reqQ.enq(?);
+    endmethod
+    method Action deqResp;
+        reqQ.deq;
+    endmethod
+    method TranslationCacheResp resp if(req.notEmpty);
+        return TranslationCacheResp {
+            startLevel: maxPageWalkLevel,
+            ppn: ?
+        };
+    endmethod
+    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn);
+        noAction;
+    endmethod
+    method Action flush;
+        noAction;
+    endmethod
+    method Bool flush_done = True;
+endmodule

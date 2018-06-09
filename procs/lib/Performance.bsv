@@ -66,10 +66,14 @@ typedef enum {
     L2TlbInstMissLat,
     L2TlbInstPageWalks,
     L2TlbInstSavedPageWalks,
+    L2TlbInstHugePageHits, // hits on huge page (2MB, 1GB)
+    L2TlbInstHugePageMisses, // miss (i.e., page walk) to get huge page (2MB, 1GB)
     L2TlbDataMissCnt,
     L2TlbDataMissLat,
     L2TlbDataPageWalks,
-    L2TlbDataSavedPageWalks
+    L2TlbDataSavedPageWalks,
+    L2TlbDataHugePageHits,
+    L2TlbDataHugePageMisses
 } L2TlbPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
