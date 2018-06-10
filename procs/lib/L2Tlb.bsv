@@ -348,6 +348,11 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         });
         walkLevel <= level;
         waitMem <= True;
+        if(verbose) begin
+            $display("L2TLB start page walk: ", fshow(cRq), "; ",
+                     fshow(vm_info), "; ", fshow(resp), "; ",
+                     fshow(level), "; ", fshow(pteAddr));
+        end
 `ifdef PERF_COUNT
         // perf: saved page walks
         if(doStats) begin

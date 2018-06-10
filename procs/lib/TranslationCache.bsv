@@ -16,10 +16,10 @@ typedef struct {
 } TranslationCacheResp deriving(Bits, Eq, FShow);
 
 interface TranslationCache;
-    method Action req(Vpn vpn);
+    method Action req(Vpn vpn, Asid asid);
     method TranslationCacheResp resp;
     method Action deqResp;
-    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn);
+    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn, Asid asid);
     method Action flush;
     method Bool flush_done;
 endinterface
@@ -33,8 +33,8 @@ endinterface
 
 // translation cache for a specific level L. This stores the PTEs at level L.
 interface SingleSplitTransCache;
-    method ActionValue#(Maybe#(Ppn)) req(Vpn vpn);
-    method Action addEntry(Vpn vpn, Ppn ppn);
+    method ActionValue#(Maybe#(Ppn)) req(Vpn vpn, Asid asid);
+    method Action addEntry(Vpn vpn, Ppn ppn, Asid asid);
     method Action flush;
 endinterface
 
@@ -47,6 +47,7 @@ module mkSingleSplitTransCache#(PageWalkLevel level)(SingleSplitTransCache);
     Vector#(SplitTransCacheSize, Reg#(Bool)) validVec <- replicateM(mkReg(False));
     Vector#(SplitTransCacheSize, Reg#(Vpn)) vpnVec <- replicateM(mkRegU);
     Vector#(SplitTransCacheSize, Reg#(Ppn)) ppnVec <- replicateM(mkRegU);
+    Vector#(SplitTransCacheSize, Reg#(Asid)) asidVec <- replicateM(mkRegU);
 
     // bit-LRU replacement. To reduce cycle time, we update LRU bits in the
     // next cycle after we touch an entry. However, when we have two
@@ -82,10 +83,11 @@ module mkSingleSplitTransCache#(PageWalkLevel level)(SingleSplitTransCache);
         lruBit_upd <= val;
     endrule
 
-    method ActionValue#(Maybe#(Ppn)) req(Vpn vpn) if(updRepIdx_enq == Invalid && !flushEn);
+    method ActionValue#(Maybe#(Ppn)) req(Vpn vpn, Asid asid) if(updRepIdx_enq == Invalid && !flushEn);
         function Bool hit(SplitTransCacheIdx i);
-            let vpn_match = getMaskedVpn(vpn, level) == getMaskedVpn(vpnVec[i], level);
-            return validVec[i] && vpn_match;
+            Bool vpn_match = getMaskedVpn(vpn, level) == getMaskedVpn(vpnVec[i], level);
+            Bool asid_match = asid == asidVec[i]; // TODO global??
+            return validVec[i] && vpn_match && asid_match;
         endfunction
         Vector#(SplitTransCacheSize, SplitTransCacheIdx) idxVec = genWith(fromInteger);
         if(find(hit, idxVec) matches tagged Valid .i) begin
@@ -97,7 +99,7 @@ module mkSingleSplitTransCache#(PageWalkLevel level)(SingleSplitTransCache);
         end
     endmethod
         
-    method Action addEntry(Vpn vpn, Ppn ppn) if(updRepIdx_enq == Invalid && !flushEn);
+    method Action addEntry(Vpn vpn, Ppn ppn, Asid asid) if(updRepIdx_enq == Invalid && !flushEn);
         SplitTransCacheIdx addIdx;
         if(findIndex( \== (False) , readVReg(validVec) ) matches tagged Valid .idx) begin
             // get empty slot
@@ -121,6 +123,7 @@ module mkSingleSplitTransCache#(PageWalkLevel level)(SingleSplitTransCache);
         validVec[addIdx] <= True;
         vpnVec[addIdx] <= getMaskedVpn(vpn, level);
         ppnVec[addIdx] <= ppn; // don't mask ppn, intermidate PTE point to a 4KB page
+        asidVec[addIdx] <= asid;
         // update LRU bits
         updRepIdx_enq <= Valid (addIdx);
     endmethod
@@ -144,11 +147,11 @@ module mkSplitTransCache(TranslationCache);
 
     Fifo#(1, TranslationCacheResp) respQ <- mkPipelineFifo;
 
-    method Action req(Vpn vpn);
+    method Action req(Vpn vpn, Asid asid);
         TranslationCacheResp resp;
         Vector#(TSub#(NumPageWalkLevels, 1), Maybe#(Ppn)) hits;
         for(PageWalkLevel i = 0; i < maxPageWalkLevel; i = i+1) begin
-            hits[i] <- caches[i].req(vpn); // cached page walk level i+1
+            hits[i] <- caches[i].req(vpn, asid); // cached page walk level i+1
         end
         // XXX hit in lower level has priority
         if(findIndex(isValid, hits) matches tagged Valid .idx) begin
@@ -176,10 +179,10 @@ module mkSplitTransCache(TranslationCache);
     // newly add entry (so in case of miss, the pending req could mark itself
     // waiting on the page walk that is just about to addEntry, and get the
     // bypass)
-    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn) if(respQ.notFull);
+    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn, Asid asid) if(respQ.notFull);
         doAssert(level > 0, "cannot be level 0");
         doAssert(level <= maxPageWalkLevel, "level too large");
-        caches[level - 1].addEntry(vpn, ppn);
+        caches[level - 1].addEntry(vpn, ppn, asid);
     endmethod
         
     method Action flush;
@@ -195,7 +198,7 @@ endmodule
 module mkNullTransCache(TranslationCache);
     Fifo#(1, void) reqQ <- mkPipelineFifo;
 
-    method Action req(Vpn vpn);
+    method Action req(Vpn vpn, Asid asid);
         reqQ.enq(?);
     endmethod
     method Action deqResp;
@@ -207,7 +210,7 @@ module mkNullTransCache(TranslationCache);
             ppn: ?
         };
     endmethod
-    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn);
+    method Action addEntry(Vpn vpn, PageWalkLevel level, Ppn ppn, Asid asid);
         noAction;
     endmethod
     method Action flush;
