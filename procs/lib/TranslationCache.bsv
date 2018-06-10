@@ -201,7 +201,7 @@ module mkNullTransCache(TranslationCache);
     method Action deqResp;
         reqQ.deq;
     endmethod
-    method TranslationCacheResp resp if(req.notEmpty);
+    method TranslationCacheResp resp if(reqQ.notEmpty);
         return TranslationCacheResp {
             startLevel: maxPageWalkLevel,
             ppn: ?
