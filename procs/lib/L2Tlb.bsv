@@ -121,7 +121,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // fully associative TLB for mega and giga pages
     L2FullAssocTlb tlbMG <- mkL2FullAssocTlb;
     // MMU translation cache
-    TranslationCache transCache <- mkNullTransCache;
+    TranslationCache transCache <- mkSplitTransCache;
 
     // flush
     Reg#(Bool) iFlushReq <- mkReg(False);
@@ -314,7 +314,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // miss, first check translation cache
             miss <= True;
             waitMem <= False;
-            transCache.req(cRq.vpn);
+            transCache.req(cRq.vpn, vm_info.asid);
 
             // XXX we keep the 4KB array resp (not deq), because page walk
             // is done in a blocking way
@@ -430,7 +430,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                     });
                     walkLevel <= newWalkLevel;
                     // add to translation cache
-                    transCache.addEntry(cRq.vpn, walkLevel, pte.ppn);
+                    transCache.addEntry(cRq.vpn, walkLevel, pte.ppn, vm_info.asid);
                 end
             end
             else begin

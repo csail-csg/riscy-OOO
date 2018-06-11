@@ -121,7 +121,7 @@ module mkSingleSplitTransCache#(PageWalkLevel level)(SingleSplitTransCache);
         end
         // update slot
         validVec[addIdx] <= True;
-        vpnVec[addIdx] <= getMaskedVpn(vpn, level);
+        vpnVec[addIdx] <= vpn; // we mask vpn at search time
         ppnVec[addIdx] <= ppn; // don't mask ppn, intermidate PTE point to a 4KB page
         asidVec[addIdx] <= asid;
         // update LRU bits
