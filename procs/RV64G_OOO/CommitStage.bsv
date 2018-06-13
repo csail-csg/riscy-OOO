@@ -244,6 +244,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     // maintain system consistency when system state (CSR) changes
     function Action makeSystemConsistent(Bool flushTlb);
     action
+        flushTlb = True; // [sizhuo] be conservative, just flush
         if(flushTlb) begin
             inIfc.setFlushTlbs;
 `ifdef PERF_COUNT
