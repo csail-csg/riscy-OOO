@@ -244,7 +244,6 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     // maintain system consistency when system state (CSR) changes
     function Action makeSystemConsistent(Bool flushTlb);
     action
-        flushTlb = True; // [sizhuo] be conservative, just flush
         if(flushTlb) begin
             inIfc.setFlushTlbs;
 `ifdef PERF_COUNT
@@ -385,6 +384,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         // we claim a phy reg for every inst, so commit its renaming
         regRenamingTable.commit[0].commit;
 
+        Bool write_satp = False; // flush tlb when satp csr is modified
         if(x.iType == Csr) begin
             // notify commit of CSR (so MMIO pRq may be handled)
             inIfc.commitCsrInstOrInterrupt;
@@ -398,6 +398,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
                 doAssert(False, "must have csr data");
             end
             csrf.csrInstWr(csr_idx, csr_data);
+            // check if satp is modified or not
+            write_satp = csr_idx == CSRsatp;
         end
 
         // redirect (Sret and Mret redirect pc is got from CSRF)
@@ -415,7 +417,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         // need to flush ROB again
 
         // system consistency
-        makeSystemConsistent(x.iType == SFence);
+        // flush TLB for SFence.VMA and when SATP CSR is modified
+        makeSystemConsistent(x.iType == SFence || write_satp);
 
         // incr inst cnt
         csrf.incInstret(1);
