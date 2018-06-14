@@ -185,6 +185,8 @@
 `endif
 
 `ifdef CORE_BOOM
+    // we extend SMALL to match BOOM's ROB and memory latency, we also increase
+    // spec tags because of increased ROB size
 
     // superscalar
     `define sizeSup 2
@@ -197,8 +199,8 @@
     `define NUM_SPEC_TAGS 12
 
     // LSQ
-    `define LDQ_SIZE 16
-    `define STQ_SIZE 16
+    `define LDQ_SIZE 24
+    `define STQ_SIZE 14
     `define SB_SIZE 4
 
     // reservation station sizes
