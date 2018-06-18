@@ -62,6 +62,8 @@
 
 // non-blocking DTLB
 `define DTLB_REQ_NUM 4
+// non-blocking L2 TLB
+`define L2TLB_REQ_NUM 2
 
 `define DRAM_MAX_READS TExp#(`LOG_LLC_WAYS) // max reads in DRAM, match LLC ways
 `define DRAM_MAX_WRITES 16 // write buffer size in AWS DRAM controller

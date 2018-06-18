@@ -128,7 +128,7 @@ module mkFullAssocTlb#(
         end
     endmethod
 
-    method Action updateRepByHit(tlbIdxT index) if(!flushEn && && updRepIdx_enq == Invalid);
+    method Action updateRepByHit(tlbIdxT index) if(!flushEn && updRepIdx_enq == Invalid);
         updRepIdx_enq <= Valid (index);
     endmethod
 
@@ -150,9 +150,12 @@ module mkFullAssocTlb#(
             return validVec[i] && same_page;
         endfunction
         Vector#(tlbSz, tlbIdxT) idxVec = genWith(fromInteger);
-        if(find(sameEntry, idxVec) matches tagged Valid .idx) begin
+        if(any(sameEntry, idxVec)) begin
             // entry exists, update LRU
-            updRepIdx_enq <= Valid (idx);
+            //updRepIdx_enq <= Valid (idx);
+            // FIXME: when I try to use find() to find the index, the
+            // compilation just explodes...
+            noAction;
         end
         else begin
             // find a slot for this translation

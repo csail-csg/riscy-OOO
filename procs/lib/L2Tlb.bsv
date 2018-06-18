@@ -143,7 +143,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Vector#(L2TlbReqNum, Ehr#(2, Bool)) pendValid <- replicateM(mkEhr(False));
     Vector#(L2TlbReqNum, Reg#(L2TlbRqFromC)) pendReq <- replicateM(mkRegU);
     Vector#(L2TlbReqNum, Ehr#(2, Bool)) pendWalking <- replicateM(mkEhr(?));
-    Vector#(L2TlbReqNum, Reg#(PageWalkLevel)) pendWalkLevel <- replicateM(mkEhr(?));
+    Vector#(L2TlbReqNum, Reg#(PageWalkLevel)) pendWalkLevel <- replicateM(mkRegU);
 
     // rule ordering:
     // - trans cache resp < tlb resp < tlb req
@@ -255,7 +255,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         transCache.flush;
         // check no req
         doAssert(!rqFromCQ.notEmpty, "cannot have new req");
-        doAssert(readVEhr(pendValid, 0) == replicate(False), "cannot have pending req");
+        doAssert(readVEhr(0, pendValid) == replicate(False), "cannot have pending req");
     endrule
 
     rule doWaitFlush(flushing && waitFlushDone && tlb4KB.flush_done && transCache.flush_done);
@@ -281,7 +281,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         let r = rqFromCQ.first;
         // req tlb array
         VMInfo vm_info = r.child == I ? vm_info_I : vm_info_D;
-        tlb4KB.req(Translate (SetAssocTlbReq {
+        tlb4KB.req(Translate (SetAssocTlbTranslateReq {
             vpn: r.vpn,
             asid: vm_info.asid
         }));
@@ -400,7 +400,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 
     rule doTranslationCacheResp(transCacheReqQ.notEmpty);
         // get req in trans cache
-        transCacheReqQ.deq
+        transCacheReqQ.deq;
         L2TlbReqIdx idx = transCacheReqQ.first;
         L2TlbRqFromC cRq = pendReq[idx];
         // get trans cache resp

@@ -45,7 +45,7 @@ typedef struct {
 typedef union tagged {
     SetAssocTlbTranslateReq Translate;
     TlbEntry Refill;
-} SetAssocTlbPendReq deriving(Bits, Eq, FShow);
+} SetAssocTlbReq deriving(Bits, Eq, FShow);
 
 interface SetAssocTlb#(
     numeric type wayNum,
@@ -170,7 +170,8 @@ module mkSetAssocTlb#(
         else begin
             // find a slot for this translation
             // Since TLB is read-only cache, we can silently evict
-            wayT addWay = getRepWay(repInfo, map(not, validVec));
+            function Bool flip(Bool x) = !x;
+            wayT addWay = getRepWay(repInfo, map(flip, validVec));
             // update slot & rep info
             indexT idx = getIndex(newEn.vpn);
             tlbRam[addWay].wrReq(idx, SetAssocTlbEntry {
