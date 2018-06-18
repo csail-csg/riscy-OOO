@@ -33,8 +33,8 @@ typedef struct {
     TlbEntry entry; // hit entry
 } FullAssocTlbResp#(type indexT) deriving(Bits, Eq, FShow);
 
-// flush, addEntry, (translate + updateRepByHit) are mutually exclusive
-// precedence: flush < addEntry < (translate + updateRepByHit)
+// flush preempts addEntry and (translate + updateRepByHit)
+// addEntry C (translate + updateRepByHit)
 // This avoids bypass from addEntry to translate, and avoids races on LRU bits
 
 // translate CF updateRepByHit.
@@ -77,9 +77,8 @@ module mkFullAssocTlb#(
         endrule
     end
 
-    // fire signal for each method
+    // fire signal for flush
     PulseWire flushEn <- mkPulseWire;
-    PulseWire addEntryEn <- mkPulseWire;
 
     rule doUpdateRep(!flushEn &&& updRepIdx_deq matches tagged Valid .idx);
         updRepIdx_deq <= Invalid;
@@ -103,7 +102,7 @@ module mkFullAssocTlb#(
         flushEn.send;
     endmethod
 
-    method FullAssocTlbResp#(tlbIdxT) translate(Vpn vpn, Asid asid) if(!flushEn && !addEntryEn);
+    method FullAssocTlbResp#(tlbIdxT) translate(Vpn vpn, Asid asid) if(!flushEn);
         // find the matching entry
         function Bool isMatch(tlbIdxT i);
             TlbEntry entry = entryVec[i];
@@ -129,7 +128,7 @@ module mkFullAssocTlb#(
         end
     endmethod
 
-    method Action updateRepByHit(tlbIdxT index) if(!flushEn && !addEntryEn && updRepIdx_enq == Invalid);
+    method Action updateRepByHit(tlbIdxT index) if(!flushEn && && updRepIdx_enq == Invalid);
         updRepIdx_enq <= Valid (index);
     endmethod
 
@@ -151,8 +150,11 @@ module mkFullAssocTlb#(
             return validVec[i] && same_page;
         endfunction
         Vector#(tlbSz, tlbIdxT) idxVec = genWith(fromInteger);
-        // only add new entry when the entry is not already in TLB
-        if(!any(sameEntry, idxVec)) begin
+        if(find(sameEntry, idxVec) matches tagged Valid .idx) begin
+            // entry exists, update LRU
+            updRepIdx_enq <= Valid (idx);
+        end
+        else begin
             // find a slot for this translation
             // Since TLB is read-only cache, we can silently evict
             tlbIdxT addIdx;
@@ -180,7 +182,5 @@ module mkFullAssocTlb#(
             // update LRU bits
             updRepIdx_enq <= Valid (addIdx);
         end
-        // record firing
-        addEntryEn.send;
     endmethod
 endmodule

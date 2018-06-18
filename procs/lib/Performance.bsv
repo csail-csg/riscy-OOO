@@ -73,7 +73,9 @@ typedef enum {
     L2TlbDataPageWalks,
     L2TlbDataSavedPageWalks,
     L2TlbDataHugePageHits,
-    L2TlbDataHugePageMisses
+    L2TlbDataHugePageMisses,
+    L2TlbHitUnderMissCnt,
+    L2TlbAllMissCycles // all TLB req entries are doing page walk, so TLB is blocked
 } L2TlbPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {

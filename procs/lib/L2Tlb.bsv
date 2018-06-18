@@ -47,7 +47,7 @@ import LatencyTimer::*;
 // curretly L2 TLB is just a blocking page walker
 
 // interface with memory (LLC)
-typedef enum {Null} TlbMemReqId deriving(Bits, Eq, FShow);
+typedef L2TlbReqIdx TlbMemReqId;
 
 typedef struct {
     // this is always a load req
@@ -120,8 +120,13 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     L2SetAssocTlb tlb4KB <- mkL2SetAssocTlb;
     // fully associative TLB for mega and giga pages
     L2FullAssocTlb tlbMG <- mkL2FullAssocTlb;
+    // FIFO in parallel with TLB
+    Fifo#(1, L2TlbReqIdx) tlbReqQ <- mkPipelineFifo;
+
     // MMU translation cache
     TranslationCache transCache <- mkSplitTransCache;
+    // FIFO in parallel with MMU cache
+    Fifo#(1, L2TlbReqIdx) transCacheReqQ <- mkPipelineFifo;
 
     // flush
     Reg#(Bool) iFlushReq <- mkReg(False);
@@ -134,17 +139,34 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Fifo#(1, L2TlbRqFromC) rqFromCQ <- mkBypassFifo;
     Fifo#(1, L2TlbRsToC) rsToCQ <- mkBypassFifo;
 
-    // pending req in set assoc TLB pipeline
-    Ehr#(2, Maybe#(L2TlbRqFromC)) pendReq_ehr <- mkEhr(Invalid);
-    Reg#(Maybe#(L2TlbRqFromC)) pendReq = pendReq_ehr[0];
-    Reg#(Maybe#(L2TlbRqFromC)) pendReq_enq = pendReq_ehr[1];
+    // pending reqs
+    Vector#(L2TlbReqNum, Ehr#(2, Bool)) pendValid <- replicateM(mkEhr(False));
+    Vector#(L2TlbReqNum, Reg#(L2TlbRqFromC)) pendReq <- replicateM(mkRegU);
+    Vector#(L2TlbReqNum, Ehr#(2, Bool)) pendWalking <- replicateM(mkEhr(?));
+    Vector#(L2TlbReqNum, Reg#(PageWalkLevel)) pendWalkLevel <- replicateM(mkEhr(?));
 
-    // page walk currently being prcessed
-    Reg#(Bool) miss <- mkReg(False);
-    Reg#(Bool) waitMem <- mkReg(False);
-    // "i" in riscv spec's page walk algorithm
-    Reg#(PageWalkLevel) walkLevel <- mkRegU;
-    
+    // rule ordering:
+    // - trans cache resp < tlb resp < tlb req
+    // - trans cache resp mutually exclusive with page walk (trans cache resp
+    // has precedence). I don't want them to fire together because both rules
+    // update walk level, and I don't want a bypass path.
+    // - tlb resp mutually exclusive with page walk (tlb resp has precedence).
+    // These two rules cannot fire together, because page walk may update trans
+    // cache and tlb resp may request trans cache. tlb resp takes precednece
+    // because page walk may update tlb and it needs to wait for tlb resp to
+    // deq resp.
+    // - tlb req mutually exclusive with page walk (page walk has precedence).
+    // They cannot fire together, because page walk may udpate tlb and tlb req
+    // may request tlb.
+
+    let pendValid_tlbResp = getVEhrPort(pendValid, 0);
+    let pendValid_pageWalk = getVEhrPort(pendValid, 0);
+    let pendValid_tlbReq = getVEhrPort(pendValid, 1);
+
+    let pendWalking_transCacheResp = getVEhrPort(pendWalking, 0);
+    let pendWalking_tlbResp = getVEhrPort(pendWalking, 1); // perf
+    let pendWalking_tlbReq = getVEhrPort(pendWalking, 1);
+
     // current processor VM information
     Reg#(VMInfo) vm_info_I <- mkReg(defaultValue);
     Reg#(VMInfo) vm_info_D <- mkReg(defaultValue);
@@ -170,12 +192,14 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Count#(Data) dataSavedPageWalks <- mkCount(0);
     Count#(Data) dataHugePageHitCnt <- mkCount(0);
     Count#(Data) dataHugePageMissCnt <- mkCount(0);
+    Count#(Data) hitUnderMissCnt <- mkCount(0);
+    Count#(Data) allMissCycles <- mkCount(0);
 
-    LatencyTimer#(2, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
+    LatencyTimer#(L2TlbReqNum, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
 
-    function Action incrMissLat(TlbChild child);
+    function Action incrMissLat(TlbChild child, L2TlbReqIdx idx);
     action
-        let lat <- latTimer.done(0);
+        let lat <- latTimer.done(idx);
         if(doStats) begin
             if(child == I) begin
                 instMissLat.incr(zeroExtend(lat));
@@ -186,6 +210,14 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         end
     endaction
     endfunction
+
+    rule incrAllMissCycles(doStats);
+        function Bool isMiss(L2TlbReqIdx i);
+            return pendValid[i][0] && pendWalking[i][0];
+        endfunction
+        Vector#(L2TlbReqNum, L2TlbReqIdx) idxVec = genWith(fromInteger);
+        when(all(isMiss, idxVec), allMissCycles.incr(1));
+    endrule
 
     rule doPerf;
         let t <- toGet(perfReqQ).get;
@@ -202,6 +234,8 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             L2TlbDataSavedPageWalks: (dataSavedPageWalks);
             L2TlbDataHugePageHits: (dataHugePageHitCnt);
             L2TlbDataHugePageMisses: (dataHugePageMissCnt);
+            L2TlbHitUnderMissCnt: (hitUnderMissCnt);
+            L2TlbAllMissCycles: (allMissCycles);
             default: (0);
         endcase);
         perfRespQ.enq(PerfResp {
@@ -213,13 +247,15 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 
     // when flushing is true, since both I and D TLBs have finished flush and
     // is waiting for L2 to flush, all I/D TLB req must have been responded.
-    // Thus, there cannot be any req in pendReq or rqFromCQ. We add the guards
-    // to make rules truly exclusive so no req can be processed during flush.
-    rule doStartFlush(flushing && !waitFlushDone && !isValid(pendReq));
+    // Thus, there cannot be any req in pendReq or rqFromCQ.
+    rule doStartFlush(flushing && !waitFlushDone);
         waitFlushDone <= True;
         tlb4KB.flush;
         tlbMG.flush;
         transCache.flush;
+        // check no req
+        doAssert(!rqFromCQ.notEmpty, "cannot have new req");
+        doAssert(readVEhr(pendValid, 0) == replicate(False), "cannot have pending req");
     endrule
 
     rule doWaitFlush(flushing && waitFlushDone && tlb4KB.flush_done && transCache.flush_done);
@@ -229,21 +265,42 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         dFlushReq <= False;
     endrule
 
-    rule doTlbReq(!isValid(pendReq_enq) && !flushing);
+    // tlb req rule is preempted by page walk rule, i.e., don't fire when page
+    // walk resp is avaiable
+    rule doTlbReq(!flushing && !respLdQ.notEmpty);
+        // find a slot for the new req
+        L2TlbReqIdx idx = ?;
+        if(findIndex( \== (False) , readVReg(pendValid_tlbReq) ) matches tagged Valid .i) begin
+            idx = pack(i);
+        end
+        else begin
+            when(False, noAction);
+        end
         // get new req
         rqFromCQ.deq;
         let r = rqFromCQ.first;
         // req tlb array
         VMInfo vm_info = r.child == I ? vm_info_I : vm_info_D;
-        tlb4KB.req(SetAssocTlbReq {vpn: r.vpn, asid: vm_info.asid});
+        tlb4KB.req(Translate (SetAssocTlbReq {
+            vpn: r.vpn,
+            asid: vm_info.asid
+        }));
+        tlbReqQ.enq(idx);
         // record req
-        pendReq_enq <= Valid (r);
-        if(verbose) $display("L2TLB new req: ", fshow(r));
+        pendValid_tlbReq[idx] <= True;
+        pendReq[idx] <= r;
+        pendWalking_tlbReq[idx] <= False;
+        if(verbose) $display("L2TLB new req: ", fshow(r), "; ", fshow(idx));
     endrule
 
     // process resp from 4KB TLB and mega-giga TLB
-    rule doTlbResp(pendReq matches tagged Valid .cRq &&& !miss);
+    rule doTlbResp(tlbReqQ.notEmpty);
         doAssert(!flushing, "cannot have pending req when flushing");
+
+        // get req in tlb
+        tlbReqQ.deq;
+        L2TlbReqIdx idx = tlbReqQ.first;
+        L2TlbRqFromC cRq = pendReq[idx];
 
         // get correct VM info
         VMInfo vm_info = cRq.child == I ? vm_info_I : vm_info_D;
@@ -267,7 +324,17 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 entry: Valid (entry)
             });
             // req is done
-            pendReq <= Invalid;
+            pendValid_tlbResp[idx] <= False;
+`ifdef PERF_COUNT
+            // perf: hit under miss
+            function Bool otherMiss(L2TlbReqIdx i);
+                return pendValid_tlbResp[i] && pendWalking_tlbResp[i] && i != idx;
+            endfunction
+            Vector#(L2TlbReqNum, L2TlbReqIdx) idxVec = genWith(fromInteger);
+            if(any(otherMiss, idxVec)) begin
+                hitUnderMissCnt.incr(1);
+            end
+`endif
         endaction
         endfunction
 
@@ -278,10 +345,10 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 child: cRq.child,
                 entry: Invalid
             });
-            // 4KB TLB array is not deq yet
-            tlb4KB.deqUpdate(None, ?, ?);
+            // deq 4KB TLB array
+            tlb4KB.deqResp(Invalid);
             // req is done
-            pendReq <= Invalid;
+            pendValid_tlbResp[idx] <= False;
         end
         else if(respMG.hit) begin
             // hit on a mega or giga page
@@ -289,7 +356,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             doAssert(entry.level > 0 && entry.level <= maxPageWalkLevel,
                      "mega or giga page");
             pageHit(entry);
-            tlb4KB.deqUpdate(None, ?, ?); // just deq 4KB array
+            tlb4KB.deqResp(Invalid); // just deq 4KB array
             tlbMG.updateRepByHit(respMG.index); // update replacement in MG array
 `ifdef PERF_COUNT
             if(doStats) begin
@@ -308,18 +375,17 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             doAssert(entry.level == 0, "must be 4KB page");
             pageHit(entry);
             // update 4KB array replacement, no need to touch MG array
-            tlb4KB.deqUpdate(RepInfoOnly, resp4KB.way, ?);
+            tlb4KB.deqResp(Valid (resp4KB.way));
         end
         else begin
-            // miss, first check translation cache
-            miss <= True;
-            waitMem <= False;
+            // miss, deq resp
+            tlb4KB.deqResp(Invalid);
+            // check translation cache
             transCache.req(cRq.vpn, vm_info.asid);
-
-            // XXX we keep the 4KB array resp (not deq), because page walk
-            // is done in a blocking way
+            transCacheReqQ.enq(idx);
+            // perf: TLB miss
 `ifdef PERF_COUNT
-            latTimer.start(0);
+            latTimer.start(idx);
             if(doStats) begin
                 if(cRq.child == I) begin
                     instMissCnt.incr(1);
@@ -332,7 +398,12 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         end
     endrule
 
-    rule doTranslationCacheResp(pendReq matches tagged Valid .cRq &&& miss &&& !waitMem);
+    rule doTranslationCacheResp(transCacheReqQ.notEmpty);
+        // get req in trans cache
+        transCacheReqQ.deq
+        L2TlbReqIdx idx = transCacheReqQ.first;
+        L2TlbRqFromC cRq = pendReq[idx];
+        // get trans cache resp
         transCache.deqResp;
         let resp = transCache.resp;
         // start page walk based on the translation cache resp. Note that if
@@ -344,10 +415,11 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         Addr pteAddr = getPTEAddr(baseAddr, cRq.vpn, level);
         memReqQ.enq(TlbMemReq {
             addr: pteAddr,
-            id: Null
+            id: idx
         });
-        walkLevel <= level;
-        waitMem <= True;
+        // record page walk info
+        pendWalking_transCacheResp[idx] <= True;
+        pendWalkLevel[idx] <= level;
         if(verbose) begin
             $display("L2TLB start page walk: ", fshow(cRq), "; ",
                      fshow(vm_info), "; ", fshow(resp), "; ",
@@ -367,8 +439,16 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 `endif
     endrule
 
-    rule doPageWalk(pendReq matches tagged Valid .cRq &&& miss &&& waitMem);
+    // page walk is preempted by tlb resp rule and trans cache resp rule, i.e.,
+    // don't fire when tlb resp or trans cache resp are available
+    rule doPageWalk(respLdQ.notEmpty && !tlbReqQ.notEmpty && !transCacheReqQ.notEmpty);
         doAssert(!flushing, "cannot have pending req when flushing");
+
+        // get the resp data from memory (LLC)
+        respLdQ.deq;
+        PTESv39 pte = unpack(respLdQ.first.data);
+        L2TlbReqIdx idx = respLdQ.first.id;
+        L2TlbRqFromC cRq = pendReq[idx];
 
         // handle page fault
         function Action pageFault(String reason);
@@ -378,15 +458,11 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 child: cRq.child,
                 entry: Invalid
             });
-            // 4KB TLB array is not deq yet
-            tlb4KB.deqUpdate(None, ?, ?);
             // req is done
-            pendReq <= Invalid;
-            miss <= False;
-            waitMem <= False;
+            pendValid_pageWalk[idx] <= False;
 `ifdef PERF_COUNT
             // incr miss latency
-            incrMissLat(cRq.child);
+            incrMissLat(cRq.child, idx);
 `endif
         endaction
         endfunction
@@ -394,12 +470,15 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         // get correct VM info
         VMInfo vm_info = cRq.child == I ? vm_info_I : vm_info_D;
 
-        // get the resp data from memory (LLC)
-        respLdQ.deq;
-        PTESv39 pte = unpack(respLdQ.first.data);
+        // assume we are continuing page walk, update level (it causes not harm
+        // even if we stop page walk)
+        PageWalkLevel walkLevel = pendWalkLevel[idx];
+        PageWalkLevel newWalkLevel = walkLevel - 1;
+        pendWalkLevel[idx] <= newWalkLevel;
 
         if(verbose) begin
-            $display("L2TLB page walk: ", fshow(vm_info), " ; ", fshow(cRq), " ; ",
+            $display("L2TLB page walk: ", fshow(vm_info), " ; ",
+                     fshow(idx), " ; ", fshow(cRq), " ; ",
                      fshow(walkLevel), " ; ", fshow(pte));
         end
 
@@ -422,13 +501,11 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 else begin
                     // continue page walk, update page walk state
                     Addr newPTBase = getPTBaseAddr(pte.ppn);
-                    PageWalkLevel newWalkLevel = walkLevel - 1;
                     Addr newPTEAddr = getPTEAddr(newPTBase, cRq.vpn, newWalkLevel);
                     memReqQ.enq(TlbMemReq {
                         addr: newPTEAddr,
-                        id: Null
+                        id: idx
                     });
-                    walkLevel <= newWalkLevel;
                     // add to translation cache
                     transCache.addEntry(cRq.vpn, walkLevel, pte.ppn, vm_info.asid);
                 end
@@ -453,8 +530,6 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 if(entry.level > 0) begin
                     // add to mega/giga page tlb
                     tlbMG.addEntry(entry);
-                    // deq 4KB TLB
-                    tlb4KB.deqUpdate(None, ?, ?);
 `ifdef PERF_COUNT
                     if(doStats) begin
                         if(cRq.child == I) begin
@@ -467,16 +542,14 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 `endif
                 end
                 else begin
-                    // 4KB page, add to 4KB TLB & deq
-                    tlb4KB.deqUpdate(NewEntry, tlb4KB.resp.way, entry);
+                    // 4KB page, add to 4KB TLB
+                    tlb4KB.req(Refill (entry));
                 end
-                // req is done, miss is resolved
-                pendReq <= Invalid;
-                miss <= False;
-                waitMem <= False;
+                // req is done
+                pendValid_pageWalk[idx] <= False;
 `ifdef PERF_COUNT
                 // incr miss latency
-                incrMissLat(cRq.child);
+                incrMissLat(cRq.child, idx);
 `endif
             end
         end

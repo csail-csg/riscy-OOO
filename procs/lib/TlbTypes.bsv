@@ -38,6 +38,10 @@ typedef Tuple2#(Addr, Maybe#(Exception)) TlbResp;
 typedef `DTLB_REQ_NUM DTlbReqNum;
 typedef Bit#(TLog#(DTlbReqNum)) DTlbReqIdx;
 
+// non-blocking L2 TLB
+typedef `L2TLB_REQ_NUM L2TlbReqNum;
+typedef Bit#(TLog#(L2TlbReqNum)) L2TlbReqIdx;
+
 // Only for Sv39
 typedef 27 VpnSz;
 typedef Bit#(VpnSz) Vpn;

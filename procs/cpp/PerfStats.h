@@ -181,6 +181,8 @@ public:
         init(L2Tlb, L2TlbDataSavedPageWalks, "L2Tlb data saved page walk num");
         init(L2Tlb, L2TlbDataHugePageHits, "L2Tlb data huge page hit num");
         init(L2Tlb, L2TlbDataHugePageMisses, "L2Tlb data huge page miss num");
+        init(L2Tlb, L2TlbHitUnderMissCnt, "L2Tlb hit under miss num");
+        init(L2Tlb, L2TlbAllMissCycles, "L2Tlb blocked by page walk cycles");
 
         // DecStage
         init(DecStage, DecRedirectBr, "Dec stage redirect branch num");

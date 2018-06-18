@@ -33,25 +33,19 @@ import RWBramCore::*;
 
 typedef struct {
     Bool hit;
-    wayT way; // hit/replace way
-    TlbEntry entry; // hit entry, garbage for replacement
+    wayT way; // hit way
+    TlbEntry entry; // hit entry
 } SetAssocTlbResp#(type wayT) deriving(Bits, Eq, FShow);
 
 typedef struct {
     Vpn vpn;
     Asid asid;
-} SetAssocTlbReq deriving(Bits, Eq, FShow);
+} SetAssocTlbTranslateReq deriving(Bits, Eq, FShow);
 
-typedef struct {
-    Bool valid;
-    TlbEntry entry;
-} SetAssocTlbEntry deriving(Bits, Eq, FShow);
-
-typedef enum {
-    None,
-    RepInfoOnly, // only update replacement info
-    NewEntry // set a new entry (also update replacement info)
-} SetAssocTlbUpdate deriving(Bits, Eq, FShow);
+typedef union tagged {
+    SetAssocTlbTranslateReq Translate;
+    TlbEntry Refill;
+} SetAssocTlbPendReq deriving(Bits, Eq, FShow);
 
 interface SetAssocTlb#(
     numeric type wayNum,
@@ -62,16 +56,18 @@ interface SetAssocTlb#(
     method Bool flush_done;
 
     method Action req(SetAssocTlbReq r);
+    // resp is only for translate req
     method SetAssocTlbResp#(Bit#(TLog#(wayNum))) resp;
-    // deq resp from pipeline and may update a way
-    method Action deqUpdate(
-        SetAssocTlbUpdate update,
-        Bit#(TLog#(wayNum)) way, // must be valid when update != None
-        TlbEntry newEntry // must be valid when update == NewEntry
-    );
+    // deq resp from pipeline and may update the hit way to MRU
+    method Action deqResp(Maybe#(Bit#(TLog#(wayNum))) hitWay);
 endinterface
 
 typedef enum {Flush, Ready} SetAssocTlbState deriving(Bits, Eq, FShow);
+
+typedef struct {
+    Bool valid;
+    TlbEntry entry;
+} SetAssocTlbEntry deriving(Bits, Eq, FShow);
 
 module mkSetAssocTlb#(
     repInfoT repInfoInitVal,
@@ -92,6 +88,8 @@ module mkSetAssocTlb#(
     RWBramCore#(indexT, repInfoT) repRam <- mkRWBramCore;
     // pending
     Ehr#(2, Maybe#(SetAssocTlbReq)) pendReq <- mkEhr(Invalid);
+    Reg#(Maybe#(SetAssocTlbReq)) pendReq_deq = pendReq[0];
+    Reg#(Maybe#(SetAssocTlbReq)) pendReq_enq = pendReq[1];
     // init & flush index
     Reg#(indexT) flushIdx <- mkReg(0);
     // overall state
@@ -104,7 +102,22 @@ module mkSetAssocTlb#(
     Wire#(Maybe#(indexT)) pendIndex <- mkBypassWire;
     (* fire_when_enabled, no_implicit_conditions *)
     rule setPendIndex;
-        pendIndex <= pendReq[0] matches tagged Valid .r ? Valid (getIndex(r.vpn)) : Invalid;
+        if(pendReq_deq matches tagged Valid .rq) begin
+            case(rq) matches
+                tagged Translate .r: begin
+                    pendIndex <= Valid (getIndex(r.vpn));
+                end
+                tagged Refill .e: begin
+                    pendIndex <= Valid (getIndex(e.vpn));
+                end
+                default: begin
+                    pendIndex <= Invalid;
+                end
+            endcase
+        end
+        else begin
+            pendIndex <= Invalid;
+        end
     endrule
 
     rule doFlush(state == Flush);
@@ -121,6 +134,52 @@ module mkSetAssocTlb#(
         end
     endrule
 
+    rule doAddEntry(
+        state == Ready &&&
+        pendReq_deq matches tagged Valid (tagged Refill .newEn)
+    );
+        // deq pipeline reg and ram resp
+        pendReq_deq <= Invalid;
+        for(Integer i = 0; i < valueof(wayNum); i = i+1) begin
+            tlbRam[i].deqRdResp;
+        end
+        repRam.deqRdResp;
+        // get all the tlb ram resp & rep ram resp
+        Vector#(wayNum, Bool) validVec;
+        Vector#(wayNum, TlbEntry) entryVec;
+        for(Integer i = 0; i < valueof(wayNum); i = i+1) begin
+            let r = tlbRam[i].rdResp;
+            validVec[i] = r.valid;
+            entryVec[i] = r.entry;
+        end
+        repInfoT repInfo = repRam.rdResp;
+        // check if the new entry already exists
+        function Bool sameEntry(wayT w);
+            let en = entryVec[w];
+            Bool same_page = en.vpn == newEn.vpn &&
+                             en.asid == newEn.asid &&
+                             en.pteType.global == newEn.pteType.global;
+            return validVec[w] && same_page;
+        endfunction
+        Vector#(wayNum, wayT) wayVec = genWith(fromInteger);
+        if(find(sameEntry, wayVec) matches tagged Valid .way) begin
+            // entry exists, update rep info
+            indexT idx = getIndex(newEn.vpn);
+            repRam.wrReq(idx, updateRepInfo(repInfo, way));
+        end
+        else begin
+            // find a slot for this translation
+            // Since TLB is read-only cache, we can silently evict
+            wayT addWay = getRepWay(repInfo, map(not, validVec));
+            // update slot & rep info
+            indexT idx = getIndex(newEn.vpn);
+            tlbRam[addWay].wrReq(idx, SetAssocTlbEntry {
+                valid: True, entry: newEn
+            });
+            repRam.wrReq(idx, updateRepInfo(repInfo, addWay));
+        end
+    endrule
+
     // start flush when no pending req
     method Action flush if(state == Ready && !isValid(pendReq[0]));
         state <= Flush;
@@ -133,20 +192,29 @@ module mkSetAssocTlb#(
     // (1) in Ready
     // (2) not waiting for flush
     // (3) pipeline reg available
-    method Action req(SetAssocTlbReq r) if(state == Ready && !isValid(pendReq[1]));
-        // (4) new req does not match index of existing req (no read/write race in BRAM)
-        when(pendIndex != Valid (getIndex(r.vpn)), noAction);
-        // store req
-        pendReq[1] <= Valid (r);
+    method Action req(SetAssocTlbReq r) if(state == Ready && !isValid(pendReq_enq));
+        // (4) new req does not match index of existing req (no read/write race
+        // in BRAM)
+        Vpn vpn = (case(r) matches
+            tagged Translate .rq: (rq.vpn);
+            tagged Refill .en: (en.vpn);
+            default: ?;
+        endcase);
+        indexT idx = getIndex(vpn);
+        when(pendIndex != Valid (idx), noAction);
+        // save req
+        pendReq_enq <= Valid (r);
         // read ram
-        indexT idx = getIndex(r.vpn);
         for(Integer i = 0; i < valueof(wayNum); i = i+1) begin
             tlbRam[i].rdReq(idx);
         end
         repRam.rdReq(idx);
     endmethod
 
-    method respT resp if(state == Ready &&& pendReq[0] matches tagged Valid .rq);
+    method respT resp if(
+        state == Ready &&&
+        pendReq_deq matches tagged Valid (tagged Translate .rq)
+    );
         // get all the tlb ram resp & LRU
         Vector#(wayNum, SetAssocTlbEntry) entries;
         for(Integer i = 0; i < valueof(wayNum); i = i+1) begin
@@ -170,43 +238,32 @@ module mkSetAssocTlb#(
             };
         end
         else begin
-            // miss: find way to replace
-            Vector#(wayNum, Bool) invalid; // invalid ways
-            for(Integer i = 0; i < valueof(wayNum); i = i+1) begin
-                invalid[i] = !entries[i].valid;
-            end
-            wayT repWay = getRepWay(repInfo, invalid);
+            // miss
             return SetAssocTlbResp {
                 hit: False,
-                way: repWay,
+                way: ?,
                 entry: ?
             };
         end
     endmethod
 
     // deq resp from pipeline and update a way and LRU
-    method Action deqUpdate(SetAssocTlbUpdate update, wayT way, TlbEntry newEn) if(
-        state == Ready &&& pendReq[0] matches tagged Valid .rq
+    method Action deqResp(Maybe#(wayT) hitWay) if(
+        state == Ready &&&
+        pendReq_deq matches tagged Valid (tagged Translate .rq)
     );
         // deq pipeline reg
-        pendReq[0] <= Invalid;
+        pendReq_deq <= Invalid;
         // deq ram read resp
         for(Integer i = 0; i < valueof(wayNum); i = i+1) begin
             tlbRam[i].deqRdResp;
         end
         repRam.deqRdResp;
-        // update ram
-        if(update != None) begin
+        // update rep ram
+        if(hitWay matches tagged Valid .way) begin
             let idx = getIndex(rq.vpn);
             let repInfo = repRam.rdResp;
-            // update replacement info
             repRam.wrReq(idx, updateRepInfo(repInfo, way));
-            // set new entry
-            if(update == NewEntry) begin
-                tlbRam[way].wrReq(idx, SetAssocTlbEntry {
-                    valid: True, entry: newEn
-                });
-            end
         end
     endmethod
 endmodule

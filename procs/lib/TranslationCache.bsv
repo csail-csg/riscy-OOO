@@ -100,32 +100,47 @@ module mkSingleSplitTransCache#(PageWalkLevel level)(SingleSplitTransCache);
     endmethod
         
     method Action addEntry(Vpn vpn, Ppn ppn, Asid asid) if(updRepIdx_enq == Invalid && !flushEn);
-        SplitTransCacheIdx addIdx;
-        if(findIndex( \== (False) , readVReg(validVec) ) matches tagged Valid .idx) begin
-            // get empty slot
-            addIdx = pack(idx);
+        // only update LRU if the new entry already exists (TODO Maybe this is
+        // not needed after we detect duplicate pagewalk mem req)
+        function Bool sameEntry(SplitTransCacheIdx i);
+            Bool vpn_match = getMaskedVpn(vpn, level) == getMaskedVpn(vpnVec[i], level);
+            Bool asid_match = asid == asidVec[i]; // TODO global??
+            return validVec[i] && vpn_match && asid_match;
+        endfunction
+        Vector#(SplitTransCacheSize, SplitTransCacheIdx) idxVec = genWith(fromInteger);
+        if(find(sameEntry, idxVec) matches tagged Valid .idx) begin
+            // entry already exists, just update LRU
+            updRepIdx_enq <= Valid (idx);
         end
         else begin
-            // find LRU slot (lruBit[i] = 0 means i is LRU slot)
-            Vector#(SplitTransCacheSize, Bool) isLRU = unpack(~lruBit_add);
-            if(isLRU[randIdx]) begin
-                addIdx = randIdx;
-            end
-            else if(findIndex(id, isLRU) matches tagged Valid .idx) begin
+            // find slot to add new entry
+            SplitTransCacheIdx addIdx;
+            if(findIndex( \== (False) , readVReg(validVec) ) matches tagged Valid .idx) begin
+                // get empty slot
                 addIdx = pack(idx);
             end
             else begin
-                addIdx = 0; // this is actually impossible
-                doAssert(False, "must have at least 1 LRU slot");
+                // find LRU slot (lruBit[i] = 0 means i is LRU slot)
+                Vector#(SplitTransCacheSize, Bool) isLRU = unpack(~lruBit_add);
+                if(isLRU[randIdx]) begin
+                    addIdx = randIdx;
+                end
+                else if(findIndex(id, isLRU) matches tagged Valid .idx) begin
+                    addIdx = pack(idx);
+                end
+                else begin
+                    addIdx = 0; // this is actually impossible
+                    doAssert(False, "must have at least 1 LRU slot");
+                end
             end
+            // update slot
+            validVec[addIdx] <= True;
+            vpnVec[addIdx] <= vpn; // we mask vpn at search time
+            ppnVec[addIdx] <= ppn; // don't mask ppn, intermidate PTE point to a 4KB page
+            asidVec[addIdx] <= asid;
+            // update LRU bits
+            updRepIdx_enq <= Valid (addIdx);
         end
-        // update slot
-        validVec[addIdx] <= True;
-        vpnVec[addIdx] <= vpn; // we mask vpn at search time
-        ppnVec[addIdx] <= ppn; // don't mask ppn, intermidate PTE point to a 4KB page
-        asidVec[addIdx] <= asid;
-        // update LRU bits
-        updRepIdx_enq <= Valid (addIdx);
     endmethod
 
     method Action flush;
