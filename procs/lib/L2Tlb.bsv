@@ -109,6 +109,13 @@ module mkL2FullAssocTlb(L2FullAssocTlb);
     return m;
 endmodule
 
+// a pending tlb req may be in following states
+typedef union tagged {
+    void None;
+    void WaitMem; // wait for page walk resp from memory
+    L2TlbReqIdx WaitPeer; // wait for page walk resp from peer req
+} L2TlbWait deriving(Bits, Eq, FShow);
+
 // TODO we should raise load access fault if the PTE address is not a DRAM
 // address. (trap value is still the virtual address being translated).
 
@@ -140,10 +147,16 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Fifo#(1, L2TlbRsToC) rsToCQ <- mkBypassFifo;
 
     // pending reqs
+    // pendWait should be meaningful even when entry is invalid. pendWait =
+    // WaitMem means this entry is waiting for page walk resp from memory;
+    // pendWait = WaitPeer means this entry is waiting for a page walk resp
+    // resp initiated by another req. Thus, pendWait must be None when entry is
+    // invalid.
     Vector#(L2TlbReqNum, Ehr#(2, Bool)) pendValid <- replicateM(mkEhr(False));
     Vector#(L2TlbReqNum, Reg#(L2TlbRqFromC)) pendReq <- replicateM(mkRegU);
-    Vector#(L2TlbReqNum, Ehr#(2, Bool)) pendWalking <- replicateM(mkEhr(?));
+    Vector#(L2TlbReqNum, Ehr#(2, L2TlbWait)) pendWait <- replicateM(mkEhr(None));
     Vector#(L2TlbReqNum, Reg#(PageWalkLevel)) pendWalkLevel <- replicateM(mkRegU);
+    Vector#(L2TlbReqNum, Reg#(Addr)) pendWalkAddr <- replicateM(mkRegU);
 
     // rule ordering:
     // - trans cache resp < tlb resp < tlb req
@@ -159,13 +172,15 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // They cannot fire together, because page walk may udpate tlb and tlb req
     // may request tlb.
 
+    let pendValid_transCacheResp = getVEhrPort(pendValid, 0); // assert
     let pendValid_tlbResp = getVEhrPort(pendValid, 0);
     let pendValid_pageWalk = getVEhrPort(pendValid, 0);
     let pendValid_tlbReq = getVEhrPort(pendValid, 1);
 
-    let pendWalking_transCacheResp = getVEhrPort(pendWalking, 0);
-    let pendWalking_tlbResp = getVEhrPort(pendWalking, 1); // perf
-    let pendWalking_tlbReq = getVEhrPort(pendWalking, 1);
+    let pendWait_transCacheResp = getVEhrPort(pendWait, 0);
+    let pendWait_pageWalk = getVEhrPort(pendWalk, 0);
+    let pendWait_tlbResp = getVEhrPort(pendWait, 1); // perf
+    let pendWait_tlbReq = getVEhrPort(pendWait, 1); // assert
 
     // current processor VM information
     Reg#(VMInfo) vm_info_I <- mkReg(defaultValue);
@@ -174,6 +189,9 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // Memory Queues for page table walks
     Fifo#(2, TlbMemReq) memReqQ <- mkCFFifo;
     Fifo#(2, TlbLdResp) respLdQ <- mkCFFifo;
+    // When a mem resp comes, we first process the initiating req, then process
+    // other reqs that in WaitPeer.
+    Reg#(Maybe#(L2TlbReqIdx)) respForOtherReq <- mkReg(Invalid);
 
     // FIFO for perf req
     Fifo#(1, L2TlbPerfType) perfReqQ <- mkCFFifo;
@@ -194,6 +212,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Count#(Data) dataHugePageMissCnt <- mkCount(0);
     Count#(Data) hitUnderMissCnt <- mkCount(0);
     Count#(Data) allMissCycles <- mkCount(0);
+    Count#(Data) peerSavedMemReqCnt <- mkCount(0);
 
     LatencyTimer#(L2TlbReqNum, 12) latTimer <- mkLatencyTimer; // max latency: 4K cycles
 
@@ -212,11 +231,8 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     endfunction
 
     rule incrAllMissCycles(doStats);
-        function Bool isMiss(L2TlbReqIdx i);
-            return pendValid[i][0] && pendWalking[i][0];
-        endfunction
-        Vector#(L2TlbReqNum, L2TlbReqIdx) idxVec = genWith(fromInteger);
-        when(all(isMiss, idxVec), allMissCycles.incr(1));
+        function Bool isMiss(L2TlbWait x) = x != None;
+        when(all(isMiss, readVEhr(0, pendWait)), allMissCycles.incr(1));
     endrule
 
     rule doPerf;
@@ -236,6 +252,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             L2TlbDataHugePageMisses: (dataHugePageMissCnt);
             L2TlbHitUnderMissCnt: (hitUnderMissCnt);
             L2TlbAllMissCycles: (allMissCycles);
+            L2TlbPeerSavedMemReqs: (peerSavedMemReqCnt);
             default: (0);
         endcase);
         perfRespQ.enq(PerfResp {
@@ -289,13 +306,15 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         // record req
         pendValid_tlbReq[idx] <= True;
         pendReq[idx] <= r;
-        pendWalking_tlbReq[idx] <= False;
+        doAssert(!pendValid_tlbReq[idx], "entry must be invalid");
+        doAssert(pendWait_tlbReq[idx] == None, "cannot be waiting");
         if(verbose) $display("L2TLB new req: ", fshow(r), "; ", fshow(idx));
     endrule
 
     // process resp from 4KB TLB and mega-giga TLB
     rule doTlbResp(tlbReqQ.notEmpty);
         doAssert(!flushing, "cannot have pending req when flushing");
+        doAssert(pendWait_tlbResp[idx] == None, "cannot be waiting");
 
         // get req in tlb
         tlbReqQ.deq;
@@ -328,7 +347,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 `ifdef PERF_COUNT
             // perf: hit under miss
             function Bool otherMiss(L2TlbReqIdx i);
-                return pendValid_tlbResp[i] && pendWalking_tlbResp[i] && i != idx;
+                return pendValid_tlbResp[i] && pendWait_tlbResp[i] != None && i != idx;
             endfunction
             Vector#(L2TlbReqNum, L2TlbReqIdx) idxVec = genWith(fromInteger);
             if(any(otherMiss, idxVec)) begin
@@ -398,6 +417,16 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         end
     endrule
 
+    // Find other req doing the same page walk. Although it should be ok to
+    // just compare the VPNs, for safety, we compare the PTE addrs.
+    function Maybe#(L2TlbReqIdx) otherReqSamePTE(L2TlbReqIdx idx, Addr pteAddr);
+        function Bool samePTE(L2TlbReqIdx i);
+            return i != idx && pendWait[i] == WaitMem && pendWalkAddr[i] == pteAddr;
+        endfunction
+        Vector#(L2TlbReqNum, L2TlbReqIdx) idxVec = genWith(fromInteger);
+        return find(samePTE, idxVec);
+    endfunction
+
     rule doTranslationCacheResp(transCacheReqQ.notEmpty);
         // get req in trans cache
         transCacheReqQ.deq;
@@ -413,13 +442,30 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         PageWalkLevel level = resp.startLevel;
         Addr baseAddr = getPTBaseAddr(level < maxPageWalkLevel ? resp.ppn : vm_info.basePPN);
         Addr pteAddr = getPTEAddr(baseAddr, cRq.vpn, level);
-        memReqQ.enq(TlbMemReq {
-            addr: pteAddr,
-            id: idx
-        });
         // record page walk info
-        pendWalking_transCacheResp[idx] <= True;
         pendWalkLevel[idx] <= level;
+        pendWalkAddr[idx] <= pteAddr;
+        doAssert(pendWait_transCacheResp[idx] == None, "cannot be waiting");
+        // don't req memory if someone else is also doing the same page walk.
+        if(otherReqSamePTE(idx, pteAddr) matches tagged Valid .i) begin
+            // peer entry has already requested, so don't send
+            // duplicate req
+            pendWait_transCacheResp[idx] <= WaitPeer (i);
+            doAssert(pendValid_transCacheResp[i], "peer must be valid");
+`ifdef PERF_COUNT
+            if(doStats) begin
+                peerSavedMemReqCnt.incr(1);
+            end
+`endif
+        end
+        else begin
+            // no one has requested before, req memory
+            memReqQ.enq(TlbMemReq {
+                addr: pteAddr,
+                id: idx
+            });
+            pendWait_transCacheResp[idx] <= WaitMem;
+        end
         if(verbose) begin
             $display("L2TLB start page walk: ", fshow(cRq), "; ",
                      fshow(vm_info), "; ", fshow(resp), "; ",
@@ -444,11 +490,27 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     rule doPageWalk(respLdQ.notEmpty && !tlbReqQ.notEmpty && !transCacheReqQ.notEmpty);
         doAssert(!flushing, "cannot have pending req when flushing");
 
-        // get the resp data from memory (LLC)
-        respLdQ.deq;
+        // get the resp data from memory (LLC); this resp is for the initiating
+        // req and other req that wait on this one, so don't deq right away
         PTESv39 pte = unpack(respLdQ.first.data);
-        L2TlbReqIdx idx = respLdQ.first.id;
+        L2TlbReqIdx idx = fromMaybe(respLdQ.first.id, respForOtherReq);
         L2TlbRqFromC cRq = pendReq[idx];
+
+        // find another req waiting for this resp to process in next cycle
+        function Bool waitForResp(L2TlbReqIdx i);
+            return pendWait_pageWalk[i] == WaitPeer (respLdQ.first.id) && i != idx;
+        endfunction
+        Vector#(L2TlbReqNum, L2TlbReqIdx) idxVec = genWith(fromInteger);
+        if(find(waitForResp, idxVec) matches tagged Valid .i) begin
+            // still have req waiting for this resp, keep processing
+            respForOtherReq <= Valid (i);
+            doAssert(pendValid_pageWalk[i], "waiting entry must be valid");
+        end
+        else begin
+            // all req done, deq the mem resp
+            respForOtherReq <= Invalid;
+            respLdQ.deq;
+        end
 
         // handle page fault
         function Action pageFault(String reason);
@@ -460,6 +522,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             });
             // req is done
             pendValid_pageWalk[idx] <= False;
+            pendWait_pageWalk[idx] <= None;
 `ifdef PERF_COUNT
             // incr miss latency
             incrMissLat(cRq.child, idx);
@@ -470,11 +533,14 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         // get correct VM info
         VMInfo vm_info = cRq.child == I ? vm_info_I : vm_info_D;
 
-        // assume we are continuing page walk, update level (it causes not harm
-        // even if we stop page walk)
+        // assume we are continuing page walk, update level and pte addr (it
+        // causes not harm even if we stop page walk)
         PageWalkLevel walkLevel = pendWalkLevel[idx];
         PageWalkLevel newWalkLevel = walkLevel - 1;
+        Addr newPTBase = getPTBaseAddr(pte.ppn);
+        Addr newPTEAddr = getPTEAddr(newPTBase, cRq.vpn, newWalkLevel);
         pendWalkLevel[idx] <= newWalkLevel;
+        pendWalkAddr[idx] <= newPTEAddr;
 
         if(verbose) begin
             $display("L2TLB page walk: ", fshow(vm_info), " ; ",
@@ -499,13 +565,23 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                     pageFault("non-leaf page at end");
                 end
                 else begin
-                    // continue page walk, update page walk state
-                    Addr newPTBase = getPTBaseAddr(pte.ppn);
-                    Addr newPTEAddr = getPTEAddr(newPTBase, cRq.vpn, newWalkLevel);
-                    memReqQ.enq(TlbMemReq {
-                        addr: newPTEAddr,
-                        id: idx
-                    });
+                    // continue page walk, check if other req is doing the same
+                    // walk 
+                    if(otherReqSamePTE(idx, newPTEAddr) matches tagged Valid .i) begin
+                        pendWait_pageWalk[idx] <= WaitPeer (i);
+`ifdef PERF_COUNT
+                        if(doStats) begin
+                            peerSavedMemReqCnt.incr(1);
+                        end
+`endif
+                    end
+                    else begin
+                        memReqQ.enq(TlbMemReq {
+                            addr: newPTEAddr,
+                            id: idx
+                        });
+                        pendWait_pageWalk[idx] <= WaitMem;
+                    end
                     // add to translation cache
                     transCache.addEntry(cRq.vpn, walkLevel, pte.ppn, vm_info.asid);
                 end
@@ -547,6 +623,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 end
                 // req is done
                 pendValid_pageWalk[idx] <= False;
+                pendWait_pageWalk[idx] <= None;
 `ifdef PERF_COUNT
                 // incr miss latency
                 incrMissLat(cRq.child, idx);

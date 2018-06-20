@@ -183,6 +183,7 @@ public:
         init(L2Tlb, L2TlbDataHugePageMisses, "L2Tlb data huge page miss num");
         init(L2Tlb, L2TlbHitUnderMissCnt, "L2Tlb hit under miss num");
         init(L2Tlb, L2TlbAllMissCycles, "L2Tlb blocked by page walk cycles");
+        init(L2Tlb, L2TlbPeerSavedMemReqs, "L2Tlb peer saved mem req num");
 
         // DecStage
         init(DecStage, DecRedirectBr, "Dec stage redirect branch num");
