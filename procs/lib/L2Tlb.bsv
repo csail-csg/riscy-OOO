@@ -178,7 +178,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     let pendValid_tlbReq = getVEhrPort(pendValid, 1);
 
     let pendWait_transCacheResp = getVEhrPort(pendWait, 0);
-    let pendWait_pageWalk = getVEhrPort(pendWalk, 0);
+    let pendWait_pageWalk = getVEhrPort(pendWait, 0);
     let pendWait_tlbResp = getVEhrPort(pendWait, 1); // perf
     let pendWait_tlbReq = getVEhrPort(pendWait, 1); // assert
 
@@ -314,12 +314,12 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     // process resp from 4KB TLB and mega-giga TLB
     rule doTlbResp(tlbReqQ.notEmpty);
         doAssert(!flushing, "cannot have pending req when flushing");
-        doAssert(pendWait_tlbResp[idx] == None, "cannot be waiting");
 
         // get req in tlb
         tlbReqQ.deq;
         L2TlbReqIdx idx = tlbReqQ.first;
         L2TlbRqFromC cRq = pendReq[idx];
+        doAssert(pendWait_tlbResp[idx] == None, "cannot be waiting");
 
         // get correct VM info
         VMInfo vm_info = cRq.child == I ? vm_info_I : vm_info_D;
@@ -419,9 +419,12 @@ module mkL2Tlb(L2Tlb::L2Tlb);
 
     // Find other req doing the same page walk. Although it should be ok to
     // just compare the VPNs, for safety, we compare the PTE addrs.
-    function Maybe#(L2TlbReqIdx) otherReqSamePTE(L2TlbReqIdx idx, Addr pteAddr);
+    function Maybe#(L2TlbReqIdx) otherReqSamePTE(
+        L2TlbReqIdx idx, Addr pteAddr,
+        Vector#(L2TlbReqNum, L2TlbWait) waitVec
+    );
         function Bool samePTE(L2TlbReqIdx i);
-            return i != idx && pendWait[i] == WaitMem && pendWalkAddr[i] == pteAddr;
+            return i != idx && waitVec[i] == WaitMem && pendWalkAddr[i] == pteAddr;
         endfunction
         Vector#(L2TlbReqNum, L2TlbReqIdx) idxVec = genWith(fromInteger);
         return find(samePTE, idxVec);
@@ -447,7 +450,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         pendWalkAddr[idx] <= pteAddr;
         doAssert(pendWait_transCacheResp[idx] == None, "cannot be waiting");
         // don't req memory if someone else is also doing the same page walk.
-        if(otherReqSamePTE(idx, pteAddr) matches tagged Valid .i) begin
+        if(otherReqSamePTE(idx, pteAddr, readVReg(pendWait_transCacheResp)) matches tagged Valid .i) begin
             // peer entry has already requested, so don't send
             // duplicate req
             pendWait_transCacheResp[idx] <= WaitPeer (i);
@@ -567,7 +570,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
                 else begin
                     // continue page walk, check if other req is doing the same
                     // walk 
-                    if(otherReqSamePTE(idx, newPTEAddr) matches tagged Valid .i) begin
+                    if(otherReqSamePTE(idx, newPTEAddr, readVReg(pendWait_pageWalk)) matches tagged Valid .i) begin
                         pendWait_pageWalk[idx] <= WaitPeer (i);
 `ifdef PERF_COUNT
                         if(doStats) begin
