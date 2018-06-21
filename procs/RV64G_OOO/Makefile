@@ -43,7 +43,7 @@ CHECK_DEADLOCK ?= true
 RENAME_DEBUG ?= true
 
 # clk frequency depends on core size
-ifneq (,$(filter $(CORE_SIZE),TINY SMALL BOOM))
+ifneq (,$(filter $(CORE_SIZE),TINY SMALL BOOM MEDIUM))
 USER_CLK_PERIOD ?= 24
 else ifneq (,$(filter $(CORE_SIZE),SMALL_WIDE LARGE))
 USER_CLK_PERIOD ?= 32
