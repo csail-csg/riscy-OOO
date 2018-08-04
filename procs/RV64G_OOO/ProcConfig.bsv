@@ -21,6 +21,12 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// Core size and cache size are controlled by macros CORE_XXX and CACHE_XXX. In
+// MICRO 2018 paper, configuration BASE-T is defining CORE_SMALL and
+// CACHE_LARGE, and configuration BASE-R is defining CORE_MEDIUM and
+// CACHE_LARGE. Due to resource restrictions, 4-core multiprocessor on AWS is
+// defining CORE_TINY and CACHE_MC.
+
 //
 // ==== common parameters ====
 //
@@ -126,10 +132,14 @@
     `define NUM_EPOCHS 8
     `define NUM_SPEC_TAGS 8
 
+    // Smaller L1 TLB
+    `undef TLB_SIZE
+    `define TLB_SIZE 16
+
     // LSQ
     `define LDQ_SIZE 18
     `define STQ_SIZE 11
-    `define SB_SIZE 4
+    `define SB_SIZE 2
 
     // reservation station sizes
     `define RS_ALU_SIZE 12

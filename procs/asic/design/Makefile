@@ -12,6 +12,7 @@ OPT_FLAGS = -unspecified-to X \
 			-opt-undetermined-vals
 
 BSV_DEF = -D CORE_$(SIZE) \
+		  -D CACHE_LARGE \
 		  -D NUM_CORES=1 \
 		  -D XILINX_FP_FMA_LATENCY=3 \
 		  -D XILINX_INT_MUL_LATENCY=2

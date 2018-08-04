@@ -332,6 +332,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         inIfc.redirectPc(new_pc);
 
         // system consistency
+        // TODO spike flushes TLB here, but perhaps it is because spike's TLB
+        // does not include prv info, and it has to flush when prv changes.
         makeSystemConsistent(False);
     endrule
 
