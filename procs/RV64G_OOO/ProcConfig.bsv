@@ -142,9 +142,9 @@
     `define SB_SIZE 2
 
     // reservation station sizes
-    `define RS_ALU_SIZE 12
-    `define RS_MEM_SIZE 12
-    `define RS_FPUMULDIV_SIZE 12
+    `define RS_ALU_SIZE 10
+    `define RS_MEM_SIZE 10
+    `define RS_FPUMULDIV_SIZE 10
 
 `endif
 
