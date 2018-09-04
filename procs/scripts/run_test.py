@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-# Copyright (c) 2017 Massachusetts Institute of Technology
+# Copyright (c) 2018 Massachusetts Institute of Technology
 # 
 # Permission is hereby granted, free of charge, to any person
 # obtaining a copy of this software and associated documentation
