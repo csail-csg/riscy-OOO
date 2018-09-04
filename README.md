@@ -151,7 +151,7 @@ The additional thing is to build riscv-fesvr.
 We need to copy the bbl (`tools/RV64G/build-pk/bbl`) to F1.
 The following command boots Linux with 2GB memory.
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/awsf1/bin/ubuntu.exe --just-run --core-num $N --mem-size 2048 --ignore-user-stucks 1000000 -- /path/to/bbl
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/awsf1/bin/ubuntu.exe --core-num $N --mem-size 2048 --ignore-user-stucks 1000000 -- /path/to/bbl
     
     The processor detects potential deadlock by checking if a user level instruction has been executed during a period of time.
     This will output a lot of "deadlock" warnings when the processor is booting linux or idling in shell.
@@ -162,6 +162,53 @@ The following command boots Linux with 2GB memory.
     
     It should be noted that we need to program the FPGA before each run of the design (even if the design does not change).
 
+### Other build configurations
+`$RISCY_HOME/procs/RV64G_OOO/Makefile` contains several options to configure the build. For example, the makefile can be invoked in the following way to build for C4:
+
+    $ cd $RISCY_HOME/procs/RV64G_OOO
+    $ make gen.awsf1 CORE_NUM=$N DTC_PATH=/usr/bin/dtc CORE_SIZE=<SMALL/LARGE/...> CACHE_SIZE=<SMALL/LARGE/...> PERF_COUNT=<true/false> TSO_MM=<true/false> CHECK_DEADLOCK=<true/false> RENAME_DEBUG=<true/false> USER_CLK_PERIOD=<clock period in ns>
+
+Below are the expanations for these options.
+It should be noted that these options can also be applied when building for simulation.
+
+- `CORE_SIZE`: the size of each core in the processor.
+The detailed buffer sizes for each `CORE_SIZE` configuration are defined in `$RISCY_HOME/procs/RV64G_OOO/ProcConfig.bsv`.
+Default value is `SMALL` (64-entry ROB).
+
+- `CACHE_SIZE`: the size of caches in the processor.
+The detailed parameters for each `CACHE_SIZE` configuration are defined in `$RISCY_HOME/procs/RV64G_OOO/ProcConfig.bsv`.
+Default value is `LARGE`.
+
+- `PERF_COUNT`: enable or disable the performance counters.
+If set to `true`, performance counters will be implemetned in the processor; otherwise, performance counters will not be implemented and any query to performance counters will return zero.
+Default is `true`.
+
+- `TSO_MM`: enable TSO memory model or not.
+If set to `true`, the processor implements TSO; otherwise, the processor implements a weak memroy model *WMM* (https://doi.org/10.1109/PACT.2017.29).
+Default is `false`.
+
+- `CHECK_DEADLOCK`: enable or disable the check on potential deadlock.
+If set to `true`, the processor sends out a message to host software in case an instruction has been stuck at the ROB head for too long or a memory access has been stuck at cache MSHR for too long.
+Otherwise, no such check will be performed.
+Default is `true`.
+
+- `RENAME_DEBUG`: enable or disable checks on register renaming.
+If set to `true`, the commit stage of the processor will perform simple checks on the register renaming of the committing instruction, and sends a message to host software if the checks fail.
+Otherwise, no such check will be performed.
+Default is `true`.
+
+- `USER_CLK_PERIOD`: the FPGA clock period for the processor in nano seconds.
+The default value depends on the `CORE_SIZE` configuration.
+It is recommended to make the clock period a multple of 8, because the AWS FPGA shell clock period is 8ns, and an async reset signal in our design is derived from the FPGA shell reset.
+Doing so can prevent Xilinx Vivado from overconstraining the timing related to this async reset.
+
+As an example, when we build the 4-core TSO multiprocessor on AWS, we invoke the makefile in the following way:
+
+    $ cd $RISCY_HOME/procs/RV64G_OOO
+    $ make gen.awsf1 CORE_NUM=4 DTC_PATH=/usr/bin/dtc CORE_SIZE=TINY CACHE_SIZE=MC PERF_COUNT=false TSO_MM=true CHECK_DEADLOCK=false RENAME_DEBUG=false USER_CLK_PERIOD=40
+
+Since 4 OOO cores will make the FPGA pretty congested, we use the smallest core and cache configurations (`TINY` and `MC`, respectively), and we turn off the checkes for deadlock and renaming.
+We also lower down the clock frequency to 25MHz (i.e., 40ns period).
 
 ## VC707 FPGA
 
@@ -172,11 +219,13 @@ VC707 shoud only be able to hold 1 core (i.e., `$N=1`).
         $ cd $RISCY_HOME/procs/RV64G_OOO
         $ make build.vc707 CORE_NUM=$N
 
-    The build result will be in `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.deadlock_check/vc707/bin`.
+    The build result will be in `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.deadlock_check/vc707/bin`. The other build options can be passed to the makefile as in AWS.
     
 - Boot Linux on FPGA.
 Since VC707 board only has 1GB DRAM, we boot Linux with 1GB memory.
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/vc707/bin/ubuntu.exe --just-run --core-num $N --mem-size 1024  --ignore-user-stucks 1000000 -- $RISCY_HOME/tools/RV64G/build-pk/bbl
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/vc707/bin/ubuntu.exe --core-num $N --mem-size 1024  --ignore-user-stucks 1000000 -- $RISCY_HOME/tools/RV64G/build-pk/bbl
  
      Hit `ctrl-c` when you want to exit.
+
+
