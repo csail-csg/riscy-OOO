@@ -6,13 +6,35 @@ This repository contains an OOO RISC-V processor written in Bluespec System Veri
 
 How to get started with this repository (should work on both Ubuntu 14.04 and 16.04):
 
-- Get all the submodules.
+- Install the Bluespec compiler (`bsc`).
 
-        $ git submodule update --init --recursive
+        $ cd <place you want to put the bluespec compiler>
+        $ wget http://www.bluespec.com/downloads/Bluespec-2016.07.beta1.tar.gz
+        $ tar -xzf Bluespec-2016.07.beta1.tar.gz
+
+    This will create a folder called `Bluespec-2016.07.beta1` in the current directory.
+    We need to set up some environment variables for Bluespec:
+    
+        $ export BSPATH=/path/to/Bluespec-2016.07.beta1
+        $ export BLUESPECDIR=$BSPATH/lib
+        $ export PATH=$BSPATH/bin:$PATH
+        $ export LM_LICENSE_FILE=<your bluespec license>
+
+    The Bluespec compiler uses the shared library `libgmp.so.3`, but Ubuntu does not provide this version of the library. To fix this, we can just creat a link for `libgmp.so`:
+    
+        $ cd /usr/lib/x86_64-linux-gnu # the folder containing libgmp.so, this is the path for ubuntu; the path may be different for other OS
+        $ ln -s libgmp.so libgmp.so.3
 
 - Get dependencies for RISC-V toolchain and connectal.
 
         $ sudo apt-get install autoconf automake autotools-dev curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev device-tree-compiler pkg-config python-ply
+
+- Clone the repo and get all the submodules.
+
+        $ cd <place you want to put this repo>
+        $ git clone https://github.com/csail-csg/riscy-OOO.git
+        $ cd riscy-OOO
+        $ git submodule update --init --recursive
 
 - Build RISC-V tools
 
@@ -22,7 +44,7 @@ How to get started with this repository (should work on both Ubuntu 14.04 and 16
         
     RISC-V tools will be builted to `tools/RV64G`.
 
-- Setup environment variables for the project (`RISCY_HOME` should be the path to this repo).
+- Setup environment variables for the project (`$RISCY_HOME` should be the path to this repo).
 
         $ source ./setup.sh
         
@@ -34,7 +56,7 @@ We use a PPA to provide a newer version of Verilator.
         $ sudo apt-get update
         $ sudo apt-get install verilator connectal
 
-- Copy DDR3 IP from Bluespec installation (environment variable $BLUESPECDIR should have been set).
+- Copy DDR3 IP from Bluespec installation (environment variable `$BLUESPECDIR` should have been set).
 
         $ cd fpgautils/xilinx/vc707/ddr3_1GB_bluespec
         $ ./copy_verilog.sh
