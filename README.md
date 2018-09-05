@@ -131,6 +131,9 @@ If you would like to get email notification when the FPGA compilation finishes, 
     $ export EMAIL=<email address>
     $ export SNS_NOTIFY_EMAIL=$EMAIL
 
+Also make sure that Xilinx synthesis tool `vivado` is in PATH.
+The vivado version we are using on AWS is `v2017.1_sdxop`.
+
 ### Compilation of hardware on C4
 
 - Compile the hardware part.
@@ -236,12 +239,15 @@ We also lower down the clock frequency to 25MHz (i.e., 40ns period).
 
 - Build an `$N`-core processor for FPGA.
 We are using Xilinx Vivado 2015.4 on Ubuntu 14.04 or Ubuntu 16.04.
+(Higher Vivado versions may fail.)
+Also make sure that `vivado` is in PATH.
 VC707 shoud only be able to hold 1 core (i.e., `$N=1`).
 
         $ cd $RISCY_HOME/procs/RV64G_OOO
         $ make build.vc707 CORE_NUM=$N
 
-    The build result will be in `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.deadlock_check/vc707/bin`. The other build options can be passed to the makefile as in AWS.
+    The build result will be in `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.deadlock_check/vc707/bin`.
+    The other build options can be passed to the makefile as in AWS.
     
 - Boot Linux on FPGA.
 Since VC707 board only has 1GB DRAM, we boot Linux with 1GB memory.
