@@ -83,6 +83,13 @@ We can build the image as follows:
     The Linux image is included in the bbl, which is at `tools/RV64G/build-pk/bbl`.
     After Linux is booted, the contents of `$TEST_DIR` can be found in `/test`.
     If `--testdir` is not specified, then `/test` will be an empty folder after Linux boots.
+    
+    We currently configure Linux to support maximum 8 CPUs.
+    (We can only fit 4 OOO cores on FPGA.)
+    Change `tools/configs/linux_config` to support more CPUs (the upper bound should be 32).
+    
+    We have put some prebuilt Linux images containing the PARSEC benchmarks in `tools/images`.
+    Unfortunately, we cannot release the prebuilt images for SPEC benchmarks due to license issues.
 
 ## Simulation
 - Build the OOO processor with `$N` cores for simulation.
@@ -235,6 +242,7 @@ As an example, when we build the 4-core TSO multiprocessor on AWS, we invoke the
 Since 4 OOO cores will make the FPGA pretty congested, we use the smallest core and cache configurations (`TINY` and `MC`, respectively), and we turn off the checkes for deadlock and renaming.
 We also lower down the clock frequency to 25MHz (i.e., 40ns period).
 
+<!--
 ## VC707 FPGA
 
 - Build an `$N`-core processor for FPGA.
@@ -255,5 +263,32 @@ Since VC707 board only has 1GB DRAM, we boot Linux with 1GB memory.
         $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/vc707/bin/ubuntu.exe --core-num $N --mem-size 1024  --ignore-user-stucks 1000000 -- $RISCY_HOME/tools/RV64G/build-pk/bbl
  
      Hit `ctrl-c` when you want to exit.
+-->
 
+## Performance Counter
 
+To colloect performance data, we have deployed many performance counters in the processor design, and these counters can be queried by host software (see `$RISCY_HOME/procs/cpp/PerfStats.h`).
+In addition, we added two custom user-level CSRs: the `stats` CSR (address `0x801`) and the `terminate` CSR (address `0x800`).
+The `stats` CSR controls whether performance counters will be incremented, and the change made to the `stats` CSR by one core will be propagated to all other cores in a few cycles.
+Any write to the `terminate` CSR done by any core will shutdown the processor, and send a message to the host software.
+Then the host software will query all the performance counters.
+This is a better way than using `ctrl-c` to exit Linux, because using `ctrl-c` will just kill everything and performance counters will not be dumped.
+
+`$RISCY_HOME/riscv_custom/riscv_cumstom.h` contains C macros to set these two CSRs, and `$RISCY_HOME/riscv_custom/terminate` contains a simple C program to shutdown the processor using the `terminate` CSR.
+
+## Directory Structure
+Here we list some importand directories:
+
+- `$RISCY_HOME/procs/lib`: contains BSV sources for processor building blocks.
+
+- `$RISCY_HOME/procs/RV64G_OOO`: contains BSV sources for the top-level rules of the OOO processor.
+
+- `$RISCY_HOME/procs/cpp`: contains the C++ sources for the host software that initalizes the RISC-V processor with the Linux image, and dumps performance data when the processor is shutdown.
+
+- `$RISCY_HOME/coherence/src`: contains the BSV sources for the coherent caches.
+
+- `RISCY_HOME/fpgautils`: contains files to generate Xilinx FPGA IP blocks (e.g., floating-point units) and BSV wrappers.
+
+- `RISCY_HOME/connectal`: contains the Connectal repo, which is the framework we are using for software-FPGA communication.
+
+- `RISCY_HOME/tools`: contains the RISC-V toolchain, the Linux kernel, and some prebuilt Linux images.
