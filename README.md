@@ -20,10 +20,10 @@ How to get started with this repository (should work on both Ubuntu 14.04 and 16
         $ export PATH=$BSPATH/bin:$PATH
         $ export LM_LICENSE_FILE=<your bluespec license>
 
-    The Bluespec compiler uses the shared library `libgmp.so.3`, but Ubuntu does not provide this version of the library. To fix this, we can just creat a link for `libgmp.so`:
+    The Bluespec compiler uses the shared library `libgmp.so.3`, but Ubuntu does not provide this version of the library. To fix this, we can just creat a link for `libgmp.so.10`:
     
         $ cd /usr/lib/x86_64-linux-gnu # the folder containing libgmp.so, this is the path for ubuntu; the path may be different for other OS
-        $ sudo ln -s libgmp.so libgmp.so.3
+        $ sudo ln -s libgmp.so.10 libgmp.so.3
 
 - Get dependencies for RISC-V toolchain and connectal.
 
@@ -51,8 +51,7 @@ How to get started with this repository (should work on both Ubuntu 14.04 and 16
     `$RISCY_HOME` should be the path to this repo, and we will use `$RISCY_HOME` to refer to the path of this repo in the following.
         
 - Get Verilator for simulation and connectal utilities for programming FPGA.
-The version of Verilator in the Ubuntu package has a bug that prevents running our BSV designs.
-We use a PPA to provide a newer version of Verilator.
+The version of Verilator in the Ubuntu package lacks certain features, so we use a PPA to provide a newer version of Verilator.
 
         $ sudo apt-add-repository -y ppa:jamey-hicks/connectal
         $ sudo apt-get update
@@ -136,6 +135,7 @@ Most of the setups in the "Getting Started" section are not needed on C4.
 Here are the steps to setup C4.
 
 - Install the Bluepsec compiler.
+(libgmp should be at `/usr/lib64`.)
 
 - Install dependencies:
 
@@ -154,6 +154,7 @@ Here is our way of setup the AWS HDK repo:
 
         $ cd ~
         $ git clone https://github.com/aws/aws-fpga.git
+        $ cd aws-fpga
         $ git checkout e107da6487221a820a07ebd3b82de71c5362c313 -b riscy-OOO
 
 - Make sure that Xilinx synthesis tool `vivado` is in PATH.
