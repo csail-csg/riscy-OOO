@@ -113,6 +113,8 @@ If CORE_NUM is not specified, we build for 1 core by default.
         
     Assembly tests will output all zero for performance counters, while benchmark tests will output meaningful performance counter values.
     Source codes for assembly tests can be found at `$RISCY_HOME/tools/riscv-tests/isa/rv64ui`, while source codes for benchmark tests can be found at `$RISCY_HOME/tools/riscv-tests/benchmarks`.
+    There are tons of debugging outputs generated during simulation, but they are currently redirected to `/dev/null`.
+    See `$RISCY_HOME/scripts/run_test.py` about changing the redirection.
 
 ## Boot Linux on AWS F1 FPGA
 Simulation is too slow to boot Linux, so we boot Linux on FPGA.
@@ -130,7 +132,7 @@ Therefore, the build of RISC-V tools should be done in the F1 machine.
 In fact, only tools/riscv-fesvr needs to be built for compiling and running the design (see below).
 
 ### Setup C4
-Most of setups in the "Getting Started" section are not needed on C4.
+Most of the setups in the "Getting Started" section are not needed on C4.
 Here are the steps to setup C4.
 
 - Install the Bluepsec compiler.
@@ -190,7 +192,7 @@ We run the following command on C4 to monitor the state of the FPGA image.
     When the `State` field in the command output changes from `pending` to `available`, the FPGA image will be available and we can switch to F1 to run the design.
 
 ### Setup F1
-Most of setups in the "Getting Started" section are not needed on F1.
+Most of the setups in the "Getting Started" section are not needed on F1.
 Here are the steps to setup F1:
 
 - Install the Bluespec compiler.
@@ -249,13 +251,14 @@ The following command boots Linux with 2GB memory.
     It should be noted that we need to program the FPGA before each run of the design (even if the design does not change).
 
 ### Other build configurations
-`$RISCY_HOME/procs/RV64G_OOO/Makefile` contains several options to configure the build. For example, the makefile can be invoked in the following way to build for C4:
+`$RISCY_HOME/procs/RV64G_OOO/Makefile` contains several options to configure the build.
+For example, the makefile can be invoked in the following way to build for C4:
 
     $ cd $RISCY_HOME/procs/RV64G_OOO
     $ make gen.awsf1 CORE_NUM=$N DTC_PATH=/usr/bin/dtc CORE_SIZE=<SMALL/LARGE/...> CACHE_SIZE=<SMALL/LARGE/...> PERF_COUNT=<true/false> TSO_MM=<true/false> CHECK_DEADLOCK=<true/false> RENAME_DEBUG=<true/false> USER_CLK_PERIOD=<clock period in ns>
 
 Below are the expanations for these options.
-It should be noted that these options can also be applied when building for simulation.
+It should be noted that these options can also be applied when building for simulation (i.e., for `make build.verilator`).
 
 - `CORE_SIZE`: the size of each core in the processor.
 The detailed buffer sizes for each `CORE_SIZE` configuration are defined in `$RISCY_HOME/procs/RV64G_OOO/ProcConfig.bsv`.
@@ -346,3 +349,7 @@ Here we list some importand directories:
 - `RISCY_HOME/connectal`: contains the Connectal repo, which is the framework we are using for software-FPGA communication.
 
 - `RISCY_HOME/tools`: contains the RISC-V toolchain, the Linux kernel, and some prebuilt Linux images.
+
+## Publication
+
+Sizhuo Zhang, Andrew Wright, Thomas Bourgeat, Arvind. "Composable Building Blocks to Open up Processor Design." In the 51st IEEE/ACM International Symposium on Microarchitecture (MICRO), October, 2018.
