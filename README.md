@@ -103,9 +103,11 @@ If CORE_NUM is not specified, we build for 1 core by default.
         $ cd $RISCY_HOME/procs/RV64G_OOO
         $ make build.verilator CORE_NUM=$N -j20
 
-    The build result will be `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/verilator/bin/ubuntu.exe`.
+    The build result will be an executable `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/verilator/bin/ubuntu.exe`.
+    Strings after `core_$N`in the folder name reflects the processor configurations: core size is `SMALL`, cache size is `LARGE`, and the memory model is a weak model.
+    Refer to the [Other build configurations](#other-build-configurations) section for the meaning of these configurations.
 
-- Run tests in simulation (these are bare metal programs for 1 core).
+- Run tests in simulation. These are bare metal programs for 1 cores, so we can just use `$N=1` in the previous step.
 
         $ make run.verilator TEST=assembly
         $ make run.verilator TEST=benchmarks
@@ -128,10 +130,10 @@ We are using Amazon EFS to share files between C4 and F1 machines.
 In general, we build the hardware part of the design on C4, while we build the software part and run the design on F1.
 (This is mainly because C4 and F1 use different operating systems.)
 Therefore, the build of RISC-V tools should be done in the F1 machine.
-In fact, only tools/riscv-fesvr needs to be built for compiling and running the design (see below).
+In fact, only tools/riscv-fesvr needs to be built for compiling and running the design.
 
 ### Setup C4
-Most of the setups in the "Getting Started" section are not needed on C4.
+Most of the setups in the [Getting Started on a Local Ubuntu Machine](#getting-started-on-a-local-ubuntu-machine) section are not needed on C4.
 Here are the steps to setup C4.
 
 - Install the Bluepsec compiler.
@@ -177,14 +179,15 @@ The vivado version we are using on AWS is `v2017.1_sdxop`.
 
 - Compile the hardware part.
 The following commands build the hardware for `$N` cores.
+The logic resources on the FPGA are not unlimited, and we can at most fit 4 cores on the FPGA (see the [Other build configurations](#other-build-configurations) section), so we suggest to begin with `$N=1`.
 We need to pass in the path for device tree compiler to the makefile to help later build of software part (C4 does not have device tree compiler).
 
         $ cd $RISCY_HOME/procs/RV64G_OOO
         $ make gen.awsf1 CORE_NUM=$N DTC_PATH=/usr/bin/dtc
-        $ cd ../build/RV64G_OOO.core_$N.check_deadlock/awsf1
+        $ cd ../build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/awsf1
         $ make bits -j16
 
-    After the build finishes, we can find out the IDs of the FPGA image in `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/awsf1/build/scripts/fpga_image_ids.json`, i.e., FPGA image ID `afi-xxx` and FPGA image global ID `agfi-yyy`.
+    After the build finishes, we can find out the IDs of the FPGA image in `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/awsf1/build/scripts/fpga_image_ids.json`, i.e., FPGA image ID `afi-xxx` and FPGA image global ID `agfi-yyy`.
 
 - Wait for the FPGA image to be available.
 We run the following command on C4 to monitor the state of the FPGA image.
@@ -194,7 +197,7 @@ We run the following command on C4 to monitor the state of the FPGA image.
     When the `State` field in the command output changes from `pending` to `available`, the FPGA image will be available and we can switch to F1 to run the design.
 
 ### Setup F1
-Most of the setups in the "Getting Started" section are not needed on F1.
+Most of the setups in the [Getting Started on a Local Ubuntu Machine](#getting-started-on-a-local-ubuntu-machine) section are not needed on F1.
 Here are the steps to setup F1:
 
 - Install the Bluespec compiler.
@@ -241,7 +244,7 @@ Here are the steps to setup F1:
 We need to copy the bbl (e.g., `tools/RV64G/build-pk/bbl`) to F1.
 The following command boots Linux with 2GB memory.
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/awsf1/bin/ubuntu.exe --core-num $N --mem-size 2048 --ignore-user-stucks 1000000 -- /path/to/bbl
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/awsf1/bin/ubuntu.exe --core-num $N --mem-size 2048 --ignore-user-stucks 1000000 -- /path/to/bbl
     
     The processor detects potential deadlock by checking if a user level instruction has been executed during a period of time.
     This will output a lot of "deadlock" warnings when the processor is booting linux or idling in shell.
