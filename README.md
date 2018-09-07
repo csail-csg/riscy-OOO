@@ -166,6 +166,7 @@ The vivado version we are using on AWS is `v2017.1_sdxop`.
         $ git clone https://github.com/csail-csg/riscy-OOO.git
         $ cd riscy-OOO
         $ git submodule update --init --recursive
+        $ source ./setup.sh
 
 - If you would like to get email notification when the FPGA compilation finishes, you can do the following.
 
