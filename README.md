@@ -2,7 +2,7 @@
 
 This repository contains an OOO RISC-V processor written in Bluespec System Verilog (BSV).
 
-## Getting Started
+## Getting Started on a Local Ubuntu Machine
 
 How to get started with this repository (should work on both Ubuntu 14.04 and 16.04):
 
@@ -23,13 +23,13 @@ How to get started with this repository (should work on both Ubuntu 14.04 and 16
     The Bluespec compiler uses the shared library `libgmp.so.3`, but Ubuntu does not provide this version of the library. To fix this, we can just creat a link for `libgmp.so`:
     
         $ cd /usr/lib/x86_64-linux-gnu # the folder containing libgmp.so, this is the path for ubuntu; the path may be different for other OS
-        $ ln -s libgmp.so libgmp.so.3
+        $ sudo ln -s libgmp.so libgmp.so.3
 
 - Get dependencies for RISC-V toolchain and connectal.
 
         $ sudo apt-get install autoconf automake autotools-dev curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev device-tree-compiler pkg-config python-ply
 
-- Clone the repo and get all the submodules.
+- Clone this `riscy-OOO` repo and get all the submodules.
 
         $ cd <place you want to put this repo>
         $ git clone https://github.com/csail-csg/riscy-OOO.git
@@ -44,9 +44,11 @@ How to get started with this repository (should work on both Ubuntu 14.04 and 16
         
     RISC-V tools will be builted to `tools/RV64G`.
 
-- Setup environment variables for the project (`$RISCY_HOME` should be the path to this repo).
+- Setup environment variables for the project.
 
         $ source ./setup.sh
+        
+    `$RISCY_HOME` should be the path to this repo, and we will use `$RISCY_HOME` to refer to the path of this repo in the following.
         
 - Get Verilator for simulation and connectal utilities for programming FPGA.
 The version of Verilator in the Ubuntu package has a bug that prevents running our BSV designs.
@@ -58,40 +60,44 @@ We use a PPA to provide a newer version of Verilator.
 
 - Copy DDR3 IP from Bluespec installation (environment variable `$BLUESPECDIR` should have been set).
 
-        $ cd fpgautils/xilinx/vc707/ddr3_1GB_bluespec
+        $ cd $RISCY_HOME/fpgautils/xilinx/vc707/ddr3_1GB_bluespec
         $ ./copy_verilog.sh
-        $ cd ../../../..
 
 - Build BusyBox.
 BusyBox is the first step of building Linux image.
 
-        $ cd tools
+        $ cd $RISCY_HOME/tools
         $ ./build-buxybox.sh 20 # build using 20 threads
-        $ cd ..
         
     BusyBox will be at `tools/RV64G/busybox-1.21.1/busybox`.
 
-- Build Linux image.
+- Build a simple program used to shutdown the processor.
+This program is always installed to the Linux image buiilt using our script (the next step).
+
+        $ cd $RISCY_HOME/riscv_custom/terminate
+        $ make
+
+- Build Linux image (bbl).
 The file system of Linux is currently using initramfs.
 Assume `$TEST_DIR` is the directory that we want to include in the Linux image.
 We can build the image as follows:
 
-        $ cd tools
+        $ cd $RISCY_HOME/tools
         $ ./build-linux.py --testdir $TEST_DIR --jobs 20 # build using 20 threads
-        $ cd ..
         
-    The Linux image is included in the bbl, which is at `tools/RV64G/build-pk/bbl`.
+    The Linux image is included in the bbl, which is at `$RISCY_HOME/tools/RV64G/build-pk/bbl`.
     After Linux is booted, the contents of `$TEST_DIR` can be found in `/test`.
     If `--testdir` is not specified, then `/test` will be an empty folder after Linux boots.
     
     We currently configure Linux to support maximum 8 CPUs.
     (We can only fit 4 OOO cores on FPGA.)
-    Change `tools/configs/linux_config` to support more CPUs (the upper bound should be 32).
+    Change `$RISCY_HOME/tools/configs/linux_config` to support more CPUs (the upper bound should be 32).
     
-    We have put some prebuilt Linux images containing the PARSEC benchmarks in `tools/images`.
+    We have put some prebuilt Linux images (bbls) containing the PARSEC benchmarks in `tools/images`.
+    The sources files of PARSEC benchmarks that we are using can be found at https://github.com/csail-csg/parsec.
     Unfortunately, we cannot release the prebuilt images for SPEC benchmarks due to license issues.
 
-## Simulation
+## Simulation on a Local Ubuntu Machine
 - Build the OOO processor with `$N` cores for simulation.
 If CORE_NUM is not specified, we build for 1 core by default.
 
@@ -104,44 +110,66 @@ If CORE_NUM is not specified, we build for 1 core by default.
 
         $ make run.verilator TEST=assembly
         $ make run.verilator TEST=benchmarks
+        
+    Assembly tests will output all zero for performance counters, while benchmark tests will output meaningful performance counter values.
+    Source codes for assembly tests can be found at `$RISCY_HOME/tools/riscv-tests/isa/rv64ui`, while source codes for benchmark tests can be found at `$RISCY_HOME/tools/riscv-tests/benchmarks`.
 
 ## Boot Linux on AWS F1 FPGA
 Simulation is too slow to boot Linux, so we boot Linux on FPGA.
+It should be noted that we cross-compile benchmark programs to RISC-V and build Linux images on our local machines instead of on AWS.
+On AWS, we compile/synthesize the processor and run it on FPGA.
 
-On AWS, we compile the design on a C4 (c4.4xlarge) machine which runs the FPGA Developer AMI provided by AWS.
-After compilation, we run the design on FPGA using an F1 (f1.2xlarge) machine.
+On AWS, we compile (and synthesize) the design on a C4 (e.g., c4.4xlarge) machine which runs the FPGA Developer AMI provided by AWS.
+After compilation, we run the design on FPGA using an F1 (e.g., f1.2xlarge) machine.
 As a result, this repo should be cloned to a place shared by C4 and F1.
+We are using Amazon EFS to share files between C4 and F1 machines.
 
 In general, we build the hardware part of the design on C4, while we build the software part and run the design on F1.
 (This is mainly because C4 and F1 use different operating systems.)
 Therefore, the build of RISC-V tools should be done in the F1 machine.
 In fact, only tools/riscv-fesvr needs to be built for compiling and running the design (see below).
 
-Installation of Verilator (`sudo apt-get install verilator`) can be skipped if we are not using AWS for simulation.
-
-Installation of connectal utilities (`sudo apt-get install connectal`) is not needed on C4 (but may be needed on F1).
-
 ### Setup C4
-Most of setups in the "Getting Started" section are not needed on C4. Just `source setup.sh`.
+Most of setups in the "Getting Started" section are not needed on C4.
+Here are the steps to setup C4.
 
-The additional thing is to get the AWS HDK repo (https://github.com/aws/aws-fpga.git).
-It should be located at `~/aws-fpga` (it could be a symlink pointing to where the repo truly resides).
+- Install the Bluepsec compiler.
+
+- Install dependencies:
+
+        $ sudo yum check-update
+        $ sudo yum install -y vim python34 python34-pip
+        $ sudo python -m pip install ply
+        $ sudo python3 -m pip install boto3
+        $ sudo python3 -m pip install requests
+
+- Setup shared file system with F1 (e.g., using EFS).
+
+- Get the AWS HDK repo (https://github.com/aws/aws-fpga).
+It should be put at `~/aws-fpga`.
 We are using commit `e107da6487221a820a07ebd3b82de71c5362c313` of the HDK repo; we have not tested the lastest commit.
-Here is an example way of setup.
+Here is our way of setup the AWS HDK repo:
 
-    $ cd ~
-    $ git clone https://github.com/aws/aws-fpga.git
-    $ git checkout e107da6487221a820a07ebd3b82de71c5362c313 -b riscy-OOO
+        $ cd ~
+        $ git clone https://github.com/aws/aws-fpga.git
+        $ git checkout e107da6487221a820a07ebd3b82de71c5362c313 -b riscy-OOO
 
-If you would like to get email notification when the FPGA compilation finishes, you can do the following.
-
-    $ export EMAIL=<email address>
-    $ export SNS_NOTIFY_EMAIL=$EMAIL
-
-Also make sure that Xilinx synthesis tool `vivado` is in PATH.
+- Make sure that Xilinx synthesis tool `vivado` is in PATH.
 The vivado version we are using on AWS is `v2017.1_sdxop`.
 
-### Compilation of hardware on C4
+- Clone this `riscy-OOO` repo, get all the submodules, and setup environment variables.
+
+        $ cd <place you want to put this repo> # this should be a location on the shared file system
+        $ git clone https://github.com/csail-csg/riscy-OOO.git
+        $ cd riscy-OOO
+        $ git submodule update --init --recursive
+
+- If you would like to get email notification when the FPGA compilation finishes, you can do the following.
+
+        $ export EMAIL=<email address>
+        $ export SNS_NOTIFY_EMAIL=$EMAIL
+
+### Compilation (and synthesis) of hardware on C4
 
 - Compile the hardware part.
 The following commands build the hardware for `$N` cores.
@@ -162,14 +190,40 @@ We run the following command on C4 to monitor the state of the FPGA image.
     When the `State` field in the command output changes from `pending` to `available`, the FPGA image will be available and we can switch to F1 to run the design.
 
 ### Setup F1
-Most of setups in the "Getting Started" section are not needed on C4. Just `source setup.sh`.
+Most of setups in the "Getting Started" section are not needed on F1.
+Here are the steps to setup F1:
 
-The additional thing is to build riscv-fesvr.
+- Install the Bluespec compiler.
 
-    $ cd $RISCY_HOME/tools
-    $ ./build-fesvr.sh 8 # build using 8 threads
+- Get dependencies for RISC-V toolchain and connectal.
 
-### Run on F1
+        $ sudo apt-get install autoconf automake autotools-dev curl libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev device-tree-compiler pkg-config python-ply
+
+- Install connectal.
+
+        $ sudo apt-add-repository -y ppa:jamey-hicks/connectal
+        $ sudo apt-get update
+        $ sudo apt-get install connectal
+
+- Setup shared file system with F1 (e.g., using EFS).
+
+- Get the AWS HDK repo (https://github.com/aws/aws-fpga).
+
+        $ cd ~
+        $ git clone https://github.com/aws/aws-fpga.git
+        $ git checkout e107da6487221a820a07ebd3b82de71c5362c313 -b riscy-OOO
+
+- Build RISC-V front-end server.
+
+        $ cd /path/to/riscy-OOO # go to the riscy-OOO repo on the shared file system
+        $ ./build-fesvr.sh 8 # build using 8 threads
+        
+- Setup enviroment variables.
+
+        $ cd /path/to/riscy-OOO # go to the riscy-OOO repo on the shared file system
+        $ source ./setup.sh
+
+### Run on the FPGA of F1
 - Finish compilation of software part.
 
         $ cd $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/awsf1
@@ -180,7 +234,7 @@ The additional thing is to build riscv-fesvr.
         $ sudo fpga-load-local-image -S 0 -I agfi-yyy
 
 - Run the design to boot Linux.
-We need to copy the bbl (`tools/RV64G/build-pk/bbl`) to F1.
+We need to copy the bbl (e.g., `tools/RV64G/build-pk/bbl`) to F1.
 The following command boots Linux with 2GB memory.
 
         $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/awsf1/bin/ubuntu.exe --core-num $N --mem-size 2048 --ignore-user-stucks 1000000 -- /path/to/bbl
