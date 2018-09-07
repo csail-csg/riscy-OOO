@@ -220,7 +220,7 @@ Here are the steps to setup F1:
         $ cd /path/to/riscy-OOO # go to the riscy-OOO repo on the shared file system
         $ ./build-fesvr.sh 8 # build using 8 threads
         
-- Setup enviroment variables.
+- Setup environment variables.
 
         $ cd /path/to/riscy-OOO # go to the riscy-OOO repo on the shared file system
         $ source ./setup.sh
@@ -324,7 +324,7 @@ Since VC707 board only has 1GB DRAM, we boot Linux with 1GB memory.
 
 ## Performance Counter
 
-To colloect performance data, we have deployed many performance counters in the processor design, and these counters can be queried by host software (see `$RISCY_HOME/procs/cpp/PerfStats.h`).
+To collect performance data, we have deployed many performance counters in the processor design, and these counters can be queried by host software (see `$RISCY_HOME/procs/cpp/PerfStats.h`).
 In addition, we added two custom user-level CSRs: the `stats` CSR (address `0x801`) and the `terminate` CSR (address `0x800`).
 The `stats` CSR controls whether performance counters will be incremented, and the change made to the `stats` CSR by one core will be propagated to all other cores in a few cycles.
 Any write to the `terminate` CSR done by any core will shutdown the processor, and send a message to the host software.
