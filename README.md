@@ -304,31 +304,7 @@ As an example, when we build the 4-core TSO multiprocessor on AWS, we invoke the
 Since 4 OOO cores will make the FPGA pretty congested, we use the smallest core and cache configurations (`TINY` and `MC`, respectively), and we turn off the checkes for deadlock and renaming.
 We also lower down the clock frequency to 25MHz (i.e., 40ns period).
 
-<!--
-## VC707 FPGA
-
-- Build an `$N`-core processor for FPGA.
-We are using Xilinx Vivado 2015.4 on Ubuntu 14.04 or Ubuntu 16.04.
-(Higher Vivado versions may fail.)
-Also make sure that `vivado` is in PATH.
-VC707 shoud only be able to hold 1 core (i.e., `$N=1`).
-
-        $ cd $RISCY_HOME/procs/RV64G_OOO
-        $ make build.vc707 CORE_NUM=$N
-
-    The build result will be in `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.deadlock_check/vc707/bin`.
-    The other build options can be passed to the makefile as in AWS.
-    
-- Boot Linux on FPGA.
-Since VC707 board only has 1GB DRAM, we boot Linux with 1GB memory.
-
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/vc707/bin/ubuntu.exe --core-num $N --mem-size 1024  --ignore-user-stucks 1000000 -- $RISCY_HOME/tools/RV64G/build-pk/bbl
- 
-     Hit `ctrl-c` when you want to exit.
--->
-
 ## Performance Counter
-
 To collect performance data, we have deployed many performance counters in the processor design, and these counters can be queried by host software (see `$RISCY_HOME/procs/cpp/PerfStats.h`).
 In addition, we added two custom user-level CSRs: the `stats` CSR (address `0x801`) and the `terminate` CSR (address `0x800`).
 The `stats` CSR controls whether performance counters will be incremented, and the change made to the `stats` CSR by one core will be propagated to all other cores in a few cycles.
@@ -354,6 +330,36 @@ Here we list some importand directories:
 - `RISCY_HOME/connectal`: contains the Connectal repo, which is the framework we are using for software-FPGA communication.
 
 - `RISCY_HOME/tools`: contains the RISC-V toolchain, the Linux kernel, and some prebuilt Linux images.
+
+## VC707 FPGA
+It is also possible to run the design on a VC707 FPGA, but the VC707 FPGA can only hold 1 core.
+We connect a VC707 FPGA to a Ubuntu machine through PCIe.
+The Ubuntu machine should be setup following the steps in the [Getting Started on a Local Ubuntu Machine](#getting-started-on-a-local-ubuntu-machine) section.
+
+The communication through the PCIe link may not be very stable, because the version of Connectal (`$RISCY_HOME/connectal`) in this repo is not the latest.
+These issues have been fixed in the latest version of Connectal, but we have not got a chance to upgrade to the latest version.
+Therefore, we suggest to use AWS if possible.
+
+- Build for VC707 FPGA.
+We are using Xilinx Vivado 2015.4 on Ubuntu 14.04 or Ubuntu 16.04.
+(Higher Vivado versions may fail.)
+Also make sure that `vivado` is in PATH.
+VC707 shoud only be able to hold 1 core.
+
+        $ cd $RISCY_HOME/procs/RV64G_OOO
+        $ make build.vc707 CORE_NUM=1 USER_CLK_PERIOD=40 # use a slower clock
+
+    The build result will be in `$RISCY_HOME/procs/build/RV64G_OOO.core_1.core_SMALL.cache_LARGE.weak.deadlock_check/vc707/bin`.
+    The other build options can be passed to the makefile as in AWS.
+    
+- Boot Linux on FPGA.
+Since VC707 only has 1GB DRAM, we boot Linux with 1GB memory.
+
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.core_SMALL.cache_LARGE.weak.check_deadlock/vc707/bin/ubuntu.exe --core-num 1 --mem-size 1024  --ignore-user-stucks 1000000 -- /path/to/bbl
+
+    The above command will automaticall program the FPGA.
+    If it is the first time to program the VC707 FPGA, the program may fail to run.
+    Just reboot the machine and re-run the above command.
 
 ## Publication
 
