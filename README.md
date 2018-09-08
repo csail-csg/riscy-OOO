@@ -223,17 +223,18 @@ Here are the steps to setup F1:
 - Build RISC-V front-end server.
 
         $ cd /path/to/riscy-OOO # go to the riscy-OOO repo on the shared file system
+        $ cd tools
         $ ./build-fesvr.sh 8 # build using 8 threads
+        $ cd ..
         
 - Setup environment variables.
 
-        $ cd /path/to/riscy-OOO # go to the riscy-OOO repo on the shared file system
         $ source ./setup.sh
 
 ### Run on the FPGA of F1
 - Finish compilation of software part.
 
-        $ cd $RISCY_HOME/procs/build/RV64G_OOO.core_$N.check_deadlock/awsf1
+        $ cd $RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/awsf1
         $ make exe
  
 - Program FPGA.
@@ -296,12 +297,12 @@ The default value depends on the `CORE_SIZE` configuration.
 It is recommended to make the clock period a multple of 8, because the AWS FPGA shell clock period is 8ns, and an async reset signal in our design is derived from the FPGA shell reset.
 Doing so can prevent Xilinx Vivado from overconstraining the timing related to this async reset.
 
-As an example, when we build the 4-core TSO multiprocessor on AWS, we invoke the makefile in the following way:
+As an example, when we build the 4-core TSO multiprocessor on AWS, we invoke the makefile in the following way (we suggest to use c4.8xlarge to build this 4-core processor because c4.4xlarge may run out of memory):
 
     $ cd $RISCY_HOME/procs/RV64G_OOO
     $ make gen.awsf1 CORE_NUM=4 DTC_PATH=/usr/bin/dtc CORE_SIZE=TINY CACHE_SIZE=MC PERF_COUNT=false TSO_MM=true CHECK_DEADLOCK=false RENAME_DEBUG=false USER_CLK_PERIOD=40
 
-Since 4 OOO cores will make the FPGA pretty congested, we use the smallest core and cache configurations (`TINY` and `MC`, respectively), and we turn off the checkes for deadlock and renaming.
+Since 4 OOO cores will make the FPGA pretty congested, we use the smallest core and cache configurations (`TINY` and `MC`, respectively), and we turn off the checks for deadlock and renaming.
 We also lower down the clock frequency to 25MHz (i.e., 40ns period).
 
 ## Performance Counter
