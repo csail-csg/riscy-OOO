@@ -218,6 +218,7 @@ Here are the steps to setup F1:
 
         $ cd ~
         $ git clone https://github.com/aws/aws-fpga.git
+        $ cd aws-fpga
         $ git checkout e107da6487221a820a07ebd3b82de71c5362c313 -b riscy-OOO
 
 - Build RISC-V front-end server.
