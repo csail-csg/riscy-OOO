@@ -214,12 +214,13 @@ Here are the steps to setup F1:
 
 - Setup shared file system with F1 (e.g., using EFS).
 
-- Get the AWS HDK repo (https://github.com/aws/aws-fpga).
+- Get the AWS HDK repo (https://github.com/aws/aws-fpga), and install SDK.
 
         $ cd ~
         $ git clone https://github.com/aws/aws-fpga.git
         $ cd aws-fpga
         $ git checkout e107da6487221a820a07ebd3b82de71c5362c313 -b riscy-OOO
+        $ source sdk_setup.sh
 
 - Build RISC-V front-end server.
 
