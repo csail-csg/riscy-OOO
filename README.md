@@ -71,7 +71,7 @@ BusyBox is the first step of building Linux image.
     BusyBox will be at `tools/RV64G/busybox-1.21.1/busybox`.
 
 - Build a simple program used to shutdown the processor.
-This program is always installed to the Linux image buiilt using our script (the next step).
+This program is always installed to the Linux image built using our script (the next step).
 
         $ cd $RISCY_HOME/riscv_custom/terminate
         $ make
@@ -314,6 +314,7 @@ Then the host software will query all the performance counters.
 This is a better way than using `ctrl-c` to exit Linux, because using `ctrl-c` will just kill everything and performance counters will not be dumped.
 
 `$RISCY_HOME/riscv_custom/riscv_cumstom.h` contains C macros to set these two CSRs, and `$RISCY_HOME/riscv_custom/terminate` contains a simple C program to shutdown the processor using the `terminate` CSR.
+This program is always included into the Linux image built using our script (see the [Getting Started on a Local Ubuntu Machine](#getting-started-on-a-local-ubuntu-machine) section).
 
 ## Directory Structure
 Here we list some importand directories:
