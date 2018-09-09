@@ -263,7 +263,7 @@ The following command boots Linux with 2GB memory.
 For example, the makefile can be invoked in the following way to build for C4:
 
     $ cd $RISCY_HOME/procs/RV64G_OOO
-    $ make gen.awsf1 CORE_NUM=$N DTC_PATH=/usr/bin/dtc CORE_SIZE=<SMALL/LARGE/...> CACHE_SIZE=<SMALL/LARGE/...> PERF_COUNT=<true/false> TSO_MM=<true/false> CHECK_DEADLOCK=<true/false> RENAME_DEBUG=<true/false> USER_CLK_PERIOD=<clock period in ns>
+    $ make gen.awsf1 CORE_NUM=$N DTC_PATH=/usr/bin/dtc CORE_SIZE=<SMALL/LARGE/...> CACHE_SIZE=<SMALL/LARGE/...> TSO_MM=<true/false> CHECK_DEADLOCK=<true/false> RENAME_DEBUG=<true/false> USER_CLK_PERIOD=<clock period in ns>
 
 Below are the expanations for these options.
 It should be noted that these options can also be applied when building for simulation (i.e., for `make build.verilator`).
@@ -275,10 +275,6 @@ Default value is `SMALL` (64-entry ROB).
 - `CACHE_SIZE`: the size of caches in the processor.
 The detailed parameters for each `CACHE_SIZE` configuration are defined in `$RISCY_HOME/procs/RV64G_OOO/ProcConfig.bsv`.
 Default value is `LARGE`.
-
-- `PERF_COUNT`: enable or disable the performance counters.
-If set to `true`, performance counters will be implemetned in the processor; otherwise, performance counters will not be implemented and any query to performance counters will return zero.
-Default is `true`.
 
 - `TSO_MM`: enable TSO memory model or not.
 If set to `true`, the processor implements TSO; otherwise, the processor implements a weak memroy model *WMM* (https://doi.org/10.1109/PACT.2017.29).
@@ -302,7 +298,7 @@ Doing so can prevent Xilinx Vivado from overconstraining the timing related to t
 As an example, when we build the 4-core TSO multiprocessor on AWS, we invoke the makefile in the following way (we suggest to use c4.8xlarge to build this 4-core processor because c4.4xlarge may run out of memory):
 
     $ cd $RISCY_HOME/procs/RV64G_OOO
-    $ make gen.awsf1 CORE_NUM=4 DTC_PATH=/usr/bin/dtc CORE_SIZE=TINY CACHE_SIZE=MC PERF_COUNT=false TSO_MM=true CHECK_DEADLOCK=false RENAME_DEBUG=false USER_CLK_PERIOD=40
+    $ make gen.awsf1 CORE_NUM=4 DTC_PATH=/usr/bin/dtc CORE_SIZE=TINY CACHE_SIZE=MC TSO_MM=true CHECK_DEADLOCK=false RENAME_DEBUG=false USER_CLK_PERIOD=40
 
 Since 4 OOO cores will make the FPGA pretty congested, we use the smallest core and cache configurations (`TINY` and `MC`, respectively), and we turn off the checks for deadlock and renaming.
 We also lower down the clock frequency to 25MHz (i.e., 40ns period).
