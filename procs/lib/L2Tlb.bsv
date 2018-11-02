@@ -103,7 +103,7 @@ interface L2Tlb;
     interface Perf#(L2TlbPerfType) perf;
 endinterface
 
-typedef FullAssocTlb#(8) L2FullAssocTlb;
+typedef FullAssocTlb#(`L2_TLB_HUGE_SIZE) L2FullAssocTlb;
 module mkL2FullAssocTlb(L2FullAssocTlb);
     let m <- mkFullAssocTlb(True); // randomness in replacement
     return m;

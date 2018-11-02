@@ -524,7 +524,7 @@ module mkCore#(CoreId coreId)(Core);
 `ifdef SECURITY
     // security flush cache: need to wait for wrong path loads or inst fetches
     // to finish
-    rule flushCaches(flush_caches && fetch.emptyForFlush && lsq.noWrongPathLoads);
+    rule flushCaches(flush_caches && fetchStage.emptyForFlush && lsq.noWrongPathLoads);
         flush_caches <= False;
         iMem.flush;
         dMem.flush;
@@ -532,9 +532,9 @@ module mkCore#(CoreId coreId)(Core);
 
     // security flush branch predictors: wait for wrong path inst fetches to
     // finish
-    rule flushBrPred(flush_brpred && fetch.emptyForFlush);
+    rule flushBrPred(flush_brpred && fetchStage.emptyForFlush);
         flush_brpred <= False;
-        fetch.flush_predictors;
+        fetchStage.flush_predictors;
     endrule
 `endif
 
@@ -542,7 +542,7 @@ module mkCore#(CoreId coreId)(Core);
         !flush_reservation && !flush_tlbs && !update_vm_info &&
         !flush_caches && !flush_brpred &&
         iTlb.flush_done && dTlb.flush_done &&
-        iMem.flush_done && dMem.flush_done && fetch.flush_predictors_done
+        iMem.flush_done && dMem.flush_done && fetchStage.flush_predictors_done
     );
         fetchStage.done_flushing();
     endrule

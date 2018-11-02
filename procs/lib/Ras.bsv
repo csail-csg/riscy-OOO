@@ -55,7 +55,7 @@ module mkRas(ReturnAddrStack) provisos(NumAlias#(TExp#(TLog#(RasEntries)), RasEn
     Reg#(Bool) flushDone <- mkReg(True);
 
     rule doFlush(!flushDone);
-        writeVReg(getVEhrPort(stack, valueof(SupSize)), 0);
+        writeVReg(getVEhrPort(stack, valueof(SupSize)), replicate(0));
         head[valueof(SupSize)] <= 0;
         flushDone <= True;
     endrule
@@ -85,7 +85,7 @@ module mkRas(ReturnAddrStack) provisos(NumAlias#(TExp#(TLog#(RasEntries)), RasEn
     interface ras = rasIfc;
 
 `ifdef SECURITY
-    method Action flush if(flushDone)
+    method Action flush if(flushDone);
         flushDone <= False;
     endmethod
     method flush_done = flushDone._read;

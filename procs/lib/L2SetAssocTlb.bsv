@@ -21,6 +21,8 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+`include "ProcConfig.bsv"
+
 import Vector::*;
 import Ehr::*;
 import Types::*;
@@ -29,10 +31,12 @@ import TlbTypes::*;
 import SetAssocTlb::*;
 
 // L2 4KB page set assoc TLB
+typedef `LOG_L2_TLB_4KB_WAYS LogL2TlbWayNum;
+typedef TExp#(LogL2TlbWayNum) L2TlbWayNum;
+typedef Bit#(LogL2TlbWayNum) L2TlbWay;
 
-typedef 4 L2TlbWayNum;
-typedef 9 LogL2TlbSetNum;
-typedef Bit#(TLog#(L2TlbWayNum)) L2TlbWay;
+typedef `LOG_L2_TLB_4KB_SIZE LogL2TlbSize;
+typedef TSub#(LogL2TlbSize, LogL2TlbWayNum) LogL2TlbSetNum;
 
 // use true LRU: index 0 --MRU, index way-1 -- LRU
 typedef Vector#(L2TlbWayNum, L2TlbWay) L2TlbRepInfo;

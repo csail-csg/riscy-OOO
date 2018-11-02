@@ -36,7 +36,10 @@ export TourGlobalHist;
 export TourTrainInfo(..);
 export mkTourPredSecure;
 
-// 4KB tournament predictor
+// 4KB tournament predictor with flush methods for security
+// XXX We DO NOT stall prediction or update methods when flushing to reduce
+// logic. It is guaranteed outside that no prediction or update can happen when
+// flushing.
 
 typedef 12 TourGlobalHistSz;
 typedef 10 TourLocalHistSz;
@@ -64,7 +67,7 @@ endmodule
 
 // We group several sat counters/local hists together in order to flush faster
 typedef 9 TabIndexSz;
-typedef Bit#(IndexSz) TabIndex;
+typedef Bit#(TabIndexSz) TabIndex;
 
 // vector of local hists
 typedef TSub#(PCIndexSz, TabIndexSz) LgLocalHistVecSz;
@@ -78,8 +81,8 @@ typedef Bit#(LgLocalBhtVecSz) LocalBhtVecSelect;
 
 // vector of global bht sat counters and global choice sat counters
 typedef TSub#(TourGlobalHistSz, TabIndexSz) LgGlobalVecSz;
-typedef TExp#(LgGlobalBhtVecSz) GlobalVecSz;
-typedef Bit#(GlobalBhtVecSz) GlobalVecSelect;
+typedef TExp#(LgGlobalVecSz) GlobalVecSz;
+typedef Bit#(GlobalVecSz) GlobalVecSelect;
 
 typedef struct {
     Addr pc;
@@ -92,15 +95,15 @@ typedef struct {
 module mkTourPredSecure(DirPredictor#(TourTrainInfo));
     // FIXME: The regfile should be initialized (on FPGA, all 0 after programming)
     // local history: MSB is the latest branch
-    RegFile#(PCIndex, Vector#(LocalHistVecSz, TourLocalHist)) localHistTab <- mkRegFileWCF(0, maxBound);
+    RegFile#(TabIndex, Vector#(LocalHistVecSz, TourLocalHist)) localHistTab <- mkRegFileWCF(0, maxBound);
     // local sat counters
     RegFile#(TabIndex, Vector#(LocalBhtVecSz, Bit#(3))) localBht <- mkRegFileWCF(0, maxBound);
     // global history reg
     TourGHistReg gHistReg <- mkTourGHistReg;
     // global sat counters
-    RegFile#(TourGlobalHist, Vector#(GlobalVecSz, Bit#(2))) globalBht <- mkRegFileWCF(0, maxBound);
+    RegFile#(TabIndex, Vector#(GlobalVecSz, Bit#(2))) globalBht <- mkRegFileWCF(0, maxBound);
     // choice sat counters: large (taken) -- use local, small (not taken) -- use global
-    RegFile#(TourGlobalHist, Vector#(GlobalVecSz, Bit#(2))) choiceBht <- mkRegFileWCF(0, maxBound);
+    RegFile#(TabIndex, Vector#(GlobalVecSz, Bit#(2))) choiceBht <- mkRegFileWCF(0, maxBound);
 
     // EHR to record predict results in this cycle
     Ehr#(TAdd#(1, SupSize), SupCnt) predCnt <- mkEhr(0);
@@ -203,63 +206,60 @@ module mkTourPredSecure(DirPredictor#(TourTrainInfo));
         predCnt[valueof(SupSize)] <= 0;
     endrule
 
+    // no flush, accept update
     (* fire_when_enabled, no_implicit_conditions *)
-    rule canonUpdateFlush;
-        if (flushDone) begin
-            // no flush, accept update
-            if (updateEn.wget matches tagged Valid .upd) begin
-                let pc = upd.pc;
-                let taken = upd.taken;
-                let train = upd.train;
-                let mispred = upd.mispred;
+    rule canonUpdate(flushDone &&& updateEn.wget matches tagged Valid .upd);
+        let pc = upd.pc;
+        let taken = upd.taken;
+        let train = upd.train;
+        let mispred = upd.mispred;
 
-                // update history if mispred
-                if(mispred) begin
-                    TourGlobalHist newHist = truncateLSB({pack(taken), train.globalHist});
-                    gHistReg.redirect(newHist);
-                end
-
-                // update local history (assume only 1 branch for an PC in flight)
-                let {localHistTabIdx, localHistVecSel} = getPCIndex(pc);
-                Vector#(LocalHistVecSz, TourLocalHist) localHistVec = localHistTab.sub(localHistTabIdx);
-                localHistVec[localHistVecSel] = truncateLSB({pack(taken), train.localHist});
-                localHistTab.upd(localHistTabIdx, localHistVec);
-
-                // update local sat cnt
-                let {localBhtTabIdx, localBhtVecSel} = getLocalBhtIndex(train.localHist);
-                Vector#(LocalBhtVecSz, Bit#(3)) localBhtVec = localBht.sub(localBhtTabIdx);
-                Bit#(3) localCnt = localBhtVec[localBhtVecSel];
-                localBhtVec[localBhtVecSel] = updateCnt(localCnt, taken);
-                localBht.upd(localBhtTabIdx, localBhtVec);
-
-                // update global sat cnt
-                let {globalTabIdx, globalVecSel} = getGlobalIndex(train.globalHist);
-                Vector#(GlobalVecSz, Bit#(2)) globalBhtVec = globalBht.sub(globalTabIdx);
-                Bit#(2) globalCnt = globalBhtVec[globalVecSel];
-                globalBhtVec[globalVecSel] = updateCnt(globalCnt, taken);
-                globalBht.upd(globalTabIdx, globalBhtVec);
-
-                // update choice cnt
-                if(train.globalTaken != train.localTaken) begin
-                    Vector#(GlobalVecSz, Bit#(2)) choiceVec = choiceBht.sub(globalTabIdx);
-                    Bit#(2) choiceCnt = choiceVec[globalVecSel];
-                    Bool useLocal = train.localTaken == taken;
-                    choiceVec[globalVecSel] = updateCnt(choiceCnt, useLocal);
-                    choiceBht.upd(globalTabIdx, choiceVec);
-                end
-            end
+        // update history if mispred
+        if(mispred) begin
+            TourGlobalHist newHist = truncateLSB({pack(taken), train.globalHist});
+            gHistReg.redirect(newHist);
         end
-        else begin
-            // flushing, drop update and flush table entries one by one
-            localHistTab.upd(flushIndex, replicate(0));
-            localBht.upd(flushIndex, replicate(0));
-            globalBht.upd(flushIndex, replicate(0));
-            choiceBht.upd(flushIndex, replicate(0));
-            gHistReg.redirect(0);
-            flushIndex <= flushIndex + 1;
-            if (flushIndex == maxBound) begin
-                flushDone <= True;
-            end
+
+        // update local history (assume only 1 branch for an PC in flight)
+        let {localHistTabIdx, localHistVecSel} = getPCIndex(pc);
+        Vector#(LocalHistVecSz, TourLocalHist) localHistVec = localHistTab.sub(localHistTabIdx);
+        localHistVec[localHistVecSel] = truncateLSB({pack(taken), train.localHist});
+        localHistTab.upd(localHistTabIdx, localHistVec);
+
+        // update local sat cnt
+        let {localBhtTabIdx, localBhtVecSel} = getLocalBhtIndex(train.localHist);
+        Vector#(LocalBhtVecSz, Bit#(3)) localBhtVec = localBht.sub(localBhtTabIdx);
+        Bit#(3) localCnt = localBhtVec[localBhtVecSel];
+        localBhtVec[localBhtVecSel] = updateCnt(localCnt, taken);
+        localBht.upd(localBhtTabIdx, localBhtVec);
+
+        // update global sat cnt
+        let {globalTabIdx, globalVecSel} = getGlobalIndex(train.globalHist);
+        Vector#(GlobalVecSz, Bit#(2)) globalBhtVec = globalBht.sub(globalTabIdx);
+        Bit#(2) globalCnt = globalBhtVec[globalVecSel];
+        globalBhtVec[globalVecSel] = updateCnt(globalCnt, taken);
+        globalBht.upd(globalTabIdx, globalBhtVec);
+
+        // update choice cnt
+        if(train.globalTaken != train.localTaken) begin
+            Vector#(GlobalVecSz, Bit#(2)) choiceVec = choiceBht.sub(globalTabIdx);
+            Bit#(2) choiceCnt = choiceVec[globalVecSel];
+            Bool useLocal = train.localTaken == taken;
+            choiceVec[globalVecSel] = updateCnt(choiceCnt, useLocal);
+            choiceBht.upd(globalTabIdx, choiceVec);
+        end
+    endrule
+
+    // flushing, drop update and flush table entries one by one
+    rule canonFlush(!flushDone);
+        localHistTab.upd(flushIndex, replicate(0));
+        localBht.upd(flushIndex, replicate(0));
+        globalBht.upd(flushIndex, replicate(0));
+        choiceBht.upd(flushIndex, replicate(0));
+        gHistReg.redirect(0);
+        flushIndex <= flushIndex + 1;
+        if (flushIndex == maxBound) begin
+            flushDone <= True;
         end
     endrule
 

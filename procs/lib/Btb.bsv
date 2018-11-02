@@ -68,35 +68,32 @@ module mkBtb(NextAddrPred);
     function BtbIndex getIndex(Addr pc) = truncate(pc >> 2);
     function BtbTag getTag(Addr pc) = truncateLSB(pc);
 
+    // no flush, accept update
     (* fire_when_enabled, no_implicit_conditions *)
-    rule canon;
-        if(flushDone) begin
-            // not flushing, accept update
-            if(updateEn.wget matches tagged Valid .upd) begin
-                let pc = upd.pc;
-                let nextPc = upd.nextPc;
-                let taken = upd.taken;
+    rule canonUpdate(flushDone &&& updateEn.wget matches tagged Valid .upd);
+        let pc = upd.pc;
+        let nextPc = upd.nextPc;
+        let taken = upd.taken;
 
-                let index = getIndex(pc);
-                let tag = getTag(pc);
-                if(taken) begin
-                    valid[index] <= True;
-                    tags.upd(index, tag);
-                    next_addrs.upd(index, nextPc);
-                end else if( tags.sub(index) == tag ) begin
-                    // current instruction has target in btb, so clear it
-                    valid[index] <= False;
-                end
-            end
+        let index = getIndex(pc);
+        let tag = getTag(pc);
+        if(taken) begin
+            valid[index] <= True;
+            tags.upd(index, tag);
+            next_addrs.upd(index, nextPc);
+        end else if( tags.sub(index) == tag ) begin
+            // current instruction has target in btb, so clear it
+            valid[index] <= False;
         end
-`ifdef SECURITY
-        else begin
-            // flushing, clear everything (and of course drop update)
-            writeVReg(valid, replicate(False));
-            flushDone <= True;
-        end
-`endif
     endrule
+
+`ifdef SECURITY
+    // flush, clear everything (and drop update)
+    rule doFlush(!flushDone);
+        writeVReg(valid, replicate(False));
+        flushDone <= True;
+    endrule
+`endif
 
     method Addr predPc(Addr pc);
         BtbIndex index = getIndex(pc);
@@ -115,9 +112,7 @@ module mkBtb(NextAddrPred);
     method Action flush if(flushDone);
         flushDone <= False;
     endmethod
-    method Action flush_done;
-        return flushDone;
-    endmethod
+    method flush_done = flushDone._read;
 `else
     method flush = noAction;
     method flush_done = True;

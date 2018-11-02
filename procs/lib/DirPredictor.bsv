@@ -32,6 +32,7 @@ import Bht::*;
 import GSelectPred::*;
 import GSharePred::*;
 import TourPred::*;
+import TourPredSecure::*;
 
 export DirPredTrainInfo(..);
 export mkDirPredictor;
@@ -57,18 +58,21 @@ module mkDirPredictor(DirPredictor#(DirPredTrainInfo));
 `endif
     let m <- mkBht;
 `endif
+
 `ifdef DIR_PRED_GSELECT
 `ifdef SECURITY
     staticAssert(False, "GSelect with flush methods is not implemented");
 `endif
     let m <- mkGSelectPred;
 `endif
+
 `ifdef DIR_PRED_GSHARE
 `ifdef SECURITY
     staticAssert(False, "GShare with flush methods is not implemented");
 `endif
     let m <- mkGSharePred;
 `endif
+
 `ifdef DIR_PRED_TOUR
 `ifdef SECURITY
     let m <- mkTourPredSecure;
@@ -76,5 +80,6 @@ module mkDirPredictor(DirPredictor#(DirPredTrainInfo));
     let m <- mkTourPred;
 `endif
 `endif
+
     return m;
 endmodule

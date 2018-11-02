@@ -48,7 +48,7 @@ export DTlbToParent(..);
 export DTlb(..);
 export mkDTlb;
 
-typedef `TLB_SIZE DTlbSize;
+typedef `L1_TLB_SIZE DTlbSize;
 
 // req & resp with core
 // D TLB also keeps the information of the requesting inst, so we don't need

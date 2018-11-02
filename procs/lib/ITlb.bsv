@@ -38,7 +38,7 @@ import CacheUtils::*;
 import LatencyTimer::*;
 
 // currently blocking
-typedef `TLB_SIZE ITlbSize;
+typedef `L1_TLB_SIZE ITlbSize;
 
 typedef struct {
     Vpn vpn;
