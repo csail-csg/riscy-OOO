@@ -34,6 +34,8 @@ export TourLocalHist;
 export TourGlobalHistSz;
 export TourGlobalHist;
 export TourTrainInfo(..);
+export TourGHistReg(..);
+export mkTourGHistReg;
 export mkTourPred;
 
 // 4KB tournament predictor

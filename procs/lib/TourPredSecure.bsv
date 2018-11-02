@@ -28,12 +28,8 @@ import Ehr::*;
 import Vector::*;
 import GlobalBrHistReg::*;
 import BrPred::*;
+import TourPred::*;
 
-export TourLocalHistSz;
-export TourLocalHist;
-export TourGlobalHistSz;
-export TourGlobalHist;
-export TourTrainInfo(..);
 export mkTourPredSecure;
 
 // 4KB tournament predictor with flush methods for security
@@ -41,29 +37,8 @@ export mkTourPredSecure;
 // logic. It is guaranteed outside that no prediction or update can happen when
 // flushing.
 
-typedef 12 TourGlobalHistSz;
-typedef 10 TourLocalHistSz;
 typedef 10 PCIndexSz;
-
-typedef Bit#(TourGlobalHistSz) TourGlobalHist;
-typedef Bit#(TourLocalHistSz) TourLocalHist;
 typedef Bit#(PCIndexSz) PCIndex;
-
-typedef struct {
-    TourGlobalHist globalHist;
-    TourLocalHist localHist;
-    Bool globalTaken;
-    Bool localTaken;
-} TourTrainInfo deriving(Bits, Eq, FShow);
-
-// global history reg
-typedef GlobalBrHistReg#(TourGlobalHistSz) TourGHistReg;
-
-(* synthesize *)
-module mkTourGHistReg(TourGHistReg);
-    let m <- mkGlobalBrHistReg;
-    return m;
-endmodule
 
 // We group several sat counters/local hists together in order to flush faster
 typedef 9 TabIndexSz;
