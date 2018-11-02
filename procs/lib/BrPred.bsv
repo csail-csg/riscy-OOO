@@ -62,5 +62,7 @@ endinterface
 interface DirPredictor#(type trainInfoT);
     interface Vector#(SupSize, DirPred#(trainInfoT)) pred;
     method Action update(Addr pc, Bool taken, trainInfoT train, Bool mispred);
+    method Action flush;
+    method Bool flush_done;
 endinterface
 

@@ -27,9 +27,15 @@ import ConfigReg::*;
 import RegFile::*;
 import Vector::*;
 
+export NextAddrPred(..);
+export mkBtb;
+
 interface NextAddrPred;
-  method Addr predPc(Addr pc);
-  method Action update(Addr pc, Addr nextPc, Bool taken);
+    method Addr predPc(Addr pc);
+    method Action update(Addr pc, Addr nextPc, Bool taken);
+    // security
+    method Action flush;
+    method Bool flush_done;
 endinterface
 
 // Local BTB Typedefs
@@ -37,7 +43,13 @@ typedef 256 BtbEntries; // 4KB BTB
 typedef Bit#(TLog#(BtbEntries)) BtbIndex;
 typedef Bit#(TSub#(TSub#(AddrSz, TLog#(BtbEntries)), 2)) BtbTag;
 
-// Synthesize boundaries prevent to use predPC several times
+typedef struct {
+    Addr pc;
+    Addr nextPc;
+    Bool taken;
+} BtbUpdate deriving(Bits, Eq, FShow);
+
+// No synthesize boundary because we need to call predPC several times
 module mkBtb(NextAddrPred);
     // Read and Write ordering doesn't matter since this is a predictor
     // mkRegFileWCF is the RegFile version of mkConfigReg
@@ -45,8 +57,46 @@ module mkBtb(NextAddrPred);
     RegFile#(BtbIndex, BtbTag) tags <- mkRegFileWCF(0,fromInteger(valueOf(BtbEntries)-1));
     Vector#(BtbEntries, Reg#(Bool)) valid <- replicateM(mkConfigReg(False));
 
+    RWire#(BtbUpdate) updateEn <- mkRWire;
+
+`ifdef SECURITY
+    Reg#(Bool) flushDone <- mkReg(True);
+`else
+    Bool flushDone = True;
+`endif
+
     function BtbIndex getIndex(Addr pc) = truncate(pc >> 2);
     function BtbTag getTag(Addr pc) = truncateLSB(pc);
+
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule canon;
+        if(flushDone) begin
+            // not flushing, accept update
+            if(updateEn.wget matches tagged Valid .upd) begin
+                let pc = upd.pc;
+                let nextPc = upd.nextPc;
+                let taken = upd.taken;
+
+                let index = getIndex(pc);
+                let tag = getTag(pc);
+                if(taken) begin
+                    valid[index] <= True;
+                    tags.upd(index, tag);
+                    next_addrs.upd(index, nextPc);
+                end else if( tags.sub(index) == tag ) begin
+                    // current instruction has target in btb, so clear it
+                    valid[index] <= False;
+                end
+            end
+        end
+`ifdef SECURITY
+        else begin
+            // flushing, clear everything (and of course drop update)
+            writeVReg(valid, replicate(False));
+            flushDone <= True;
+        end
+`endif
+    endrule
 
     method Addr predPc(Addr pc);
         BtbIndex index = getIndex(pc);
@@ -58,16 +108,19 @@ module mkBtb(NextAddrPred);
     endmethod
 
     method Action update(Addr pc, Addr nextPc, Bool taken);
-        let index = getIndex(pc);
-        let tag = getTag(pc);
-        if(taken) begin
-            valid[index] <= True;
-            tags.upd(index, tag);
-            next_addrs.upd(index, nextPc);
-        end else if( tags.sub(index) == tag ) begin
-            // current instruction has target in btb, so clear it
-            valid[index] <= False;
-        end
+        updateEn.wset(BtbUpdate {pc: pc, nextPc: nextPc, taken: taken});
     endmethod
+
+`ifdef SECURITY
+    method Action flush if(flushDone);
+        flushDone <= False;
+    endmethod
+    method Action flush_done;
+        return flushDone;
+    endmethod
+`else
+    method flush = noAction;
+    method flush_done = True;
+`endif
 endmodule
 

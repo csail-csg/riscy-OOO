@@ -68,6 +68,7 @@ endinterface
 interface SupFifo#(numeric type k, numeric type n, type t);
     interface Vector#(k, SupFifoEnq#(t)) enqS;
     interface Vector#(k, SupFifoDeq#(t)) deqS;
+    method Bool internalEmpty; // for security
 endinterface
 
 function Integer getMaxIndex( FifoState#(n) s );
@@ -210,6 +211,11 @@ module mkSupFifo(SupFifo#(k,n,t)) provisos (
     Vector#(k,Integer) indexes = genVector;
     interface Vector enqS = map(getEnqIfc, indexes);
     interface Vector deqS = map(getDeqIfc, indexes);
+
+    method Bool internalEmpty;
+        function Bool isEmpty(Integer i) = !internalFifos[i].notEmpty;
+        return all(isEmpty, indexes);
+    endmethod
 endmodule
 
 

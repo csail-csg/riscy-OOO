@@ -429,6 +429,9 @@ interface SplitLSQ;
     // for performance
     method Bool stqFull_ehrPort0;
     method Bool ldqFull_ehrPort0;
+    // for security: we cannot flush D$ until all wrong-path loads have
+    // returned from D$
+    method Bool noWrongPathLoads;
 endinterface
 
 // --- auxiliary types and functions ---
@@ -777,6 +780,7 @@ module mkSplitLSQ(SplitLSQ);
     let ld_waitWPResp_findIss   = getVEhrPort(ld_waitWPResp, 0);
     let ld_waitWPResp_deqLd     = getVEhrPort(ld_waitWPResp, 0);
     let ld_waitWPResp_updAddr   = getVEhrPort(ld_waitWPResp, 0);
+    let ld_waitWPResp_noWP      = getVEhrPort(ld_waitWPResp, 0);
     let ld_waitWPResp_issue     = getVEhrPort(ld_waitWPResp, 0); // assert
     let ld_waitWPResp_enqIss    = getVEhrPort(ld_waitWPResp, 0); // assert
     let ld_waitWPResp_resp      = getVEhrPort(ld_waitWPResp, 0); // write
@@ -2333,5 +2337,9 @@ module mkSplitLSQ(SplitLSQ);
 
     method Bool ldqFull_ehrPort0;
         return ld_enqP == ld_deqP[0] && ld_valid[ld_enqP][0];
+    endmethod
+
+    method Bool noWrongPathLoads;
+        return all( \== (False) , readVReg(ld_waitWPResp_noWP) );
     endmethod
 endmodule

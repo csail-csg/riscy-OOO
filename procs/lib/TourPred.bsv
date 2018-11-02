@@ -170,4 +170,7 @@ module mkTourPred(DirPredictor#(TourTrainInfo));
             choiceBht.upd(train.globalHist, updateCnt(choiceCnt, useLocal));
         end
     endmethod
+
+    method flush = noAction;
+    method flush_done = True;
 endmodule

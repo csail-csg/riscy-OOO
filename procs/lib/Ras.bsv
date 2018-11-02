@@ -36,6 +36,8 @@ endinterface
 
 interface ReturnAddrStack;
     interface Vector#(SupSize, RAS) ras;
+    method Action flush;
+    method Bool flush_done;
 endinterface
 
 // Local RAS Typedefs SHOULD BE A POWER OF TWO.
@@ -44,10 +46,20 @@ typedef Bit#(TLog#(RasEntries)) RasIndex;
 
 (* synthesize *)
 module mkRas(ReturnAddrStack) provisos(NumAlias#(TExp#(TLog#(RasEntries)), RasEntries));
-    Vector#(RasEntries, Ehr#(SupSize, Addr)) stack <- replicateM(mkEhr(0));
+    Vector#(RasEntries, Ehr#(TAdd#(SupSize, 1), Addr)) stack <- replicateM(mkEhr(0));
     // head points past valid data
     // to gracefully overflow, head is allowed to overflow to 0 and overwrite the oldest data
-    Ehr#(SupSize, RasIndex) head <- mkEhr(0);
+    Ehr#(TAdd#(SupSize, 1), RasIndex) head <- mkEhr(0);
+
+`ifdef SECURITY
+    Reg#(Bool) flushDone <- mkReg(True);
+
+    rule doFlush(!flushDone);
+        writeVReg(getVEhrPort(stack, valueof(SupSize)), 0);
+        head[valueof(SupSize)] <= 0;
+        flushDone <= True;
+    endrule
+`endif
 
     Vector#(SupSize, RAS) rasIfc;
     for(Integer i = 0; i < valueof(SupSize); i = i+1) begin
@@ -71,4 +83,14 @@ module mkRas(ReturnAddrStack) provisos(NumAlias#(TExp#(TLog#(RasEntries)), RasEn
     end
 
     interface ras = rasIfc;
+
+`ifdef SECURITY
+    method Action flush if(flushDone)
+        flushDone <= False;
+    endmethod
+    method flush_done = flushDone._read;
+`else
+    method flush = noAction;
+    method flush_done = True;
+`endif
 endmodule

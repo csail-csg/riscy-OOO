@@ -138,4 +138,7 @@ module mkGSelectPred(DirPredictor#(GSelectTrainInfo));
         Bit#(2) cnt = tab.sub(index);
         tab.upd(index, updateCnt(cnt, taken));
     endmethod
+
+    method flush = noAction;
+    method flush_done = True;
 endmodule

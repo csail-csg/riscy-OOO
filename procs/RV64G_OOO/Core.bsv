@@ -370,6 +370,13 @@ module mkCore#(CoreId coreId)(Core);
     Reg#(Bool)  flush_tlbs <- mkReg(False);
     Reg#(Bool)  update_vm_info <- mkReg(False);
     Reg#(Bool)  flush_reservation <- mkReg(False);
+`ifdef SECURITY
+    Reg#(Bool)  flush_caches <- mkReg(False);
+    Reg#(Bool)  flush_brpred <- mkReg(False);
+`else
+    Reg#(Bool)  flush_caches <- mkReadOnlyReg(False);
+    Reg#(Bool)  flush_brpred <- mkReadOnlyReg(False);
+`endif
 
     // performance counters
     Reg#(Bool) doStats = coreFix.doStatsIfc; // whether data is collected
@@ -457,6 +464,8 @@ module mkCore#(CoreId coreId)(Core);
         method setFlushTlbs = flush_tlbs._write(True);
         method setUpdateVMInfo = update_vm_info._write(True);
         method setFlushReservation = flush_reservation._write(True);
+        method setFlushBrPred = flush_brpred._write(True);
+        method setFlushCaches = flush_caches._write(True);
         method killAll = coreFix.killAll;
         method redirectPc = fetchStage.redirect;
         method setFetchWaitRedirect = fetchStage.setWaitRedirect;
@@ -512,9 +521,28 @@ module mkCore#(CoreId coreId)(Core);
         end
     endrule
 
+`ifdef SECURITY
+    // security flush cache: need to wait for wrong path loads or inst fetches
+    // to finish
+    rule flushCaches(flush_caches && fetch.emptyForFlush && lsq.noWrongPathLoads);
+        flush_caches <= False;
+        iMem.flush;
+        dMem.flush;
+    endrule
+
+    // security flush branch predictors: wait for wrong path inst fetches to
+    // finish
+    rule flushBrPred(flush_brpred && fetch.emptyForFlush);
+        flush_brpred <= False;
+        fetch.flush_predictors;
+    endrule
+`endif
+
     rule readyToFetch(
-        !flush_reservation && !flush_tlbs && !update_vm_info
-        && iTlb.flush_done && dTlb.flush_done
+        !flush_reservation && !flush_tlbs && !update_vm_info &&
+        !flush_caches && !flush_brpred &&
+        iTlb.flush_done && dTlb.flush_done &&
+        iMem.flush_done && dMem.flush_done && fetch.flush_predictors_done
     );
         fetchStage.done_flushing();
     endrule

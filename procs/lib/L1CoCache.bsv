@@ -152,6 +152,7 @@ module mkDCoCache#(L1ProcResp#(DProcReqId) procResp)(DCoCache);
 
     interface procReq = cache.procReq;
 
+    // TODO: truly flush for security
     method flush = noAction;
     method flush_done = True;
 
@@ -288,6 +289,8 @@ module mkICoCache(ICoCache);
         interface request = cache.to_proc.req;
         interface response = cache.to_proc.resp;
     endinterface
+
+    // TODO: truly flush for security
     method Action flush = noAction;
     method Bool flush_done = True;
 

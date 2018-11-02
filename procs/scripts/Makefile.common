@@ -29,6 +29,7 @@
 # USE_XILINX_FPU: true or false
 # CORE_NUM
 # TSO_MM: true or false
+# SECURITY: true or false
 # CHECK_DEADLOCK: true or false
 # RENAME_DEBUG: true or false
 # BUILD_DIR
@@ -97,6 +98,11 @@ CONNECTALFLAGS += --bscflags=" -D CACHE_$(CACHE_SIZE) "
 # mem model
 ifeq ($(TSO_MM),true)
 CONNECTALFLAGS += --bscflags=" -D TSO_MM "
+endif
+
+# security features
+ifeq ($(SECURITY),true)
+CONNECTALFLAGS += --bscflags=" -D SECURITY "
 endif
 
 # perf counter

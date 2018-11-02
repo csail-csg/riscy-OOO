@@ -74,5 +74,8 @@ module mkBht(DirPredictor#(BhtTrainInfo));
         end
         hist.upd(index, next_hist);
     endmethod
+
+    method flush = noAction;
+    method flush_done = True;
 endmodule
 

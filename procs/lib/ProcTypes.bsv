@@ -219,6 +219,7 @@ typedef enum {
     // user non-standard CSRs (TODO)
     CSRterminate  = 12'h800, // terminate (used to exit Linux)
     CSRstats      = 12'h801, // turn on/off perf counters
+    CSRflush      = 12'h802, // flush everything FIXME this should be in machine mode
     // supervisor standard CSRs
     CSRsstatus    = 12'h100,
     // no user trap handler, so no se/ideleg
@@ -266,6 +267,7 @@ function CSR unpackCSR(Bit#(12) x);
         pack(CSR'(CSRterminate )): (CSRterminate );
         pack(CSR'(CSRstats     )): (CSRstats     );
         pack(CSR'(CSRsstatus   )): (CSRsstatus   );
+        pack(CSR'(CSRflush     )): (CSRflush     );
         pack(CSR'(CSRsie       )): (CSRsie       );
         pack(CSR'(CSRstvec     )): (CSRstvec     );
         pack(CSR'(CSRscounteren)): (CSRscounteren);

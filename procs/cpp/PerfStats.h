@@ -231,6 +231,7 @@ public:
         init(ComStage, ExcepCnt, "exception num");
         init(ComStage, InterruptCnt, "interrupt num");
         init(ComStage, FlushTlbCnt, "flush TLB num");
+        init(ComStage, FlushSecurityCnt, "flush security num");
 
         // CoreSize
         init(CoreSize, LdQFullCycles, "LdQ full cycles");

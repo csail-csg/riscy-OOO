@@ -76,6 +76,8 @@ interface CommitInput;
     method Action setFlushTlbs;
     method Action setUpdateVMInfo;
     method Action setFlushReservation;
+    method Action setFlushBrPred; // security
+    method Action setFlushCaches; // security
     // redirect
     method Action killAll;
     method Action redirectPc(Addr trap_pc);
@@ -163,6 +165,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Count#(Data) interruptCnt <- mkCount(0);
     // flush tlb
     Count#(Data) flushTlbCnt <- mkCount(0);
+    // flush security
+    Count#(Data) flushSecurityCnt <- mkCount(0);
 `endif
 
     // deadlock check
@@ -241,10 +245,13 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     // cycle handles trap, redirect and handles system consistency
     Reg#(Maybe#(CommitTrap)) commitTrap <- mkReg(Invalid); // saves new pc here
 
-    // maintain system consistency when system state (CSR) changes
-    function Action makeSystemConsistent(Bool flushTlb);
+    // maintain system consistency when system state (CSR) changes or for security
+    function Action makeSystemConsistent(Bool flushTlb, Bool flushSecurity);
     action
-        if(flushTlb) begin
+`ifndef SECURITY
+        flushSecurity = False;
+`endif
+        if(flushTlb || flushSecurity) begin
             inIfc.setFlushTlbs;
 `ifdef PERF_COUNT
             if(inIfc.doStats) begin
@@ -268,6 +275,19 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         when(inIfc.tlbNoPendingReq, noAction);
         // yield load reservation in cache
         inIfc.setFlushReservation;
+        // flush for security, we can delay the stall for fetch-empty and
+        // wrong-path-load-empty until we really do the flush. This delay is
+        // valid because these wrong path inst/req will not interfere with
+        // whatever CSR changes we are making now.
+        if(flushSecurity) begin
+            inIfc.setFlushBrPred;
+            inIfc.setFlushCaches;
+`ifdef PERF_COUNT
+            if(inIfc.doStats) begin
+                flushSecurityCnt.incr(1);
+            end
+`endif
+        end
     endaction
     endfunction
 
@@ -334,7 +354,9 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         // system consistency
         // TODO spike flushes TLB here, but perhaps it is because spike's TLB
         // does not include prv info, and it has to flush when prv changes.
-        makeSystemConsistent(False);
+        // XXX As approximation, Trap may cause context switch, so flush for
+        // security
+        makeSystemConsistent(False, True);
     endrule
 
     // commit misspeculated load
@@ -387,6 +409,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         regRenamingTable.commit[0].commit;
 
         Bool write_satp = False; // flush tlb when satp csr is modified
+        Bool flush_security = False; // flush for security when the flush csr is written
         if(x.iType == Csr) begin
             // notify commit of CSR (so MMIO pRq may be handled)
             inIfc.commitCsrInstOrInterrupt;
@@ -402,6 +425,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             csrf.csrInstWr(csr_idx, csr_data);
             // check if satp is modified or not
             write_satp = csr_idx == CSRsatp;
+            flush_security = csr_idx == CSRflush;
         end
 
         // redirect (Sret and Mret redirect pc is got from CSRF)
@@ -420,7 +444,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
         // system consistency
         // flush TLB for SFence.VMA and when SATP CSR is modified
-        makeSystemConsistent(x.iType == SFence || write_satp);
+        // XXX as approximation, sret/mret may mean context switch, so flush
+        // for security
+        makeSystemConsistent(
+            x.iType == SFence || write_satp,
+            flush_security || x.iType == Sret || x.iType == Mret
+        );
 
         // incr inst cnt
         csrf.incInstret(1);
@@ -646,6 +675,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             ExcepCnt: excepCnt;
             InterruptCnt: interruptCnt;
             FlushTlbCnt: flushTlbCnt;
+            FlushSecurityCnt: flushSecurityCnt;
 `endif
             default: 0;
         endcase);

@@ -71,6 +71,11 @@ interface FetchStage;
         DirPredTrainInfo dpTrain, Bool mispred
     );
 
+    // security
+    method Bool emptyForFlush;
+    method Action flush_predictors;
+    method Bool flush_predictors_done;
+
     // debug
     method FetchDebugState getFetchState;
 
@@ -509,6 +514,14 @@ module mkFetchStage(FetchStage);
         nextAddrPred.update(train.pc, train.nextPc, train.nextPc != train.pc + 4);
     endrule
 
+    // Security: we can flush when front end is empty, i.e.
+    // (1) Fetch1 is stalled for waiting flush
+    // (2) all internal FIFOs are empty (the output sup fifo needs not to be
+    // empty, but why leave this security hole)
+    Bool empty_for_flush = waitForFlush &&
+                           !f12f2.notEmpty && !f22f3.notEmpty &&
+                           !f32d.notEmpty && out_fifo.internalEmpty;
+
     interface Vector pipelines = out_fifo.deqS;
     interface iTlbIfc = iTlb;
     interface iMemIfc = iMem;
@@ -566,6 +579,21 @@ module mkFetchStage(FetchStage);
         if(mispred) begin
             napTrainByExe.wset(TrainNAP {pc: pc, nextPc: next_pc});
         end
+    endmethod
+
+    // security
+    method Bool emptyForFlush;
+        return empty_for_flush;
+    endmethod
+
+    method Action flush_predictors;
+        nextAddrPred.flush;
+        dirPred.flush;
+        ras.flush;
+    endmethod
+
+    method Bool flush_predictors_done;
+        return nextAddrPred.flush_done && dirPred.flush_done && ras.flush_done;
     endmethod
 
     method FetchDebugState getFetchState;

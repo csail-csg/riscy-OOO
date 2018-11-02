@@ -38,6 +38,8 @@ USE_XILINX_FPU ?= true
 CORE_NUM ?= 1
 # TSO or WEAK
 TSO_MM ?= false
+# security
+SECURITY := false
 # default check cache deadlock and rename error
 CHECK_DEADLOCK ?= true
 RENAME_DEBUG ?= true
@@ -63,6 +65,9 @@ ifeq ($(TSO_MM),true)
 BUILD_DIR := $(BUILD_DIR).tso
 else
 BUILD_DIR := $(BUILD_DIR).weak
+endif
+ifeq ($(SECURITY),true)
+BUILD_DIR := $(BUILD_DIR).security
 endif
 ifeq ($(CHECK_DEADLOCK),true)
 BUILD_DIR := $(BUILD_DIR).check_deadlock
