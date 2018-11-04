@@ -522,9 +522,23 @@ module mkCore#(CoreId coreId)(Core);
     endrule
 
 `ifdef SECURITY
+    // Use wires to capture empty signals to break scheduling cycles. This is
+    // ok because there cannot be any pipeline activity to make empty ->
+    // not-empty when we are trying to flush.
+    PulseWire fetchEmpty <- mkPulseWire;
+    PulseWire loadEmpty <- mkPulseWire;
+
+    rule setFetchEmpty(fetchStage.emptyForFlush);
+        fetchEmpty.send;
+    endrule
+
+    rule setLoadEmpty(lsq.noWrongPathLoads);
+        loadEmpty.send;
+    endrule
+
     // security flush cache: need to wait for wrong path loads or inst fetches
     // to finish
-    rule flushCaches(flush_caches && fetchStage.emptyForFlush && lsq.noWrongPathLoads);
+    rule flushCaches(flush_caches && fetchEmpty && loadEmpty);
         flush_caches <= False;
         iMem.flush;
         dMem.flush;
@@ -532,7 +546,7 @@ module mkCore#(CoreId coreId)(Core);
 
     // security flush branch predictors: wait for wrong path inst fetches to
     // finish
-    rule flushBrPred(flush_brpred && fetchStage.emptyForFlush);
+    rule flushBrPred(flush_brpred && fetchEmpty);
         flush_brpred <= False;
         fetchStage.flush_predictors;
     endrule

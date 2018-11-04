@@ -152,9 +152,8 @@ module mkDCoCache#(L1ProcResp#(DProcReqId) procResp)(DCoCache);
 
     interface procReq = cache.procReq;
 
-    // TODO: truly flush for security
-    method flush = noAction;
-    method flush_done = True;
+    method flush = cache.flush;
+    method flush_done = cache.flush_done;
 
     method Action resetLinkAddr;
         cache.resetLinkAddr;

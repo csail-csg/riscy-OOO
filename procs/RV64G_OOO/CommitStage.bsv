@@ -291,6 +291,11 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     endaction
     endfunction
 
+    // TODO Currently we don't check spec bits == 0 when we commit an
+    // instruction. This is because killings of wrong path instructions are
+    // done in a single cycle. However, when we make killings distributed or
+    // pipelined, then we need to check spec bits at commit port.
+
     rule doCommitTrap_flush(
         !isValid(commitTrap) &&&
         rob.deqPort[0].deq_data.trap matches tagged Valid .trap
