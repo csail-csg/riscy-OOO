@@ -57,6 +57,7 @@ benchmarks_tests = [
     'dhrystone.riscv',
     'sort.riscv',
     'rsort.riscv',
+    'security_flush.riscv',
     #'spmv.riscv'
     ]
 

@@ -245,7 +245,7 @@ typedef IBank#(ISupSz, LgIBankNum, L1WayNum, IIndexSz, ITagSz, ICRqNum, IPRqNum)
 
 (* synthesize *)
 module mkIBankWrapper(IBankWrapper);
-    let m <- mkIBank(mkICRqMshrWrapper, mkIPRqMshrWrapper, mkIPipeline);
+    let m <- mkIBank(0, mkICRqMshrWrapper, mkIPRqMshrWrapper, mkIPipeline);
     return m;
 endmodule
 
@@ -289,9 +289,8 @@ module mkICoCache(ICoCache);
         interface response = cache.to_proc.resp;
     endinterface
 
-    // TODO: truly flush for security
-    method Action flush = noAction;
-    method Bool flush_done = True;
+    method flush = cache.flush;
+    method flush_done = cache.flush_done;
 
     interface Perf perf;
         method Action setStatus(Bool stats);

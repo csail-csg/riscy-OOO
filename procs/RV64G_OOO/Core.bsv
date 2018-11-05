@@ -499,6 +499,12 @@ module mkCore#(CoreId coreId)(Core);
     // 1. break scheduling cycles
     // 2. XXX since csrf is configReg now, we should not let this rule fire together with doCommit
     // because we read csrf here and write csrf in doCommit
+
+    // TODO We can use wires to catch flush / updateVM enable sigals, because
+    // there cannot be any instruction in pipeline (there can be poisoned inst
+    // which cannot change CSR or link reg in D$), so doCommit cannot fire.
+    // MMIO manager may change pending interrupt bits, but will not affect VM
+    // info.
     (* preempts = "prepareCachesAndTlbs, commitStage.doCommitTrap_handle" *)
     (* preempts = "prepareCachesAndTlbs, commitStage.doCommitSystemInst" *)
     rule prepareCachesAndTlbs(flush_reservation || flush_tlbs || update_vm_info);
@@ -522,23 +528,23 @@ module mkCore#(CoreId coreId)(Core);
     endrule
 
 `ifdef SECURITY
-    // Use wires to capture empty signals to break scheduling cycles. This is
-    // ok because there cannot be any pipeline activity to make empty ->
-    // not-empty when we are trying to flush.
-    PulseWire fetchEmpty <- mkPulseWire;
-    PulseWire loadEmpty <- mkPulseWire;
+    // Use wires to capture flush regs and empty signals. This is ok because
+    // there cannot be any activity to make empty -> not-empty or need-flush ->
+    // no-need-flush when we are trying to flush.
+    PulseWire doFlushCaches <- mkPulseWire;
+    PulseWire doFlushBrPred <- mkPulseWire;
 
-    rule setFetchEmpty(fetchStage.emptyForFlush);
-        fetchEmpty.send;
+    rule setDoFlushCaches(flush_caches && fetchStage.emptyForFlush && lsq.noWrongPathLoads);
+        doFlushCaches.send;
     endrule
 
-    rule setLoadEmpty(lsq.noWrongPathLoads);
-        loadEmpty.send;
+    rule setDoFlushBrPred(flush_brpred && fetchStage.emptyForFlush);
+        doFlushBrPred.send;
     endrule
 
     // security flush cache: need to wait for wrong path loads or inst fetches
     // to finish
-    rule flushCaches(flush_caches && fetchEmpty && loadEmpty);
+    rule flushCaches(doFlushCaches);
         flush_caches <= False;
         iMem.flush;
         dMem.flush;
@@ -546,7 +552,7 @@ module mkCore#(CoreId coreId)(Core);
 
     // security flush branch predictors: wait for wrong path inst fetches to
     // finish
-    rule flushBrPred(flush_brpred && fetchEmpty);
+    rule flushBrPred(doFlushBrPred);
         flush_brpred <= False;
         fetchStage.flush_predictors;
     endrule
