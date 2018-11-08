@@ -38,7 +38,9 @@
 #include "PerfStats.h"
 #include "print_buff.h"
 #include "proc_ind.h"
-#include "host_dma.h"
+#include "boot_rom.h"
+#include "mem_loader.h"
+#include "mmio.h"
 #include "deadlock.h"
 #include "rename_debug.h"
 
@@ -48,9 +50,6 @@
 
 #define BLURT fprintf (stderr, "CPPDEBUG: %s(%s):%d\n",\
                       __func__, __FILE__, __LINE__)
-
-// system config
-static uint32_t core_num = 1; // default to 1 core
 
 // File for output
 static FILE *debug_file = 0;
@@ -63,9 +62,13 @@ static ProcIndication   *procIndication = 0;
 static CorePerfStats core_perf_stats;
 static UncorePerfStats uncore_perf_stats;
 
-// host dma request & indications
-static HostDmaRequestProxy *hostDmaRequestProxy = 0;
-static HostDmaIndication *hostDmaIndication = 0;
+// mem loader request & indications
+static MemLoaderRequestProxy *memLoaderRequestProxy = 0;
+static MemLoaderIndication *memLoaderIndication = 0;
+
+// boot rom request
+static BootRomRequestProxy *bootRomRequestProxy = 0;
+static BootRomIndication *bootRomIndication = 0;
 
 // deadlock detect
 static DeadlockIndication *deadlockIndication = 0;
@@ -73,12 +76,6 @@ static long long unsigned ignore_user_commit_stucks = 0;
 
 // rename debug
 static RenameDebugIndication *renameDebugIndication = 0;
-
-static size_t mem_sz = 64*1024*1024;  // default 64 MB memory
-
-// HTIF
-static std::vector<std::string> htif_args;
-static htif_riscy_t *riscy_htif = NULL;
 
 // call back functions, XXX these functions should not be called directly!!
 static void handle_signal(int sig) {
@@ -92,36 +89,31 @@ static void call_from_host(uint64_t v) {
     fprintf(debug_file, "[from_host] val 0x%016llx\n", (long long) v);
     procRequestProxy->from_host(v);
 }
-static void call_dma_read(addr_t addr, size_t len, void *dst) {
-    hostDmaIndication->dma_read(addr, len, dst);
-}
-static void call_dma_write(addr_t addr, size_t len, const void *src) {
-    hostDmaIndication->dma_write(addr, len, src);
-}
-static void call_boot_rom_write(uint16_t index, uint64_t data) {
-    procRequestProxy->bootRomInitReq(index, data);
-}
-static void call_boot_rom_wait() {
-    procIndication->waitBootRomInit();
-}
 static void req_perf_counter(uint8_t core, PerfLocation loc, PerfType type) {
     procRequestProxy->perfReq(core, loc, type);
 }
 
-int runHtifTest() {
-    // reset the processor before programming memory
-    // prevent uncommitted store from polluting memory
-    // XXX [sizhuo] this actually do nothing now..
-    fprintf(stderr, "resetting the processor\n");
-    procRequestProxy->reset();
-    procIndication->waitReset();
+static void get_htif_addrs(const char *elf_file,
+                           uint64_t &tohost, uint64_t &fromhost) {
+    dummy_memif_t mif;
+    uint64_t entry;
+    std::map<std::string, uint64_t> symbols = load_elf(elf_file, &mif, &entry);
+    if(symbols.count("tohost") && symbols.count("fromhost")) {
+        tohost = symbols["tohost"];
+        fromhost = symbols["fromhost"];
+    } else {
+        fprintf(stderr, "ERROR: "
+                "fail to find tohost/fromhost in elf %s\n", elf_file);
+        exit(1);
+    }
+}
+
+int runHtifTest(const char *elf_file, int core_num) {
     sleep(1);
 
-    // program the memory
-    fprintf(stderr, "programming the memory\n");
-    riscy_htif->lock();
-    riscy_htif->start();
-    riscy_htif->unlock();
+    // program boot rom
+    fprintf(stderr, "programming boot rom\n");
+    bootRomIndication->init_boot_rom(bootRomRequestProxy);
     sleep(1);
 
     // set deadlock start inst num
@@ -130,13 +122,29 @@ int runHtifTest() {
             ignore_user_commit_stucks);
 
     // start processor
-    uint64_t startpc = 0x1000;
-    addr_t tohost_addr = riscy_htif->get_tohost_addr();
-    addr_t fromhost_addr = riscy_htif->get_fromhost_addr();
+    uint64_t startpc = BOOT_ROM_BASE;
+    uint64_t tohost_addr = 0;
+    uint64_t fromhost_addr = 0;
+    get_htif_addrs(elf_file, tohost_addr, fromhost_addr);
     fprintf(stderr, "startpc %llx, total %d cores, "
             "toHost addr %llx, fromHost addr %llx\n",
             (long long unsigned)startpc, (int)core_num,
-            (long long unsigned)tohost_addr, (long long unsigned)fromhost_addr);
+            (long long unsigned)tohost_addr,
+            (long long unsigned)fromhost_addr);
+    // sanctum hard-wire fromhost / tohost to 0x80009000 / 0x80009008,
+    // respectively
+    if ( fromhost_addr != 0x80009000 ) {
+        fprintf(stderr, "[sanctum] Illegal fromhost_addr "
+                "(%08llx, but should be %08llx). Stopping.\n",
+                (long long unsigned)fromhost_addr, 0x80009000);
+        exit(1);
+    }
+    if ( tohost_addr != 0x80009008 ) {
+        fprintf(stderr, "[sanctum] Illegal tohost_addr "
+                "(%08llx, but should be %08llx). Stopping.\n",
+                (long long unsigned)tohost_addr, 0x80009008);
+        exit(1);
+    }
     procRequestProxy->start(startpc, tohost_addr, fromhost_addr);
 
     // wait for result
@@ -163,13 +171,13 @@ int runHtifTest() {
 
 void printHelp(const char *prog) {
     fprintf(stderr, "Usage: %s [--assembly-tests] ", prog);
-    fprintf(stderr, "[--just-run] [--mem-size MEM_MB_SIZE] ");
+    fprintf(stderr, "[--mem-size MEM_MB_SIZE] ");
     fprintf(stderr, "[--ignore-user-stucks IGNORED_USER_COMMIT_STUCK_NUM] ");
     fprintf(stderr, "[--core-num CORE_NUM] ");
-    fprintf(stderr, "[--print-from INST_COUNT] [--skip INST_COUNT] ");
     fprintf(stderr, "[--shell-cmd CMD DELAY(sec)] ");
     fprintf(stderr, "[--perf-file PERF_OUTPUT_FILE] ");
-    fprintf(stderr, "-- HTIF_ARGS\n");
+    fprintf(stderr, "[--rom ROM_BINARY] ");
+    fprintf(stderr, "[--elf ELF_BINARY]\n");
 }
 
 int main(int argc, char * const *argv) {
@@ -182,6 +190,10 @@ int main(int argc, char * const *argv) {
     //bool print_mode = false;
     char *shell_cmd = 0;
     int cmd_delay_sec = 0;
+    const char *elf_file = 0;
+    const char *rom_file = 0;
+    uint64_t mem_size = 64*1024*1024; // default 64 MB memory
+    int core_num = 1; // default to 1 core
 
     while(1) {
         if (argc > 1 && strcmp(argv[1],"--assembly-tests") == 0) {
@@ -190,13 +202,10 @@ int main(int argc, char * const *argv) {
             assembly_test_mode = true;
             // shift argc and argv accordingly
             argc--; argv++;
-        } else if (argc > 1 && strcmp(argv[1],"--just-run") == 0) {
-            // legacy option
-            argc-=1; argv+=1;
         } else if (argc > 2 && strcmp(argv[1],"--mem-size") == 0) {
             // first argument was "--mem-size"
             // second argument should be memory size in MB
-            mem_sz = (size_t)(atoi(argv[2])) * 1024 * 1024;
+            mem_size = (size_t)(atoi(argv[2])) * 1024 * 1024;
             // shift argc and argv accordingly
             argc-=2; argv+=2;
         } else if(argc > 2 && strcmp(argv[1],"--ignore-user-stucks") == 0) {
@@ -230,13 +239,14 @@ int main(int argc, char * const *argv) {
             }
             // shift argc and argv accordingly
             argc-=2; argv+=2;
-        } else if(argc > 1 && strcmp(argv[1],"--") == 0) {
-            // first argument was "--"
-            // remaining arguments are HTIF argumemts
-            // stop parsing runtime parameters
-            // shift argc and argv accordingly
-            argc-=1; argv+=1;
-            break;
+        } else if(argc > 2 && strcmp(argv[1], "--rom") == 0) {
+            // --rom BOOT_ROM_BINARY
+            rom_file = argv[2];
+            argc-=2; argv+=2;
+        } else if(argc > 2 && strcmp(argv[1], "--elf") == 0) {
+            // --elf ELF_BINARY
+            elf_file = argv[2];
+            argc-=2; argv+=2;
         } else {
             fprintf(stderr, "Wrong arguments\n");
             printHelp(prog_name);
@@ -253,79 +263,51 @@ int main(int argc, char * const *argv) {
 
     if (assembly_test_mode) {
         procIndication = new ProcIndicationAssembly(IfcNames_ProcIndicationH2S,
-                                                    core_num,
                                                     debug_file,
                                                     print_buff,
                                                     &core_perf_stats,
                                                     &uncore_perf_stats,
                                                     &handle_signal,
-                                                    mem_sz,
                                                     shell_cmd,
                                                     cmd_delay_sec);
     } else {
         procIndication = new ProcIndication(IfcNames_ProcIndicationH2S,
-                                            core_num,
                                             debug_file,
                                             print_buff,
                                             &core_perf_stats,
                                             &uncore_perf_stats,
                                             &handle_signal,
-                                            mem_sz,
                                             shell_cmd,
                                             cmd_delay_sec);
     }
     procRequestProxy = new ProcRequestProxy(IfcNames_ProcRequestS2H);
 
-    hostDmaIndication = new HostDmaIndication(IfcNames_HostDmaIndicationH2S);
-    hostDmaRequestProxy = new HostDmaRequestProxy(IfcNames_HostDmaRequestS2H);
+    bootRomIndication = new BootRomIndication(IfcNames_BootRomIndicationH2S,
+                                              rom_file, core_num, mem_size);
+    bootRomRequestProxy = new BootRomRequestProxy(IfcNames_BootRomRequestS2H);
+
+    memLoaderIndication = new MemLoaderIndication(IfcNames_MemLoaderIndicationH2S,
+                                                  elf_file);
+    memLoaderRequestProxy = new MemLoaderRequestProxy(IfcNames_MemLoaderRequestS2H);
 
     deadlockIndication = new DeadlockIndication(IfcNames_DeadlockIndicationH2S,
                                                 ignore_user_commit_stucks);
 
     renameDebugIndication = new RenameDebugIndication(IfcNames_RenameDebugIndicationH2S);
 
-    // all arguments passed to htif at once
-    fprintf(stderr, "htif_args: ");
-    for (int i = 1 ; i < argc ; i++ ) {
-        htif_args.push_back(argv[i]);
-        fprintf(stderr, "%s", argv[i]);
-        if (i == argc-1) {
-            fprintf(stderr, "\n");
-        } else {
-            fprintf(stderr, ", ");
-        }
-    }
-    // print arguments to debug_file also
-    fprintf(debug_file, "htif_args: ");
-    for (int i = 1 ; i < argc ; i++ ) {
-        htif_args.push_back(argv[i]);
-        fprintf(debug_file, "%s", argv[i]);
-        if (i == argc-1) {
-            fprintf(debug_file, "\n");
-        } else {
-            fprintf(debug_file, ", ");
-        }
-    }
     // create htif
-    riscy_htif = new htif_riscy_t(htif_args, core_num);
-    riscy_htif->set_mem_size(mem_sz);
-    riscy_htif->set_dma_read(call_dma_read);
-    riscy_htif->set_dma_write(call_dma_write);
-    riscy_htif->set_write_from_host(call_from_host);
-    riscy_htif->set_write_boot_rom(call_boot_rom_write);
-    riscy_htif->set_wait_boot_rom(call_boot_rom_wait);
+    htif_riscy_t *riscy_htif = new htif_riscy_t(call_from_host);
 
     // set all other call backs & pointers...
     procIndication->set_riscy_htif(riscy_htif);
-    procIndication->set_htif_args(&htif_args);
     core_perf_stats.set_req_perf(req_perf_counter);
     uncore_perf_stats.set_req_perf(req_perf_counter);
-    hostDmaIndication->set_req_proxy(hostDmaRequestProxy);
+    memLoaderIndication->set_req_proxy(memLoaderRequestProxy);
     // start mtohost handler thread
     procIndication->spawn_to_host_handler();
 
     // run tests
-    int result = runHtifTest();
+    int result = runTest(elf_file, core_num);
 
     //delete riscy_htif;
     //riscy_htif = NULL;

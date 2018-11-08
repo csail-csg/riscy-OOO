@@ -31,6 +31,8 @@ import MMIOAddrs::*;
 import MMIOCore::*;
 import CacheUtils::*;
 import Amo::*;
+import BootRom::*;
+import MemLoader::*;
 
 // MMIO logic at platform (MMIOPlatform)
 // XXX Currently all MMIO requests and posts of timer interrupts are handled
@@ -38,8 +40,6 @@ import Amo::*;
 // this may help avoid some kernel-level problems.
 
 interface MMIOPlatform;
-    method Action bootRomInitReq(BootRomIndex index, Data data);
-    method ActionValue#(void) bootRomInitResp;
     method Action start(Addr toHost, Addr fromHost);
     method ActionValue#(Data) to_host;
     method Action from_host(Data x);
@@ -58,6 +58,7 @@ typedef union tagged {
     void Invalid; // invalid req target
     void TimerInterrupt; // auto-generated timer interrupt
     BootRomIndex BootRom;
+    MemLoaderAlignedOffset MemLoader;
     MSIPDataAlignedOffset MSIP;
     MTimCmpDataAlignedOffset MTimeCmp;
     void MTime;
@@ -65,17 +66,14 @@ typedef union tagged {
     void FromHost;
 } MMIOPlatformReq deriving(Bits, Eq, FShow);
 
-module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
-    MMIOPlatform
-) provisos(
+module mkMMIOPlatform#(
+    BootRomMMIO bootRom, MemLoaderMMIO memLoader,
+    Vector#(CoreNum, MMIOCoreToPlatform) cores
+)(MMIOPlatform) provisos(
     Bits#(Data, 64) // this module assumes Data is 64-bit wide
 );
     Bool verbose = True;
 
-    // boot rom
-    BRAM_PORT#(BootRomIndex, Data) bootRom <- mkBRAMCore1(
-        valueOf(TExp#(LgBootRomSzData)), False
-    );
     // mtimecmp
     Vector#(CoreNum, Reg#(Data)) mtimecmp <- replicateM(mkReg(0));
     // mtime
@@ -203,6 +201,10 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
                 if(addr >= bootRomBaseAddr && addr < bootRomBoundAddr) begin
                     newReq = BootRom (truncate(addr - bootRomBaseAddr));
                 end
+                else if(addr >= memLoaderBaseAddr &&
+                        addr < memLoaderBoundAddr) begin
+                    newReq = MemLoader (truncate(addr - memLoaderBaseAddr));
+                end
                 else if(addr >= msipBaseAddr && addr < msipBoundAddr) begin
                     newReq = MSIP (truncate(addr - msipBaseAddr));
                 end
@@ -270,7 +272,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         state == ProcessReq &&& !isInstFetch
     );
         if(reqFunc == Ld) begin
-            bootRom.put(False, offset, ?);
+            bootRom.req(offset);
             state <= WaitResp;
         end
         else begin
@@ -289,13 +291,14 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         curReq matches tagged BootRom .offset &&&
         state == WaitResp &&& !isInstFetch
     );
+        let data <- bootRom.resp;
         state <= SelectReq;
         cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
             valid: True,
-            data: bootRom.read
+            data: data
         }));
         if(verbose) begin
-            $display("[Platform - boot rom done] data %x", bootRom.read);
+            $display("[Platform - boot rom done] data %x", data);
         end
     endrule
 
@@ -304,7 +307,7 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
         curReq matches tagged BootRom .index &&&
         state == ProcessReq &&& isInstFetch
     );
-        bootRom.put(False, index, ?);
+        bootRom.req(index);
         state <= WaitResp;
     endrule
 
@@ -317,7 +320,8 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             maxWay = w;
         end
         // extract inst from BRAM resp
-        Vector#(DataSzInst, Instruction) instVec = unpack(bootRom.read);
+        let data <- bootRom.resp;
+        Vector#(DataSzInst, Instruction) instVec = unpack(data);
         Instruction inst = instVec[instSel];
         // check whether we are done or not
         if (fetchingWay >= maxWay ||
@@ -342,6 +346,38 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             instSel <= instSel + 1;
             curReq <= BootRom (instSel == maxBound ? index + 1 : index);
             state <= ProcessReq;
+        end
+    endrule
+
+    rule processMemLoader(
+        curReq matches tagged MemLoader .offset &&& state == ProcessReq
+    );
+        if(isInstFetch) begin
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(InstFetch (replicate(Invalid)));
+            if(verbose) begin
+                $display("[Platform - process mem loader] cannot do inst fetch");
+            end
+        end
+        else if(reqFunc matches tagged Amo .amo) begin
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(DataAccess (MMIODataPRs {
+                valid: False,
+                data: ?
+            }));
+            if(verbose) begin
+                $display("[Platform - process mem loader] cannot do AMO");
+            end
+        end
+        else begin
+            let resp <- memLoader.req(offset,
+                                      reqFunc == St ? reqBE : replicate(False),
+                                      reqData);
+            state <= SelectReq;
+            cores[reqCore].pRs.enq(DataAccess (resp));
+            if(verbose) begin
+                $display("[Platform - process mem loader] Ld/St ", fshow(resp));
+            end
         end
     endrule
 
@@ -797,16 +833,6 @@ module mkMMIOPlatform#(Vector#(CoreNum, MMIOCoreToPlatform) cores)(
             end
         end
     endrule
-
-    method Action bootRomInitReq(BootRomIndex idx, Data data) if(state == Init);
-        bootRom.put(True, idx, data);
-        bootRomInitRespQ.enq(?);
-    endmethod
-
-    method ActionValue#(void) bootRomInitResp;
-        bootRomInitRespQ.deq;
-        return ?;
-    endmethod
 
     method Action start(Addr toHost, Addr fromHost) if(state == Init);
         toHostAddr <= getDataAlignedAddr(toHost);

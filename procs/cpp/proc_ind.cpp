@@ -79,30 +79,9 @@ int ProcIndication::waitResult() {
     return result;
 }
 
-void ProcIndication::waitReset() {
-    sem_wait(&reset_sem);
-}
-
-void ProcIndication::waitBootRomInit() {
-    sem_wait(&bootrom_sem);
-}
-
-void ProcIndication::resetDone() {
-    {
-        std::lock_guard<std::mutex> lock(proc_mu);
-        fprintf(stderr, "resetDone\n");
-        done = false;
-    }
-    sem_post(&reset_sem);
-}
-
 void ProcIndication::to_host(uint64_t v) {
     fprintf(debug_file, "[to_host] value 0x%016llx\n", (long long) v);
     to_host_handler.enq_to_host_msg(v);
-}
-
-void ProcIndication::bootRomInitResp() {
-    sem_post(&bootrom_sem);
 }
 
 void ProcIndication::perfResp(uint8_t core, ProcPerfResp resp) {

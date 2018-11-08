@@ -41,8 +41,6 @@
 
 class ProcIndication : public ProcIndicationWrapper {
 protected:
-    const uint32_t core_num;
-
     // done & result
     int result;
     bool done;
@@ -58,8 +56,6 @@ protected:
     
     // notify done signals
     sem_t sem; 
-    sem_t reset_sem;
-    sem_t bootrom_sem;
 
     // htif (it has its own lock)
     htif_riscy_t *riscy_htif;
@@ -93,11 +89,6 @@ protected:
     };
     ToHostHandler to_host_handler;
 
-    // memory size
-    const size_t mem_sz;
-    // htif arguments
-    std::vector<std::string> *htif_args;
-
     // shell cmd to be sent to processor
     char *shell_cmd;
     int cmd_delay_sec;
@@ -105,17 +96,14 @@ protected:
 public:
     ProcIndication(
         unsigned int id,
-        uint32_t core_cnt,
         FILE *dbg_f,
         PrintBuffer *buff,
         CorePerfStats *core_perf,
         UncorePerfStats *uncore_perf,
         sighandler_t sig_hdl,
-        size_t mem_size,
         char *cmd,
         int cmd_delay
     ) : ProcIndicationWrapper(id),
-        core_num(core_cnt),
         result(-1),
         done(false),
         error_found(false),
@@ -126,31 +114,25 @@ public:
         uncore_perf_stats(uncore_perf),
         handle_signal(sig_hdl),
         to_host_handler(this),
-        mem_sz(mem_size),
         htif_args(0),
         shell_cmd(cmd),
         cmd_delay_sec(cmd_delay)
     {
         std::lock_guard<std::mutex> lock(proc_mu);
         sem_init(&sem, 0, 0);
-        sem_init(&reset_sem, 0, 0);
-        sem_init(&bootrom_sem, 0, 0);
     }
 
     virtual ~ProcIndication();
 
     void set_riscy_htif(htif_riscy_t *p) { riscy_htif = p; }
-    void set_htif_args(std::vector<std::string> *p) { htif_args = p; }
+
     virtual void spawn_to_host_handler() {
         to_host_handler.spawn_handler_thread();
     }
 
     int waitResult();
-    void waitReset();
-    void waitBootRomInit();
-    virtual void resetDone();
+
     virtual void to_host(uint64_t v);
-    virtual void bootRomInitResp();
     virtual void perfResp(uint8_t core, ProcPerfResp resp);
     virtual void terminate(uint8_t core);
 };
@@ -162,23 +144,19 @@ public:
 
     ProcIndicationAssembly(
         unsigned int id,
-        uint32_t core_cnt,
         FILE *dbg_f,
         PrintBuffer *buff,
         CorePerfStats *core_perf,
         UncorePerfStats *uncore_perf,
         sighandler_t sig_hdl,
-        size_t mem_size,
         char *cmd,
         int cmd_delay
     ) : ProcIndication(id,
-                       core_cnt,
                        dbg_f,
                        buff,
                        core_perf,
                        uncore_perf,
                        sig_hdl,
-                       mem_size,
                        cmd,
                        cmd_delay) {}
 };

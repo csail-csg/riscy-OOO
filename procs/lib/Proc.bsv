@@ -33,8 +33,10 @@ import CCTypes::*;
 import CacheUtils::*;
 import LLBank::*;
 import LLCache::*;
-import HostDmaIF::*;
-import HostDmaLLC::*;
+import BootRomIF::*;
+import BootRom::*;
+import MemLoaderIF::*;
+import MemLoader::*;
 import L1LLConnect::*;
 import LLCDmaConnect::*;
 import MMIOAddrs::*;
@@ -50,12 +52,14 @@ import Performance::*;
 
 interface Proc;
     // processor request & indication in use, in portal clk domain
-    interface ProcReq procReq;
+    interface ProcRequest procReq;
     interface ProcIndInv procIndInv;
-    // request & indication inverse, under portal clock domain
-    interface HostDmaRequest hostDmaReq;
-    method ActionValue#(HostDmaRdData) rdDataToHost;
-    method Action wrDoneToHost;
+    // boot rom request, in portal clock
+    interface BootRomRequest bootRomReq;
+    interface BootRomIndInv bootRomIndInv;
+    // mem loader request & indication inverse, in portal clock
+    interface MemLoaderRequest memLoaderReq;
+    interface MemLoaderIndInv memLoaderIndInv;
     // to Dram
     interface Client#(DramUserReq, DramUserData) toDram;
     // detect deadlock indication inverse, under portal clock domain
@@ -72,15 +76,18 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
         core[i] <- mkCore(fromInteger(i));
     end
 
+    // boot rom
+    BootRom bootRom <- mkBootRom(portalClk, portalRst);
+
+    // mem loader
+    MemLoader memLoader <- mkMemLoader(portalClk, portalRst);
+
     // MMIO platform
     Vector#(CoreNum, MMIOCoreToPlatform) mmioToP;
     for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
         mmioToP[i] = core[i].mmioToPlatform;
     end
-    MMIOPlatform mmioPlatform <- mkMMIOPlatform(mmioToP);
-
-    // DMA from host cross clock domain & reformat req/resp
-    HostDmaLLC host <- mkHostDmaLLC(portalClk, portalRst);
+    MMIOPlatform mmioPlatform <- mkMMIOPlatform(bootRom.mmio, memLoader.mmio, mmioToP);
 
     // last level cache
     LLCache llc <- mkLLCache;
@@ -98,7 +105,7 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
     for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
         tlbToMem[i] = core[i].tlbToMem;
     end
-    mkLLCDmaConnect(llc.dma, host.to_mem, tlbToMem);
+    mkLLCDmaConnect(llc.dma, memLoader.to_mem, tlbToMem);
 
     // interface LLC to DRAM and control DRAM latency
     let toDramIfc <- mkDramLLC(llc.to_mem);
@@ -121,7 +128,7 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
         coreReq[i] = core[i].coreReq;
         coreIndInv[i] = core[i].coreIndInv;
     end
-    ProcReq procReqIfc <- mkProcReqSync(
+    ProcRequest procReqIfc <- mkProcReqSync(
         coreReq, mmioPlatform, llc, portalClk, portalRst
     );
     ProcIndInv procIndInvIfc <- mkProcIndInvSync(
@@ -144,9 +151,10 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
 
     interface procReq = procReqIfc;
     interface procIndInv = procIndInvIfc;
-    interface hostDmaReq = host.reqFromHost;
-    method rdDataToHost = host.rdDataToHost;
-    method wrDoneToHost = host.wrDoneToHost;
+    interface bootRomReq = bootRom.hostReq;
+    interface bootRomIndInv = bootRom.hostIndInv;
+    interface memLoaderReq = memLoader.hostReq;
+    interface memLoaderIndInv = memLoader.hostIndInv;
     interface toDram = toDramIfc;
     interface deadlockIndInv = deadlock.indInv;
     interface renameDebugIndInv = renameDebug.indInv;

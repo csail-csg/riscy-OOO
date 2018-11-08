@@ -71,9 +71,9 @@ void ProcIndication::ToHostHandler::handler() {
             proc_ind->riscy_htif->get_to_host(v);
             bool htif_done = false;
             int exit_code = 0;
-            if(proc_ind->riscy_htif->done()) {
+            if(proc_ind->riscy_htif->has_exited()) {
                 htif_done = true;
-                exit_code = proc_ind->riscy_htif->exit_code();
+                exit_code = proc_ind->riscy_htif->get_exit_code();
             }
             proc_ind->riscy_htif->unlock();
 

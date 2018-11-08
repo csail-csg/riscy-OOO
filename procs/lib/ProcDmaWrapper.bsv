@@ -32,7 +32,8 @@ import HostInterface::*;
 import Vector::*;
 import StmtFSM::*;
 import ProcIF::*;
-import HostDmaIF::*;
+import BootRomIF::*;
+import MemLoaderIF::*;
 import DeadlockIF::*;
 import Proc::*;
 import ProcTypes::*;
@@ -65,7 +66,8 @@ typedef AWSDramPins DramPins;
 
 interface ProcDmaWrapper;
     interface ProcRequest procReq;
-    interface HostDmaRequest hostDmaReq;
+    interface BootRomRequest bootRomReq;
+    interface MemLoaderRequest memLoaderReq;
 `ifndef BSIM
     interface DramPins pins;
 `endif
@@ -74,7 +76,8 @@ endinterface
 module mkProcDmaWrapper#(
     HostInterface host,
     ProcIndication procInd,
-    HostDmaIndication hostDmaInd,
+    BootRomIndication bootRomInd,
+    MemLoaderIndication memLoaderInd,
     DeadlockIndication deadlockInd,
     RenameDebugIndication renameDebugInd
 )(ProcDmaWrapper);
@@ -121,15 +124,11 @@ module mkProcDmaWrapper#(
     // connect to proc indication
     mkConnection(proc.procIndInv, procInd);
 
-    // connect to host dma indication
-    rule doHostDmaRdData;
-        let rd <- proc.rdDataToHost;
-        hostDmaInd.rdData(rd.data, rd.burstId);
-    endrule
-    rule doHostDmaWrDone;
-        proc.wrDoneToHost;
-        hostDmaInd.wrDone;
-    endrule
+    // connect to boot rom indication
+    mkConnection(proc.bootRomIndInv, bootRomInd);
+
+    // connect to mem loader indication
+    mkConnection(proc.memLoaderIndInv, memLoaderInd);
 
     // connect to DDR3
     mkConnection(proc.toDram.request.get, dram.user.req);
@@ -141,20 +140,9 @@ module mkProcDmaWrapper#(
     // connect to rename debug
     mkConnection(renameDebugInd, proc.renameDebugIndInv);
     
-    interface ProcRequest procReq;
-        method start = proc.procReq.start;
-        method from_host = proc.procReq.from_host;
-        method bootRomInitReq = proc.procReq.bootRomInitReq;
-        method perfReq = proc.procReq.perfReq;
-        method Action reset;
-            // XXX [sizhuo] I am not doing any reset...
-            procInd.resetDone;
-            // this method tells us that connectal is inited
-            //inited <= True;
-            $fdisplay(stderr, "[ProcDmaWrapper] WARNING: reset has no effect now");
-        endmethod
-    endinterface
-    interface hostDmaReq = proc.hostDmaReq;
+    interface procReq = proc.procReq;
+    interface bootRomReq = proc.bootRomReq;
+    interface memLoaderReq = proc.memLoaderReq;
 `ifndef BSIM
     interface pins = dram.pins;
 `endif

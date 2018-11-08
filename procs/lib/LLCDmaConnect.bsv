@@ -33,8 +33,9 @@ import ProcTypes::*;
 import CacheUtils::*;
 import CCTypes::*;
 import L2Tlb::*;
-import HostDmaLLC::*;
+import MemLoader::*;
 import CrossBar::*;
+import MemLoader::*;
 
 typedef struct {
     CoreId core;
@@ -43,13 +44,13 @@ typedef struct {
 } TlbDmaReqId deriving(Bits, Eq, FShow);
 
 typedef union tagged {
-    HostMemReqId Host;
+    MemLoaderMemReqId MemLoader;
     TlbDmaReqId Tlb;
 } LLCDmaReqId deriving(Bits, Eq, FShow);
 
 module mkLLCDmaConnect#(
     DmaServer#(LLCDmaReqId) llc,
-    HostMemClient host,
+    MemLoaderMemClient memLoader,
     Vector#(CoreNum, TlbMemClient) tlb
 )(Empty) provisos (
     Alias#(dmaRqT, DmaRq#(LLCDmaReqId))
@@ -83,22 +84,23 @@ module mkLLCDmaConnect#(
     endfunction
 
     // send req to LLC
-    rule sendHostReqToLLC;
-        host.memReq.deq;
-        let r = host.memReq.first;
+    rule sendMemLoaderReqToLLC;
+        memLoader.memReq.deq;
+        let r = memLoader.memReq.first;
         dmaRqT req =  DmaRq {
             addr: r.addr,
             byteEn: r.byteEn,
             data: r.data,
-            id: Host (r.id)
+            id: MemLoader (r.id)
         };
         llc.memReq.enq(req);
         if(verbose) begin
-            $display("  [LLCDmaConnnect sendHostReqToLLC] ", fshow(r), " ; ", fshow(req));
+            $display("[LLCDmaConnnect sendMemLoaderReqToLLC] ",
+                     fshow(r), " ; ", fshow(req));
         end
     endrule
 
-    (* descending_urgency = "sendHostReqToLLC, sendTlbReqToLLC" *)
+    (* descending_urgency = "sendMemLoaderReqToLLC, sendTlbReqToLLC" *)
     rule sendTlbReqToLLC;
         let {c, r} <- toGet(tlbQ).get;
         let req = getTlbDmaReq(c, r);
@@ -109,17 +111,13 @@ module mkLLCDmaConnect#(
     endrule
 
     // send Ld resp from LLC
-    rule sendLdRespToHost(llc.respLd.first.id matches tagged Host .id);
+    rule sendLdRespToMemLoader(llc.respLd.first.id matches tagged MemLoader .id);
         llc.respLd.deq;
-        let resp = llc.respLd.first;
-        HostLdResp ld = DmaRs {
-            data: resp.data,
-            id: id
-        };
-        host.respLd.enq(ld);
         if(verbose) begin
-            $display("  [LLCDmaConnect sendLdRespToHost] ", fshow(resp), " ; ", fshow(ld));
+            $display("[LLCDmaConnect sendLdRespToMemLoader] ",
+                     fshow(llc.respLd.first));
         end
+        doAssert(False, "No mem loader ld");
     endrule
 
     rule sendLdRespToTlb(llc.respLd.first.id matches tagged Tlb .id);
@@ -136,11 +134,12 @@ module mkLLCDmaConnect#(
     endrule
 
     // send St resp from LLC
-    rule sendStRespToHost(llc.respSt.first matches tagged Host .id);
+    rule sendStRespToMemLoader(llc.respSt.first matches tagged MemLoader .id);
         llc.respSt.deq;
-        host.respSt.enq(id);
+        memLoader.respSt.enq(id);
         if(verbose) begin
-            $display("  [LLCDmaConnect sendStRespToHost] ", fshow(llc.respSt.first));
+            $display("[LLCDmaConnect sendStRespToMemLoader] ",
+                     fshow(llc.respSt.first));
         end
     endrule
 

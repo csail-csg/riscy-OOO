@@ -40,7 +40,6 @@ import Performance::*;
 // indication methods that are truly in use by processor
 interface ProcIndInv;
     method ActionValue#(Data) to_host;
-    method ActionValue#(void) bootRomInitResp;
     method ActionValue#(Tuple2#(Bit#(8), ProcPerfResp)) perfResp;
     method ActionValue#(CoreId) terminate;
 endinterface
@@ -50,10 +49,6 @@ instance Connectable#(ProcIndInv, ProcIndication);
         rule doToHost;
             let v <- inv.to_host;
             ind.to_host(v);
-        endrule
-        rule doBootRomInitResp;
-            let v <- inv.bootRomInitResp;
-            ind.bootRomInitResp;
         endrule
         rule doPerf;
             let {c, p} <- inv.perfResp;
@@ -125,32 +120,18 @@ module mkProcIndInvSync#(
     method terminate = toGet(terminateQ).get;
 endmodule
 
-// request methods that are truly in use by processor
-interface ProcReq;
-    method Action start(
-        Addr startpc,
-        Addr toHostAddr, Addr fromHostAddr
-    );
-    method Action from_host(Data v);
-    method Action bootRomInitReq(Bit#(16) index, Data v);
-    method Action perfReq(Bit#(8) core, PerfLocation loc, PerfType t);
-endinterface
-
 // this module should be under user clock domain
 module mkProcReqSync#(
     Vector#(CoreNum, CoreReq) req,
     MMIOPlatform mmio, LLCache llc,
     Clock portalClk, Reset portalRst
-)(ProcReq);
+)(ProcRequest);
     Clock userClk <- exposeCurrentClock;
     Reset userRst <- exposeCurrentReset;
     SyncFIFOIfc#(
         Tuple3#(Addr, Addr, Addr)
     ) startQ <- mkSyncFifo(1, portalClk, portalRst, userClk, userRst);
     SyncFIFOIfc#(Data) hostQ <- mkSyncFifo(
-        1, portalClk, portalRst, userClk, userRst
-    );
-    SyncFIFOIfc#(Tuple2#(BootRomIndex, Data)) bootRomInitQ <- mkSyncFifo(
         1, portalClk, portalRst, userClk, userRst
     );
     SyncFIFOIfc#(Tuple3#(Bit#(8), PerfLocation, PerfType)) perfQ <- mkSyncFifo(
@@ -175,12 +156,6 @@ module mkProcReqSync#(
         mmio.from_host(v);
     endrule
 
-    rule doBootRomInit;
-        bootRomInitQ.deq;
-        let {idx, v} = bootRomInitQ.first;
-        mmio.bootRomInitReq(idx, v);
-    endrule
-
     rule doPerf;
         perfQ.deq;
         let {c, loc, t} = perfQ.first;
@@ -198,9 +173,6 @@ module mkProcReqSync#(
         Addr toHostAddr, Addr fromHostAddr
     );
         startQ.enq(tuple3(startpc, toHostAddr, fromHostAddr));
-    endmethod
-    method Action bootRomInitReq(Bit#(16) index, Data v);
-        bootRomInitQ.enq(tuple2(truncate(index), v));
     endmethod
     method Action from_host(Data v);
         hostQ.enq(v);

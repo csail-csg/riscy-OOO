@@ -21,19 +21,29 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-import Performance::*;
 
-interface ProcRequest;
-    method Action start(
-        Bit#(64) startpc,
-        Bit#(64) toHostAddr, Bit#(64) fromHostAddr
-    );
-    method Action from_host(Bit#(64) v);
-    method Action perfReq(Bit#(8) core, PerfLocation loc, PerfType t); // performance
+// This is the connectal interface for a mem loader backed by connectal
+
+// When the mem loader receives the request from RISC-V processor to initialize
+// memory, it will send indication to host. And then host will keep writing
+// data to the mem loader, and mem loader should send these writes to the LLC
+// of RISC-V processor.
+
+// The interface for host to write is similar to AXI. Write addr should be
+// aligned w.r.t 8B.
+
+interface MemLoaderRequest;
+    // addr channel for host writes. A valid addr is the starting addr for a
+    // series of sequentail writes. An invalid addr means all writes are done.
+    method Action wrAddr(Bool valid, Bit#(64) addr);
+    // data channel for host writes
+    method Action wrData(Bit#(64) data, Bit#(8) byteEn, Bool last);
 endinterface
 
-interface ProcIndication;
-    method Action to_host(Bit#(64) v);
-    method Action perfResp(Bit#(8) core, ProcPerfResp r); // performance
-    method Action terminate(Bit#(8) core); // exit signal
+interface MemLoaderIndication;
+    // ask host to start write data; memStartAddr is the begin addr to
+    // initialize memory (for sanity check at host side)
+    method Action start(Bit#(64) memStartAddr);
+    // signal that the requested series of writes is done
+    method Action wrDone;
 endinterface
