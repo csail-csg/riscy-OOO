@@ -33,6 +33,7 @@ import CCTypes::*;
 import CacheUtils::*;
 import LLBank::*;
 import LLCache::*;
+import ProcIF::*;
 import BootRomIF::*;
 import BootRom::*;
 import MemLoaderIF::*;

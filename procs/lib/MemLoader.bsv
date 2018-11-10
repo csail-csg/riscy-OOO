@@ -33,6 +33,7 @@ import Fifo::*;
 import Types::*;
 import ProcTypes::*;
 import CCTypes::*;
+import CacheUtils::*;
 import MMIOAddrs::*;
 import MemLoaderIF::*;
 import SyncFifo::*;

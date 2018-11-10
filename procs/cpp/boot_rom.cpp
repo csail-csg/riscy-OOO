@@ -7,8 +7,8 @@
 #include <poll.h>
 #include <sys/wait.h>
 #include <sys/types.h>
-#include "fesvr/elfloader.h"
 #include "custom_memif.h"
+#include "fesvr/elfloader.h" // FIXME must be after memif for reg_t definition
 #include "boot_rom.h"
 #include "mmio.h"
 

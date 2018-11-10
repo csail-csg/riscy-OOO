@@ -108,7 +108,7 @@ static void get_htif_addrs(const char *elf_file,
     }
 }
 
-int runHtifTest(const char *elf_file, int core_num) {
+int runTest(const char *elf_file, int core_num) {
     sleep(1);
 
     // program boot rom
@@ -133,25 +133,27 @@ int runHtifTest(const char *elf_file, int core_num) {
             (long long unsigned)fromhost_addr);
     // sanctum hard-wire fromhost / tohost to 0x80009000 / 0x80009008,
     // respectively
-    if ( fromhost_addr != 0x80009000 ) {
-        fprintf(stderr, "[sanctum] Illegal fromhost_addr "
-                "(%08llx, but should be %08llx). Stopping.\n",
-                (long long unsigned)fromhost_addr, 0x80009000);
-        exit(1);
-    }
-    if ( tohost_addr != 0x80009008 ) {
-        fprintf(stderr, "[sanctum] Illegal tohost_addr "
-                "(%08llx, but should be %08llx). Stopping.\n",
-                (long long unsigned)tohost_addr, 0x80009008);
-        exit(1);
-    }
+    //if ( fromhost_addr != 0x80009000 ) {
+    //    fprintf(stderr, "[sanctum] Illegal fromhost_addr "
+    //            "(%08llx, but should be %08llx). Stopping.\n",
+    //            (long long unsigned)fromhost_addr,
+    //            (long long unsigned)0x80009000);
+    //    exit(1);
+    //}
+    //if ( tohost_addr != 0x80009008 ) {
+    //    fprintf(stderr, "[sanctum] Illegal tohost_addr "
+    //            "(%08llx, but should be %08llx). Stopping.\n",
+    //            (long long unsigned)tohost_addr,
+    //            (long long unsigned)0x80009008);
+    //    exit(1);
+    //}
     procRequestProxy->start(startpc, tohost_addr, fromhost_addr);
 
     // wait for result
     int result = procIndication->waitResult();
 
     // performance result
-    for(uint32_t i = 0; i < core_num; i++) {
+    for(uint32_t i = 0; i < (uint32_t)core_num; i++) {
         core_perf_stats.reset(); // clear old data
         fprintf(perf_fp, "getting performance results for core %d\n", i);
         core_perf_stats.get_all_perf(i);
@@ -193,7 +195,7 @@ int main(int argc, char * const *argv) {
     const char *elf_file = 0;
     const char *rom_file = 0;
     uint64_t mem_size = 64*1024*1024; // default 64 MB memory
-    int core_num = 1; // default to 1 core
+    uint32_t core_num = 1; // default to 1 core
 
     while(1) {
         if (argc > 1 && strcmp(argv[1],"--assembly-tests") == 0) {
@@ -247,6 +249,8 @@ int main(int argc, char * const *argv) {
             // --elf ELF_BINARY
             elf_file = argv[2];
             argc-=2; argv+=2;
+        } else if(argc == 1) {
+            break;
         } else {
             fprintf(stderr, "Wrong arguments\n");
             printHelp(prog_name);
@@ -265,6 +269,7 @@ int main(int argc, char * const *argv) {
         procIndication = new ProcIndicationAssembly(IfcNames_ProcIndicationH2S,
                                                     debug_file,
                                                     print_buff,
+                                                    core_num,
                                                     &core_perf_stats,
                                                     &uncore_perf_stats,
                                                     &handle_signal,
@@ -274,6 +279,7 @@ int main(int argc, char * const *argv) {
         procIndication = new ProcIndication(IfcNames_ProcIndicationH2S,
                                             debug_file,
                                             print_buff,
+                                            core_num,
                                             &core_perf_stats,
                                             &uncore_perf_stats,
                                             &handle_signal,

@@ -72,9 +72,6 @@ module mkProcIndInvSync#(
     SyncFIFOIfc#(Data) hostQ <- mkSyncFifo(
         1, userClk, userRst, portalClk, portalRst
     );
-    SyncFIFOIfc#(void) bootRomInitQ <- mkSyncFifo(
-        1, userClk, userRst, portalClk, portalRst
-    );
     SyncFIFOIfc#(Tuple2#(Bit#(8), ProcPerfResp)) perfQ <- mkSyncFifo(
         1, userClk, userRst, portalClk, portalRst
     );
@@ -85,11 +82,6 @@ module mkProcIndInvSync#(
     rule sendHost;
         let v <- mmio.to_host;
         hostQ.enq(v);
-    endrule
-
-    rule sendBootRomInit;
-        let v <- mmio.bootRomInitResp;
-        bootRomInitQ.enq(?);
     endrule
 
     rule sendLLCPerf;
@@ -115,7 +107,6 @@ module mkProcIndInvSync#(
     end
 
     method to_host = toGet(hostQ).get;
-    method bootRomInitResp = toGet(bootRomInitQ).get;
     method perfResp = toGet(perfQ).get;
     method terminate = toGet(terminateQ).get;
 endmodule

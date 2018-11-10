@@ -90,7 +90,7 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
             LLCStuckSrc src = (case(s.id) matches
                 tagged Child ._i: return CoherentChild;
                 tagged Dma .dmaId: return (case(dmaId) matches
-                    tagged Host ._i: return HostDma;
+                    tagged MemLoader ._i: return HostDma;
                     tagged Tlb ._i: return TlbDma;
                 endcase);
             endcase);

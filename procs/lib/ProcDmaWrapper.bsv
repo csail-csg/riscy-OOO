@@ -115,7 +115,9 @@ module mkProcDmaWrapper#(
     mkConnection(toPut(dramErrQ).put, dram.user.err);
     rule doDramErr;
         DramErr e <- toGet(dramErrQ).get;
-        hostDmaInd.dramErr(zeroExtend(pack(e)));
+        //hostDmaInd.dramErr(zeroExtend(pack(e)));
+        doAssert(False, "Dram error");
+        // FIXME AWS DRAM don't have error, so we ignore this error signal
     endrule
 
     // instantiate processor

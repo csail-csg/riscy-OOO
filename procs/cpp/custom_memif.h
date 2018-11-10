@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fesvr/memif.h"
+#include <string.h>
 
 // dummy memif which does nothing
 class dummy_memif_t : public memif_t

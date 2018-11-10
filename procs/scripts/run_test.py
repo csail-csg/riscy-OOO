@@ -65,6 +65,8 @@ benchmarks_tests = [
 parser = argparse.ArgumentParser()
 parser.add_argument('--exe', required = True,
                     metavar = 'UBUNTU_EXE', dest = 'exe')
+parser.add_argument('--rom', required = True,
+                    metavar = 'ROM', dest = 'rom')
 parser.add_argument('--test', required = True,
                     metavar = 'TEST_TYPE', dest = 'test',
                     choices = [TestType.assembly,
@@ -80,7 +82,7 @@ args = parser.parse_args()
 # set up the tests to run
 out_dir = os.path.join(os.path.abspath(args.out_dir), args.test)
 test_dir = ''
-test_arg = ' --core-num {} '.format(args.core_num)
+test_arg = ' --core-num {} --rom {} '.format(args.core_num, args.rom)
 tests = []
 if args.test == TestType.assembly:
     test_dir = os.path.join(test_bin_dir, 'isa')
@@ -92,7 +94,6 @@ elif args.test == TestType.assembly_fp:
     tests = assembly_fp_tests
 elif args.test == TestType.benchmarks:
     test_dir = os.path.join(test_bin_dir, 'benchmarks')
-    test_arg += ' --just-run '
     tests = benchmarks_tests
 
 # create output log folder and go to it
@@ -107,6 +108,6 @@ for t in tests:
         print '[WARNING] {} does not exist'.format(test_prog)
     else:
         print 'Run ' + test_prog
-        cmd = args.exe + test_arg + ' -- ' + test_prog + ' > ' + test_log
+        cmd = args.exe + test_arg + ' --elf ' + test_prog + ' > ' + test_log
         print 'Command ' + cmd
         subprocess.check_call(cmd, shell = True) # stop if fail a test

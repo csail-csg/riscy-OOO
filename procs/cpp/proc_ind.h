@@ -60,6 +60,9 @@ protected:
     // htif (it has its own lock)
     htif_riscy_t *riscy_htif;
 
+    // number of cores
+    uint32_t core_num;
+
     // performance
     CorePerfStats *core_perf_stats;
     UncorePerfStats *uncore_perf_stats;
@@ -98,6 +101,7 @@ public:
         unsigned int id,
         FILE *dbg_f,
         PrintBuffer *buff,
+        uint32_t cores,
         CorePerfStats *core_perf,
         UncorePerfStats *uncore_perf,
         sighandler_t sig_hdl,
@@ -110,11 +114,11 @@ public:
         debug_file(dbg_f),
         print_buff(buff),
         riscy_htif(0),
+        core_num(cores),
         core_perf_stats(core_perf),
         uncore_perf_stats(uncore_perf),
         handle_signal(sig_hdl),
         to_host_handler(this),
-        htif_args(0),
         shell_cmd(cmd),
         cmd_delay_sec(cmd_delay)
     {
@@ -146,6 +150,7 @@ public:
         unsigned int id,
         FILE *dbg_f,
         PrintBuffer *buff,
+        uint32_t cores,
         CorePerfStats *core_perf,
         UncorePerfStats *uncore_perf,
         sighandler_t sig_hdl,
@@ -154,6 +159,7 @@ public:
     ) : ProcIndication(id,
                        dbg_f,
                        buff,
+                       cores,
                        core_perf,
                        uncore_perf,
                        sig_hdl,

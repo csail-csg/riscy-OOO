@@ -52,11 +52,13 @@ CORE_SCRIPT_DIR := $(FPGAUTILS_DIR)/core-scripts
 
 # interfaces
 S2H_INTERFACES = ProcRequest:ProcDmaWrapper.procReq \
-				 HostDmaRequest:ProcDmaWrapper.hostDmaReq
-H2S_INTERFACES = ProcDmaWrapper:ProcIndication,HostDmaIndication,DeadlockIndication,RenameDebugIndication:host
+				 BootRomRequest:ProcDmaWrapper.bootRomReq \
+				 MemLoaderRequest:ProcDmaWrapper.memLoaderReq
+H2S_INTERFACES = ProcDmaWrapper:ProcIndication,BootRomIndication,MemLoaderIndication,DeadlockIndication,RenameDebugIndication:host
 
 BSVFILES = $(PROC_LIB_DIR)/ProcIF.bsv \
-		   $(PROC_LIB_DIR)/HostDmaIF.bsv \
+		   $(PROC_LIB_DIR)/BootRomIF.bsv \
+		   $(PROC_LIB_DIR)/MemLoaderIF.bsv \
 		   $(PROC_LIB_DIR)/DeadlockIF.bsv \
 		   $(PROC_LIB_DIR)/RenameDebugIF.bsv \
 		   $(PROC_LIB_DIR)/VerificationPacket.bsv \
@@ -65,7 +67,8 @@ BSVFILES = $(PROC_LIB_DIR)/ProcIF.bsv \
 CPPFILES = $(PROC_CPP_DIR)/testproc.cpp \
 		   $(PROC_CPP_DIR)/htif_riscy.cpp \
 		   $(PROC_CPP_DIR)/proc_ind.cpp \
-		   $(PROC_CPP_DIR)/host_dma.cpp \
+		   $(PROC_CPP_DIR)/boot_rom.cpp \
+		   $(PROC_CPP_DIR)/mem_loader.cpp \
 		   $(PROC_CPP_DIR)/to_host.cpp \
 		   $(PROC_CPP_DIR)/print_buff.cpp
 
@@ -278,5 +281,7 @@ run:
 	@echo "Use make run.boardname"
 
 run.%:
-	$(PROC_DIR)/scripts/run_test.py --exe $(BUILD_DIR)/$*/bin/ubuntu.exe --test $(TEST) --cores $(CORE_NUM)
+	$(PROC_DIR)/scripts/run_test.py --exe $(BUILD_DIR)/$*/bin/ubuntu.exe \
+		--rom $(RISCY_HOME)/procs/rom/out/rom_core_$(CORE_NUM) \
+		--test $(TEST) --cores $(CORE_NUM)
 

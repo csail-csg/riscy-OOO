@@ -34,7 +34,7 @@
 #include "MemLoaderIndication.h"
 #include "MemLoaderRequest.h"
 #include "custom_memif.h"
-#include "fesvr/elfloader.h"
+#include "fesvr/elfloader.h" // FIXME must be after memif for reg_t definition
 
 class MemLoaderIndication;
 
