@@ -430,7 +430,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             csrf.csrInstWr(csr_idx, csr_data);
             // check if satp is modified or not
             write_satp = csr_idx == CSRsatp;
-            flush_security = csr_idx == CSRflush;
+            flush_security = csr_idx == CSRmflush;
         end
 
         // redirect (Sret and Mret redirect pc is got from CSRF)
@@ -452,7 +452,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         // XXX as approximation, sret/mret may mean context switch, so flush
         // for security
         makeSystemConsistent(
-            x.iType == SFence || write_satp,
+            x.iType == SFence || write_satp, // TODO flush TLB when change sanctum regs?
             flush_security || x.iType == Sret || x.iType == Mret
         );
 

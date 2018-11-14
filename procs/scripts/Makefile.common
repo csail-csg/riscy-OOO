@@ -106,6 +106,7 @@ endif
 # security features
 ifeq ($(SECURITY),true)
 CONNECTALFLAGS += --bscflags=" -D SECURITY "
+CONNECTALFLAGS += --verilog $(PROC_DIR)/verilog
 endif
 
 # perf counter

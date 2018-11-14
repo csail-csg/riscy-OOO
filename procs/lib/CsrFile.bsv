@@ -33,6 +33,7 @@ import Vector::*;
 import FIFO::*;
 import GetPut::*;
 import BuildVector::*;
+import TRNG::*;
 
 interface CsrFile;
     // Read
@@ -485,6 +486,45 @@ module mkCsrFile#(Data hartid)(CsrFile);
     StatsCsr stats_module <- mkStatsCsr;
     Reg#(Data) stats_csr = stats_module.reg_ifc;
 
+`ifdef SECURITY
+    // ### Enclave virtual base and mask
+    // (per-core) registers
+    // ( defines a virtual region for which enclave page tables are used in
+    //   place of OS-controlled page tables)
+    // (machine-mode non-standard read/write)
+    Reg#(Data) mevbase_csr <- mkCsrReg(-1); // impossible base & mask,
+    Reg#(Data) mevmask_csr <- mkCsrReg(0);  // so no enclave accesses are possible
+
+    // ### Enclave page table base
+    // (per core) register
+    // ( pointer to a separate page table data structure used to translate enclave
+    //   virtual addresses)
+    // (machine-mode non-standard read/write)
+    Reg#(Bit#(44)) eppn_reg <- mkCsrReg(0);
+    Reg#(Data) meatp_csr = zeroExtendReg(eppn_reg);
+
+    // ### DRAM bitmap
+    // (per core) registers (OS and Enclave)
+    // ( white-lists the DRAM regions the core is allowed to access via OS and
+    //   enclave virtual addresses)
+    // (machine-mode non-standard read/write)
+    Reg#(Data) mmrbm_csr <- mkCsrReg(-1);
+    Reg#(Data) memrbm_csr <- mkCsrReg(0);
+
+    // ### Protected region base and mask
+    // (per core) registers (OS and Enclave)
+    // ( these are used to prevent address translation into a specific range of
+    //   physical addresses, for example to protect the security monitor from all software)
+    // (machine-mode non-standard read/write)
+    Reg#(Data) mparbase_csr <- mkCsrReg(-1);
+    Reg#(Data) mparmask_csr <- mkCsrReg(0);
+    Reg#(Data) meparbase_csr <- mkCsrReg(0);
+    Reg#(Data) meparmask_csr <- mkCsrReg(0);
+
+    // ### true random number
+    Reg#(Data) trng_csr <- mkTRNG;
+`endif
+
     rule incCycle;
         mcycle_ehr[1] <= mcycle_ehr[1] + 1;
     endrule
@@ -531,6 +571,18 @@ module mkCsrFile#(Data hartid)(CsrFile);
             CSRmarchid:    marchid_csr;
             CSRmimpid:     mimpid_csr;
             CSRmhartid:    mhartid_csr;
+`ifdef SECURITY
+            CSRmevbase:    mevbase_csr;
+            CSRmevmask:    mevmask_csr;
+            CSRmeatp:      meatp_csr;
+            CSRmmrbm:      mmrbm_csr;
+            CSRmemrbm:     memrbm_csr;
+            CSRmparbase:   mparbase_csr;
+            CSRmparmask:   mparmask_csr;
+            CSRmeparbase:  meparbase_csr;
+            CSRmeparmask:  meparmask_csr;
+            CSRtrng:       trng_csr;
+`endif
             default:       readOnlyReg(64'b0);
         endcase);
     endfunction
@@ -683,6 +735,17 @@ module mkCsrFile#(Data hartid)(CsrFile);
             exeReadable: mxr_reg == 1,
             userAccessibleByS: sum_reg == 1,
             basePPN: ppn_reg
+`ifdef SECURITY
+            , sanctum_evbase:   mevbase_csr,
+            sanctum_evmask:     mevmask_csr,
+            sanctum_ebasePPN:   eppn_reg,
+            sanctum_mrbm:       mmrbm_csr,
+            sanctum_emrbm:      memrbm_csr,
+            sanctum_parbase:    mparbase_csr,
+            sanctum_parmask:    mparmask_csr,
+            sanctum_eparbase:   meparbase_csr,
+            sanctum_eparmask:   meparmask_csr
+`endif
         };
     endmethod
 
@@ -696,6 +759,17 @@ module mkCsrFile#(Data hartid)(CsrFile);
             exeReadable: mxr_reg == 1,
             userAccessibleByS: sum_reg == 1,
             basePPN: ppn_reg
+`ifdef SECURITY
+            , sanctum_evbase:   mevbase_csr,
+            sanctum_evmask:     mevmask_csr,
+            sanctum_ebasePPN:   eppn_reg,
+            sanctum_mrbm:       mmrbm_csr,
+            sanctum_emrbm:      memrbm_csr,
+            sanctum_parbase:    mparbase_csr,
+            sanctum_parmask:    mparmask_csr,
+            sanctum_eparbase:   meparbase_csr,
+            sanctum_eparmask:   meparmask_csr
+`endif
         };
     endmethod
 

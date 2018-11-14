@@ -219,7 +219,6 @@ typedef enum {
     // user non-standard CSRs (TODO)
     CSRterminate  = 12'h800, // terminate (used to exit Linux)
     CSRstats      = 12'h801, // turn on/off perf counters
-    CSRflush      = 12'h802, // flush everything FIXME this should be in machine mode
     // supervisor standard CSRs
     CSRsstatus    = 12'h100,
     // no user trap handler, so no se/ideleg
@@ -251,6 +250,20 @@ typedef enum {
     CSRmarchid    = 12'hf12,
     CSRmimpid     = 12'hf13,
     CSRmhartid    = 12'hf14,
+`ifdef SECURITY
+    // sanctum CSR
+    CSRmevbase    = 12'h7c0,
+    CSRmevmask    = 12'h7c1,
+    CSRmeatp      = 12'h7c2,
+    CSRmmrbm      = 12'h7c3,
+    CSRmemrbm     = 12'h7c4,
+    CSRmparbase   = 12'h7c5,
+    CSRmparmask   = 12'h7c6,
+    CSRmeparbase  = 12'h7c7,
+    CSRmeparmask  = 12'h7c8,
+    CSRmflush     = 12'h7c9, // flush pipeline + cache
+    CSRtrng       = 12'hcc0, // random number for secure boot
+`endif
     // CSR that catches all the unimplemented CSRs. To avoid exception on this,
     // make it a user non-standard read/write CSR.
     CSRnone       = 12'h8ff
@@ -267,7 +280,6 @@ function CSR unpackCSR(Bit#(12) x);
         pack(CSR'(CSRterminate )): (CSRterminate );
         pack(CSR'(CSRstats     )): (CSRstats     );
         pack(CSR'(CSRsstatus   )): (CSRsstatus   );
-        pack(CSR'(CSRflush     )): (CSRflush     );
         pack(CSR'(CSRsie       )): (CSRsie       );
         pack(CSR'(CSRstvec     )): (CSRstvec     );
         pack(CSR'(CSRscounteren)): (CSRscounteren);
@@ -295,6 +307,19 @@ function CSR unpackCSR(Bit#(12) x);
         pack(CSR'(CSRmarchid   )): (CSRmarchid   );
         pack(CSR'(CSRmimpid    )): (CSRmimpid    );
         pack(CSR'(CSRmhartid   )): (CSRmhartid   );
+`ifdef SECURITY
+        pack(CSR'(CSRmevbase   )): (CSRmevbase   );
+        pack(CSR'(CSRmevmask   )): (CSRmevmask   );
+        pack(CSR'(CSRmeatp     )): (CSRmeatp     );
+        pack(CSR'(CSRmmrbm     )): (CSRmmrbm     );
+        pack(CSR'(CSRmemrbm    )): (CSRmemrbm    );
+        pack(CSR'(CSRmparbase  )): (CSRmparbase  );
+        pack(CSR'(CSRmparmask  )): (CSRmparmask  );
+        pack(CSR'(CSRmeparbase )): (CSRmeparbase );
+        pack(CSR'(CSRmeparmask )): (CSRmeparmask );
+        pack(CSR'(CSRmflush    )): (CSRmflush    );
+        pack(CSR'(CSRtrng      )): (CSRtrng      );
+`endif
         default                  : (CSRnone      );
     endcase);
 endfunction
@@ -458,6 +483,18 @@ typedef struct {
                             // mstatus.mprv), accessing page with U=1 will NOT
                             // fault
     Bit#(44) basePPN; // ppn of root page table
+`ifdef SECURITY
+    // sanctum page walk check
+    Bit#(64) sanctum_evbase;
+    Bit#(64) sanctum_evmask;
+    Bit#(44) sanctum_ebasePPN;
+    Bit#(64) sanctum_mrbm;
+    Bit#(64) sanctum_emrbm;
+    Bit#(64) sanctum_parbase;
+    Bit#(64) sanctum_parmask;
+    Bit#(64) sanctum_eparbase;
+    Bit#(64) sanctum_eparmask;
+`endif
 } VMInfo deriving(Bits, Eq, FShow);
 
 instance DefaultValue#(VMInfo);
@@ -468,6 +505,17 @@ instance DefaultValue#(VMInfo);
         exeReadable: False,
         userAccessibleByS: False,
         basePPN: 0
+`ifdef SECURITY
+        , sanctum_evbase:   1,
+        sanctum_evmask:     0,
+        sanctum_ebasePPN:   0,
+        sanctum_mrbm:       -1,
+        sanctum_emrbm:      0,
+        sanctum_parbase:    1,
+        sanctum_parmask:    0,
+        sanctum_eparbase:   0,
+        sanctum_eparmask:   0
+`endif
     };
 endinstance
 
