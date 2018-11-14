@@ -430,7 +430,9 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             csrf.csrInstWr(csr_idx, csr_data);
             // check if satp is modified or not
             write_satp = csr_idx == CSRsatp;
+`ifdef SECURITY
             flush_security = csr_idx == CSRmflush;
+`endif
         end
 
         // redirect (Sret and Mret redirect pc is got from CSRF)
