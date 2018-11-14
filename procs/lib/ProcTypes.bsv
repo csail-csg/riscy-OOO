@@ -251,7 +251,7 @@ typedef enum {
     CSRmimpid     = 12'hf13,
     CSRmhartid    = 12'hf14,
 `ifdef SECURITY
-    // sanctum CSR
+    // sanctum machine CSR
     CSRmevbase    = 12'h7c0,
     CSRmevmask    = 12'h7c1,
     CSRmeatp      = 12'h7c2,
@@ -262,6 +262,7 @@ typedef enum {
     CSRmeparbase  = 12'h7c7,
     CSRmeparmask  = 12'h7c8,
     CSRmflush     = 12'h7c9, // flush pipeline + cache
+    // sanctum user CSR
     CSRtrng       = 12'hcc0, // random number for secure boot
 `endif
     // CSR that catches all the unimplemented CSRs. To avoid exception on this,

@@ -487,6 +487,8 @@ module mkCsrFile#(Data hartid)(CsrFile);
     Reg#(Data) stats_csr = stats_module.reg_ifc;
 
 `ifdef SECURITY
+    // sanctum machine CSRs
+
     // ### Enclave virtual base and mask
     // (per-core) registers
     // ( defines a virtual region for which enclave page tables are used in
@@ -521,6 +523,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     Reg#(Data) meparbase_csr <- mkCsrReg(0);
     Reg#(Data) meparmask_csr <- mkCsrReg(0);
 
+    // sanctum user CSR
     // ### true random number
     Reg#(Data) trng_csr <- mkTRNG;
 `endif
