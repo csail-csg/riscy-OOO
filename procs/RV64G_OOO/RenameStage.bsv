@@ -291,11 +291,21 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
         return rdy[idx] ? Valid (idx) : Invalid;
     endfunction
 
+`ifdef SECURITY
+    // speculation control
+    Bool specNone = csrf.rd(CSRmspec) == mSpecNone;
+    Bool specNonMem = csrf.rd(CSRmspec) == mSpecNonMem;
+`endif
+
     // rename correct path inst
     rule doRenaming(
         !inIfc.pendingMMIOPRq // stall when MMIO pRq is pending
         && epochManager.checkEpoch[0].check(fetchStage.pipelines[0].first.main_epoch) // correct path
         && !isValid(firstTrap) // not trap
+`ifdef SECURITY
+        // stall for ROB empty if we don't allow speculation at all
+        && (!specNone || rob.isEmpty)
+`endif
     );
         // we stop superscalar rename after
         // 1. epoch incremented (system inst)
@@ -369,6 +379,18 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                 if(needReplay && i != 0) begin
                     stop = True;
                 end
+`ifdef SECURITY
+                // When speculation is not allowed at all, the second inst
+                // cannot be processed
+                if(specNone && i != 0) begin
+                    stop = True;
+                end
+                // When only non-mem inst can speculate, mem inst must be the
+                // first one, otherwise cannot process now
+                if(dInst.execFunc matches tagged Mem .unused &&& specNonMem &&& i != 0) begin
+                    stop = True;
+                end
+`endif
                 // check renaming table can be enq, otherwise cannot process now
                 if(!regRenamingTable.rename[i].canRename) begin
                     stop = True;
@@ -545,6 +567,14 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                             end
                             stop = True; // stop after this system inst
                         end
+
+`ifdef SECURITY
+                        // if only non-mem inst can speculate, wait ROB empty
+                        // for mem inst
+                        if (to_mem && specNonMem) begine
+                            when(rob.isEmpty, noAction);
+                        end
+`endif
                         
                         // Claim a speculation tag
                         if (new_speculation) begin

@@ -262,6 +262,7 @@ typedef enum {
     CSRmeparbase  = 12'h7c7,
     CSRmeparmask  = 12'h7c8,
     CSRmflush     = 12'h7c9, // flush pipeline + cache
+    CSRmspec      = 12'h7ca, // control speculation
     // sanctum user CSR
     CSRtrng       = 12'hcc0, // random number for secure boot
 `endif
@@ -319,11 +320,16 @@ function CSR unpackCSR(Bit#(12) x);
         pack(CSR'(CSRmeparbase )): (CSRmeparbase );
         pack(CSR'(CSRmeparmask )): (CSRmeparmask );
         pack(CSR'(CSRmflush    )): (CSRmflush    );
+        pack(CSR'(CSRmspec     )): (CSRmspec     );
         pack(CSR'(CSRtrng      )): (CSRtrng      );
 `endif
         default                  : (CSRnone      );
     endcase);
 endfunction
+
+Bit#(2) mSpecAll    = 0;
+Bit#(2) mSpecNonMem = 1;
+Bit#(2) mSpecNone   = 2;
 
 typedef enum {
     Unsupported,

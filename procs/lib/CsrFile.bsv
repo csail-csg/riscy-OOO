@@ -523,6 +523,10 @@ module mkCsrFile#(Data hartid)(CsrFile);
     Reg#(Data) meparbase_csr <- mkCsrReg(0);
     Reg#(Data) meparmask_csr <- mkCsrReg(0);
 
+    // ### Turn on/off speculation
+    Reg#(Bit#(2)) mspec_reg <- mkCsrReg(mSpecAll);
+    Reg#(Data) mspec_csr <- zeroExtendReg(mspec_reg);
+
     // sanctum user CSR
     // ### true random number
     // For now, we skip secure boot, keep TRNG = 0
@@ -585,6 +589,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
             CSRmparmask:   mparmask_csr;
             CSRmeparbase:  meparbase_csr;
             CSRmeparmask:  meparmask_csr;
+            CSRmspec:      mspec_csr;
             CSRtrng:       trng_csr;
 `endif
             default:       readOnlyReg(64'b0);
