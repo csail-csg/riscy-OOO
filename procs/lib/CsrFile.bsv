@@ -33,7 +33,7 @@ import Vector::*;
 import FIFO::*;
 import GetPut::*;
 import BuildVector::*;
-import TRNG::*;
+//import TRNG::*;
 
 interface CsrFile;
     // Read
@@ -525,7 +525,8 @@ module mkCsrFile#(Data hartid)(CsrFile);
 
     // sanctum user CSR
     // ### true random number
-    Reg#(Data) trng_csr <- mkTRNG;
+    // For now, we skip secure boot, keep TRNG = 0
+    Reg#(Data) trng_csr <- mkReadOnlyReg(0); //mkTRNG;
 `endif
 
     rule incCycle;
