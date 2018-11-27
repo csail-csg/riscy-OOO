@@ -37,6 +37,12 @@ hart_zero:
 1:  ld t1, 8(t0)
     bnez t1, 1b
 
+    # after loading mem, clear cycle/inst, stop future inst from speculation
+    fence.i
+    fence
+    csrw mcycle, x0
+    csrw minstret, x0
+
     # wakeup other harts via ipi
     # t0: value to write to other harts' mip.msip
     li t0, 1
