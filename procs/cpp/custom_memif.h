@@ -2,6 +2,7 @@
 
 #include "fesvr/memif.h"
 #include <string.h>
+#include <stdlib.h>
 
 // dummy memif which does nothing
 class dummy_memif_t : public memif_t
@@ -26,19 +27,23 @@ public:
   // read and write byte arrays
   virtual void read(addr_t addr, size_t len, void* bytes) {
     if (addr < base) {
-      throw std::runtime_error("blob memif read underflow");
+      fprintf(stderr, "blob memif read underflow\n");
+      exit(-1);
     }
     if (addr - base + len > size) {
-      throw std::runtime_error("blob memif read overflow");
+      fprintf(stderr, "blob memif read overflow\n");
+      exit(-1);
     }
     memcpy(bytes, blob + addr - base, len);
   }
   virtual void write(addr_t addr, size_t len, const void* bytes) {
     if (addr < base) {
-      throw std::runtime_error("blob memif write underflow");
+      fprintf(stderr, "blob memif write underflow\n");
+      exit(-1);
     }
     if (addr - base + len > size) {
-      throw std::runtime_error("blob memif write overflow");
+      fprintf(stderr, "blob memif write overflow\n");
+      exit(-1);
     }
     memcpy(blob + addr - base, bytes, len);
   }

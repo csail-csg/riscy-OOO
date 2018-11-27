@@ -294,7 +294,11 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 `ifdef SECURITY
     // speculation control
     Bool specNone = csrf.rd(CSRmspec) == zeroExtend(mSpecNone);
-    Bool specNonMem = csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
+    //Bool specNonMem = csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
+
+    //rule checkSpecNone(specNone);
+    //    $fdisplay(stderr, "RENAME SPECULATION STOPS!!");
+    //endrule
 `endif
 
     // rename correct path inst
@@ -387,9 +391,9 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                 end
                 // When only non-mem inst can speculate, mem inst must be the
                 // first one, otherwise cannot process now
-                if(dInst.execFunc matches tagged Mem .unused &&& specNonMem &&& i != 0) begin
-                    stop = True;
-                end
+                //if(dInst.execFunc matches tagged Mem .unused &&& specNonMem &&& i != 0) begin
+                //    stop = True;
+                //end
 `endif
                 // check renaming table can be enq, otherwise cannot process now
                 if(!regRenamingTable.rename[i].canRename) begin
@@ -571,9 +575,9 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 `ifdef SECURITY
                         // if only non-mem inst can speculate, wait ROB empty
                         // for mem inst
-                        if (to_mem && specNonMem) begin
-                            when(rob.isEmpty, noAction);
-                        end
+                        //if (to_mem && specNonMem) begin
+                        //    when(rob.isEmpty, noAction);
+                        //end
 `endif
                         
                         // Claim a speculation tag
