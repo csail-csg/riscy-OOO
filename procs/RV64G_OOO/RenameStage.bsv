@@ -293,8 +293,8 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 
 `ifdef SECURITY
     // speculation control
-    Bool specNone = csrf.rd(CSRmspec) == mSpecNone;
-    Bool specNonMem = csrf.rd(CSRmspec) == mSpecNonMem;
+    Bool specNone = csrf.rd(CSRmspec) == zeroExtend(mSpecNone);
+    Bool specNonMem = csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
 `endif
 
     // rename correct path inst
@@ -571,7 +571,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 `ifdef SECURITY
                         // if only non-mem inst can speculate, wait ROB empty
                         // for mem inst
-                        if (to_mem && specNonMem) begine
+                        if (to_mem && specNonMem) begin
                             when(rob.isEmpty, noAction);
                         end
 `endif

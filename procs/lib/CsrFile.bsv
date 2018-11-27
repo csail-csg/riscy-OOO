@@ -525,7 +525,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
 
     // ### Turn on/off speculation
     Reg#(Bit#(2)) mspec_reg <- mkCsrReg(mSpecAll);
-    Reg#(Data) mspec_csr <- zeroExtendReg(mspec_reg);
+    Reg#(Data) mspec_csr = zeroExtendReg(mspec_reg);
 
     // sanctum user CSR
     // ### true random number
