@@ -690,7 +690,7 @@ module mkCore#(CoreId coreId)(Core);
 
         let pType <- toGet(exePerfReqQ).get;
         Data data = (case(pType)
-            SupRenameCnt: renameStage.getPerf(pType);
+            SupRenameCnt, SpecNoneCycles, SpecNonMemCycles: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
             ExeTlbExcep,
             ExeLdStallByLd, ExeLdStallBySt, ExeLdStallBySB,
