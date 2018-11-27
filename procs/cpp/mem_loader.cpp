@@ -30,6 +30,9 @@ mem_loader_memif_t::mem_loader_memif_t(MemLoaderRequestProxy *req,
 }
 
 void mem_loader_memif_t::write(addr_t addr, size_t len, const void *src) {
+    fprintf(stderr, "[mem loader] write(%016llx, %d)\n",
+            (long long unsigned)addr, (int)len);
+
     // check for 0 write length (it can really happen...)
     if(len == 0) return;
 
