@@ -105,6 +105,10 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     // performance counter
 `ifdef PERF_COUNT
     Count#(Data) supRenameCnt <- mkCount(0);
+`ifdef SECURITY
+    Count#(Data) specNoneCycles <- mkCount(0);
+    Count#(Data) specNonMemCycles <- mkCount(0);
+`endif
 `endif
 
     // deadlock check
@@ -294,11 +298,20 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 `ifdef SECURITY
     // speculation control
     Bool specNone = csrf.rd(CSRmspec) == zeroExtend(mSpecNone);
-    //Bool specNonMem = csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
+    Bool specNonMem = csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
 
     //rule checkSpecNone(specNone);
     //    $fdisplay(stderr, "RENAME SPECULATION STOPS!!");
     //endrule
+
+`ifdef PERF_COUNT
+    rule incSpecNoneCycles(inIfc.doStats && specNone);
+        specNoneCycles.incr(1);
+    endrule
+    rule incSpecNonMemCycles(inIfc.doStats && specNonMem);
+        specNonMemCycles.incr(1);
+    endrule
+`endif
 `endif
 
     // rename correct path inst
@@ -699,6 +712,10 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
         return (case(t)
 `ifdef PERF_COUNT
             SupRenameCnt: supRenameCnt;
+`ifdef SECURITY
+            SpecNoneCycles: specNoneCycles;
+            SpecNonMemCycles: specNoneCycles;
+`endif
 `endif
             default: 0;
         endcase);

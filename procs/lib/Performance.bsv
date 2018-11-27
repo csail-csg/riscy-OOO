@@ -88,6 +88,8 @@ typedef enum {
 
 typedef enum {
     SupRenameCnt, // number of cycles that rename correct path inst cnt > 1
+    SpecNoneCycles,
+    SpecNonMemCycles,
     ExeRedirectBr,
     ExeRedirectJr,
     ExeRedirectOther,

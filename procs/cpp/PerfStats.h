@@ -193,6 +193,8 @@ public:
 
         // ExeStage
         init(ExeStage, SupRenameCnt, "times of superscalar correct path rename");
+        init(ExeStage, SpecNoneCycles, "Cycles of none speculate");
+        init(ExeStage, SpecNonMemCycles, "Cycles of non-mem speculate");
         init(ExeStage, ExeRedirectBr, "Exe stage redirect branch num");
         init(ExeStage, ExeRedirectJr, "Exe stage redirect jump reg num");
         init(ExeStage, ExeRedirectOther, "Exe stage redirect other num");
