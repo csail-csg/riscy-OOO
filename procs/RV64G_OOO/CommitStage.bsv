@@ -167,6 +167,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Count#(Data) flushTlbCnt <- mkCount(0);
     // flush security
     Count#(Data) flushSecurityCnt <- mkCount(0);
+    Count#(Data) flushBPCnt <- mkCount(0);
+    Count#(Data) flushCacheCnt <- mkCount(0);
 `endif
 
     // deadlock check
@@ -251,7 +253,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 `ifndef SECURITY
         flushSecurity = False;
 `endif
+
+`ifndef DISABLE_SECURE_FLUSH_TLB
         if(flushTlb || flushSecurity) begin
+`else
+        if(flushTlb) begin
+`endif
             inIfc.setFlushTlbs;
 `ifdef PERF_COUNT
             if(inIfc.doStats) begin
@@ -275,17 +282,34 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         when(inIfc.tlbNoPendingReq, noAction);
         // yield load reservation in cache
         inIfc.setFlushReservation;
+
         // flush for security, we can delay the stall for fetch-empty and
         // wrong-path-load-empty until we really do the flush. This delay is
         // valid because these wrong path inst/req will not interfere with
         // whatever CSR changes we are making now.
         if(flushSecurity) begin
-            inIfc.setFlushBrPred;
-            inIfc.setFlushCaches;
 `ifdef PERF_COUNT
             if(inIfc.doStats) begin
                 flushSecurityCnt.incr(1);
             end
+`endif
+
+`ifndef DISABLE_SECURE_FLUSH_BP
+            inIfc.setFlushBrPred;
+`ifdef PERF_COUNT
+            if(inIfc.doStats) begin
+                flushBPCnt.incr(1);
+            end
+`endif
+`endif
+
+`ifndef DISABLE_SECURE_FLUSH_CACHE
+            inIfc.setFlushCaches;
+`ifdef PERF_COUNT
+            if(inIfc.doStats) begin
+                flushCacheCnt.incr(1);
+            end
+`endif
 `endif
         end
     endaction
@@ -683,6 +707,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             InterruptCnt: interruptCnt;
             FlushTlbCnt: flushTlbCnt;
             FlushSecurityCnt: flushSecurityCnt;
+            FlushBPCnt: flushBPCnt;
+            FlushCacheCnt: flushCacheCnt;
 `endif
             default: 0;
         endcase);

@@ -141,7 +141,9 @@ typedef enum {
     ExcepCnt,
     InterruptCnt,
     FlushTlbCnt,
-    FlushSecurityCnt
+    FlushSecurityCnt,
+    FlushBPCnt,
+    FlushCacheCnt
 } ComStagePerfType deriving(Bits, Eq, FShow);
 
 // PerfReq = XXPerfType
