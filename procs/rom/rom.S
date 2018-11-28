@@ -19,6 +19,7 @@ ipi_handler:
     slli t1, t1, 2
     add t0, t0, t1
     sw x0, 0(t0)
+    fence.i
     fence # make sure the store has been performed
     # reset mtvec, mstatus, mie
     csrw mtvec, x0
