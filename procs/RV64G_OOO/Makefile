@@ -68,6 +68,10 @@ BUILD_DIR := $(BUILD_DIR).weak
 endif
 ifeq ($(SECURITY),true)
 BUILD_DIR := $(BUILD_DIR).security
+else ifeq ($(SECURE_LLC),true)
+BUILD_DIR := $(BUILD_DIR).secure_llc
+else ifeq ($(SECURE_FLUSH),true)
+BUILD_DIR := $(BUILD_DIR).secure_flush
 endif
 ifeq ($(CHECK_DEADLOCK),true)
 BUILD_DIR := $(BUILD_DIR).check_deadlock

@@ -80,6 +80,11 @@
 `define DRAM_MAX_REQS 24
 `define DRAM_LATENCY 120 // model a constant dram latency
 
+`ifdef SECURITY
+`define LOG_DRAM_REGION_NUM 6 // 64 DRAM regions
+`define LOG_DRAM_REGION_SIZE 25 // 32MB for each DRAM region
+`endif
+
 //
 // ==== CACHE SIZE ====
 //

@@ -92,6 +92,28 @@ interface LLCache;
     interface Perf#(LLCPerfType) perf;
 endinterface
 
+`ifdef SECURITY
+// We rotate the addr in/out LLC to achieve set partition
+typedef `LOG_DRAM_REGION_NUM LgDramRegionNum;
+typedef `LOG_DRAM_REGION_SIZE LgDramRegionSz;
+typedef TAdd#(TAdd#(LLIndexSz, LgLLBankNum), LgLineSzBytes) LLIndexBankOffsetSz;
+
+function Addr secureRotateAddr(Addr addr);
+    // low bits: index + bank id + line offset without region
+    Bit#(TSub#(LLIndexBankOffsetSz, LgDramRegionNum)) low = truncate(addr);
+    // swap bits: to be swapped with dram region
+    Bit#(LgDramRegionNum) swap = truncate(addr >> (valueof(LLIndexBankOffsetSz) - valueof(LgDramRegionNum)));
+    // middle bits between swap and region
+    Bit#(TSub#(LgDramRegionSz, LLIndexBankOffsetSz)) mid = truncate(addr >> valueof(LLIndexBankOffsetSz));
+    // dram region
+    Bit#(LgDramRegionNum) region = truncate(addr >> valueof(LgDramRegionSz));
+    // high bits beyond phy mem boundary
+    Bit#(TSub#(AddrSz, TAdd#(LgDramRegionNum, LgDramRegionSz))) high = truncateLSB(addr);
+    // exchange swap bits with region bits
+    return {high, swap, mid, region, low};
+endfunction
+`endif
+
 (* synthesize *)
 module mkLLCache(LLCache);
 `ifdef DEBUG_DMA
@@ -115,10 +137,109 @@ module mkLLCache(LLCache);
     endrule
 `endif
 
+`ifdef SECURITY
+`ifndef DISABLE_SECURE_LLC
+
+    // rotate addr to achieve LLC set partition
+    interface ParentCacheToChild to_child;
+        interface FifoEnq rsFromC;
+            method notFull = cache.to_child.rsFromC.notFull;
+            method Action enq(CRsMsg#(LLChild) x);
+                let y = x;
+                y.addr = secureRotate(x.addr);
+                cache.to_child.rsFromC.enq(y);
+            endmethod
+        endinterface
+        interface FifoEnq rqFromC;
+            method notFull = cache.to_child.rqFromC.notFull;
+            method Action enq(CRqMsg#(LLCRqId, LLChild) x);
+                let y = x;
+                y.addr = secureRotate(x.addr);
+                cache.to_child.rqFromC.enq(y);
+            endmethod
+        endinterface
+        interface FifoDeq toC;
+            method notEmpty = cache.to_child.toC.notEmpty;
+            method deq = cache.to_child.toC.deq;
+            method PRqRsMsg#(LLCRqId, LLChild) first;
+                case(cache.to_child.toC.first) matches
+                    tagged PRq .x: begin
+                        let y = x;
+                        y.addr = secureRotate(x.addr);
+                        return PRq (y);
+                    end
+                    tagged PRs .x: begin
+                        let y = x;
+                        y.addr = secureRotate(x.addr);
+                        return PRs (y);
+                    end
+                    default: return ?;
+                endcase
+            endmethod
+        endinterface
+    endinterface
+
+    interface DmaServer dma;
+        interface FifoEnq memReq;
+            method notFull = cache.dma.memReq.notFull;
+            method Action enq(DmaRq#(LLCDmaReqId) x);
+                let y = x;
+                y.addr = secureRotateAddr(x.addr);
+                cache.dma.memReq.enq(y);
+            endmethod
+        endinterface
+        interface respLd = cache.dma.respLd;
+        interface respSt = cache.dma.respSt;
+    endinterface
+
+    interface MemFifoClient to_mem;
+        interface FifoDeq toM;
+            method notEmpty = cache.to_mem.toM.notEmpty;
+            method deq = cache.to_mem.toM.deq;
+            method ToMemMsg#(LdMemRqId#(LLCRqMshrIdx), void) first;
+                case(cache.to_mem.toM.first) matches
+                    tagged Ld .x: begin
+                        let y = x;
+                        y.addr = secureRotate(x.addr);
+                        return Ld (y);
+                    end
+                    tagged Wb .x: begin
+                        let y = x;
+                        y.addr = secureRotate(x.addr);
+                        return Wb (y);
+                    end
+                    default: return ?;
+                endcase
+            endmethod
+        endinterface
+        interface rsFromM = cache.to_mem.rsFromM;
+    endinterface
+
+    interface Get cRqStuck
+        method ActionValue#(LLCStuck) get;
+            let x <- cache.cRqStuck.get;
+            let y = x;
+            y.addr = secureRotateAddr(x.addr);
+            return y;
+        endmethod
+    endinterface
+
+`else // DISABLE_SECURE_LLC
+
     interface to_child = cache.to_child;
     interface dma = cache.dma;
     interface to_mem = cache.to_mem;
     interface cRqStuck = cache.cRqStuck;
+
+`endif // DISABLE_SECURE_LLC
+`else // SECURITY
+
+    interface to_child = cache.to_child;
+    interface dma = cache.dma;
+    interface to_mem = cache.to_mem;
+    interface cRqStuck = cache.cRqStuck;
+
+`endif // SECURITY
 
     interface Perf perf;
         method Action setStatus(Bool stats);
