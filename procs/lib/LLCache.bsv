@@ -146,7 +146,7 @@ module mkLLCache(LLCache);
             method notFull = cache.to_child.rsFromC.notFull;
             method Action enq(CRsMsg#(LLChild) x);
                 let y = x;
-                y.addr = secureRotate(x.addr);
+                y.addr = secureRotateAddr(x.addr);
                 cache.to_child.rsFromC.enq(y);
             endmethod
         endinterface
@@ -154,7 +154,7 @@ module mkLLCache(LLCache);
             method notFull = cache.to_child.rqFromC.notFull;
             method Action enq(CRqMsg#(LLCRqId, LLChild) x);
                 let y = x;
-                y.addr = secureRotate(x.addr);
+                y.addr = secureRotateAddr(x.addr);
                 cache.to_child.rqFromC.enq(y);
             endmethod
         endinterface
@@ -165,12 +165,12 @@ module mkLLCache(LLCache);
                 case(cache.to_child.toC.first) matches
                     tagged PRq .x: begin
                         let y = x;
-                        y.addr = secureRotate(x.addr);
+                        y.addr = secureRotateAddr(x.addr);
                         return PRq (y);
                     end
                     tagged PRs .x: begin
                         let y = x;
-                        y.addr = secureRotate(x.addr);
+                        y.addr = secureRotateAddr(x.addr);
                         return PRs (y);
                     end
                     default: return ?;
@@ -200,12 +200,12 @@ module mkLLCache(LLCache);
                 case(cache.to_mem.toM.first) matches
                     tagged Ld .x: begin
                         let y = x;
-                        y.addr = secureRotate(x.addr);
+                        y.addr = secureRotateAddr(x.addr);
                         return Ld (y);
                     end
                     tagged Wb .x: begin
                         let y = x;
-                        y.addr = secureRotate(x.addr);
+                        y.addr = secureRotateAddr(x.addr);
                         return Wb (y);
                     end
                     default: return ?;
@@ -215,7 +215,7 @@ module mkLLCache(LLCache);
         interface rsFromM = cache.to_mem.rsFromM;
     endinterface
 
-    interface Get cRqStuck
+    interface Get cRqStuck;
         method ActionValue#(LLCStuck) get;
             let x <- cache.cRqStuck.get;
             let y = x;
