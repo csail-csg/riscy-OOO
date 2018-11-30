@@ -410,6 +410,19 @@ module mkDTlb#(
 
         // try to translate
         TlbReq r = getTlbReq(req.inst);
+        `ifdef SECURITY
+        // Forbid any data load shared outside of the protection domain
+        // if shared load are not allowed
+        // No need to special case M mode with special vm_info value because we assume that we allow shared
+        // load all the time when in M mode. (Because we are non speculative)
+        if (!vm_info.sanctum_authShared && outOfProtectionDomain(vm_info,getTlbReq(req.inst).addr))begin
+            pendWait[idx] <= None;
+            pendResp[idx] <= tuple2(?, Valid (LoadAccessFault));
+        end
+        else
+        `endif
+
+        begin
         if (vm_info.sv39) begin
             let vpn = getVpn(r.addr);
             let trans_result = tlb.translate(vpn, vm_info.asid);
@@ -497,6 +510,7 @@ module mkDTlb#(
         end
 `endif
 
+        end
         // conflict with wrong spec
         wrongSpec_procReq_conflict.wset(?);
     endmethod

@@ -753,7 +753,8 @@ module mkCsrFile#(Data hartid)(CsrFile);
             sanctum_parbase:    mparbase_csr,
             sanctum_parmask:    mparmask_csr,
             sanctum_eparbase:   meparbase_csr,
-            sanctum_eparmask:   meparmask_csr
+            sanctum_eparmask:   meparmask_csr,
+            sanctum_authShared: (mspec_csr!=0)
 `endif
         };
     endmethod
@@ -777,7 +778,8 @@ module mkCsrFile#(Data hartid)(CsrFile);
             sanctum_parbase:    mparbase_csr,
             sanctum_parmask:    mparmask_csr,
             sanctum_eparbase:   meparbase_csr,
-            sanctum_eparmask:   meparmask_csr
+            sanctum_eparmask:   meparmask_csr,
+            sanctum_authShared: (mspec_csr!=0)
 `endif
         };
     endmethod
