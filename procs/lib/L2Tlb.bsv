@@ -157,6 +157,9 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Vector#(L2TlbReqNum, Ehr#(2, L2TlbWait)) pendWait <- replicateM(mkEhr(None));
     Vector#(L2TlbReqNum, Reg#(PageWalkLevel)) pendWalkLevel <- replicateM(mkRegU);
     Vector#(L2TlbReqNum, Reg#(Addr)) pendWalkAddr <- replicateM(mkRegU);
+`ifdef SECURITY
+    Vector#(L2TlbReqNum, Reg#(Bool)) pendEnclave <- replicateM(mkRegU);
+`endif
 
     // rule ordering:
     // - trans cache resp < tlb resp < tlb req
@@ -440,14 +443,28 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         let resp = transCache.resp;
         // start page walk based on the translation cache resp. Note that if
         // the startLevel in resp is max, then we should use the base ppn in vm
-        // info
+        // info.
+        // XXX We believe the PPN stored in translation cache has been
+        // sanitized before, so we don't need to check again if the PPN is an
+        // enclave PPN or not. (This should follow the same reasoning that TLB
+        // hits do not need checks.)
         VMInfo vm_info = cRq.child == I ? vm_info_I : vm_info_D;
         PageWalkLevel level = resp.startLevel;
-        Addr baseAddr = getPTBaseAddr(level < maxPageWalkLevel ? resp.ppn : vm_info.basePPN);
+        Ppn rootPPN = vm_info.basePPN; // root of page table
+`ifdef SECURITY
+        Bool isEnclave = (zeroExtend(cRq.vpn) & vm_info.sanctum_evmask) == vm_info.sanctum_evbase;
+        if(isEnclave) begin
+            rootPPN = vm_info.sanctum_ebasePPN; // enclave has its own root of page table
+        end
+`endif
+        Addr baseAddr = getPTBaseAddr(level < maxPageWalkLevel ? resp.ppn : rootPPN);
         Addr pteAddr = getPTEAddr(baseAddr, cRq.vpn, level);
         // record page walk info
         pendWalkLevel[idx] <= level;
         pendWalkAddr[idx] <= pteAddr;
+`ifdef SECURITY
+        pendEnclave[idx] <= isEnclave;
+`endif
         doAssert(pendWait_transCacheResp[idx] == None, "cannot be waiting");
         // don't req memory if someone else is also doing the same page walk.
         if(otherReqSamePTE(idx, pteAddr, readVReg(pendWait_transCacheResp)) matches tagged Valid .i) begin
@@ -545,6 +562,17 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         pendWalkLevel[idx] <= newWalkLevel;
         pendWalkAddr[idx] <= newPTEAddr;
 
+        // reach leaf PTE
+        Bool leafPTE = isLeafPTE(pte.pteType);
+
+`ifdef SECURITY
+        // base/bound/mask to enforce that page walk does not cross enclave
+        // boundary
+        Addr parbase = pendEnclave[idx] ? vm_info.sanctum_eparbase : vm_info.sanctum_parbase;
+        Addr parmask = pendEnclave[idx] ? vm_info.sanctum_eparmask : vm_info.sanctum_parmask;
+        Addr mrbm    = pendEnclave[idx] ? vm_info.sanctum_emrbm    : vm_info.sanctum_mrbm;
+`endif
+
         if(verbose) begin
             $display("L2TLB page walk: ", fshow(vm_info), " ; ",
                      fshow(idx), " ; ", fshow(cRq), " ; ",
@@ -559,9 +587,20 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // invalid pte -> fault
             pageFault("invalid page");
         end
+`ifdef SECURITY
+        // TODO: raise page fault or access fault?
+        else if((newPTBase & parmask) == parbase) begin
+            // access falls into protected address range (that I don't have permission) -> fault
+            pageFault("SANCTUM protected address range");
+        end
+        else if((getAddrRegions(newPTBase, leafPTE, walkLevel) & mrbm) == 0) begin
+            // access falls outiside regions belong to me -> fault
+            pageFault("SANCTUM protected address range");
+        end
+`endif
         else begin
             // page is valid, check leaf or not
-            if(!isLeafPTE(pte.pteType)) begin
+            if(!leafPTE) begin
                 // non-leaf page
                 if(walkLevel == 0) begin
                     // page walk end with non-leaf page -> fault

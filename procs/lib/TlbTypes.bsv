@@ -92,6 +92,21 @@ function Addr getPTBaseAddr(Ppn basePpn);
     return zeroExtend({basePpn, offset});
 endfunction
 
+`ifdef SECURITY
+// get the bitmask for accessed DRAM regions
+// FIXME This code assumes 64 x 32MB regions
+function Addr getAddrRegions(Addr addr, Bool isLeaf, PageWalkLevel level) provisos (
+    Add#(0, 6, `LOG_DRAM_REGION_NUM), // 6 regions
+    Add#(0, 25, `LOG_DRAM_REGION_SIZE) // 25 regions
+);
+    Addr res = (1 << (addr[30:25]));
+    if (isLeaf && (level == 2)) begin // giga pages cross multiple regions
+        res = ((addr[30] == 1'b1) ? 64'hFFFFFFFF00000000 : 64'h00000000FFFFFFFF); // Assume 64 x 32-MB regions
+    end
+    return res;
+endfunction
+`endif
+
 function Addr getPTEAddr(Addr baseAddr, Vpn vpn, PageWalkLevel level);
     Vector#(NumPageWalkLevels, VpnIdx) vpnVec = unpack(vpn); // index 0 is LSB
     return baseAddr + (zeroExtend(vpnVec[level]) << 3); // PTE is 2^3 bytes
