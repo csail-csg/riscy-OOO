@@ -502,19 +502,13 @@ typedef struct {
     Bit#(64) sanctum_parmask;
     Bit#(64) sanctum_eparbase;
     Bit#(64) sanctum_eparmask;
+    // whether an access on shared (i.e., not in my own private protation
+    // domain) memory is allowed. This should not be allowed if speculation is
+    // turned on.
     Bool sanctum_authShared;
 `endif
 } VMInfo deriving(Bits, Eq, FShow);
 
-`ifdef SECURITY
-function Bool outOfProtectionDomain(VMInfo vm_info, Addr vaddr);
-    //Default value for when the program requiring the translation is not protected
-    if (vm_info.sanctum_evbase == 1 && vm_info.sanctum_evmask == 0) return False;
-    // If it is protected, then the size of the protection domain is a power of
-    // 2 starting at sanctum_evbase
-    else return ((vaddr & vm_info.sanctum_evmask) != vm_info.sanctum_evbase );
-endfunction
-`endif
 instance DefaultValue#(VMInfo);
     function VMInfo defaultValue = VMInfo {
         prv:  prvM,
@@ -524,12 +518,12 @@ instance DefaultValue#(VMInfo);
         userAccessibleByS: False,
         basePPN: 0
 `ifdef SECURITY
-        , sanctum_evbase:   1,
+        , sanctum_evbase:   maxBound,
         sanctum_evmask:     0,
         sanctum_ebasePPN:   0,
-        sanctum_mrbm:       -1,
+        sanctum_mrbm:       maxBound,
         sanctum_emrbm:      0,
-        sanctum_parbase:    1,
+        sanctum_parbase:    maxBound,
         sanctum_parmask:    0,
         sanctum_eparbase:   0,
         sanctum_eparmask:   0,

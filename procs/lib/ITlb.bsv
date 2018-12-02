@@ -235,31 +235,32 @@ module mkITlb(ITlb::ITlb);
             method Action put(Addr vaddr) if(
                 !needFlush && !isValid(miss) && hitQ.notFull && rqToPQ.notFull
             );
-                `ifdef SECURITY
+`ifdef SECURITY
+                // Security Check
                 // For non M-mode forbid translating any virtual pc outside of
                 // the protection domain. Be careful, in M mode we don't take
                 // into account the same vm_info: changing the evbase and
                 // evmask in M in en security monitor would lead to failure
                 // before we have a chance to go back to U: while in M mode
-                // sanctum_evbase is morally from an other set of CSR, which is constant
-                // and hardcoded in our implementation.
+                // sanctum_evbase is morally from an other set of CSR, which is
+                // constant and hardcoded in our implementation.
 
                 // TODO TODO TODO TODO WARNING DANGER NO SECURITY HERE we need
                 // to replace sanctum_evbase and evmask with the actual fixed
                 // SM region
                 VMInfo mvm_info = vm_info;
-                mvm_info.sanctum_evbase=1;
-                mvm_info.sanctum_evmask=0;
-                if ((vm_info.prv != prvM && outOfProtectionDomain(vm_info, vaddr)) ||
-                   (vm_info.prv == prvM &&
-                      outOfProtectionDomain(mvm_info, vaddr)))
-                begin
+                mvm_info.sanctum_evbase = maxBound;
+                mvm_info.sanctum_evmask = 0;
+                if (outOfProtectionDomain(vm_info.prv == prvM ? mvm_info : vm_info, vaddr)) begin
                     hitQ.enq(tuple2(?, Valid (InstAccessFault)));
                 end
-                else
-                `endif
-                begin //Begin entire action in case the security check passed
-                if (vm_info.sv39) begin
+`else
+                // No security check
+                if (False) begin
+                    noAction;
+                end
+`endif
+                else if (vm_info.sv39) begin
                     let vpn = getVpn(vaddr);
                     let trans_result = tlb.translate(vpn, vm_info.asid);
                     if (trans_result.hit) begin
@@ -312,12 +313,12 @@ module mkITlb(ITlb::ITlb);
                     hitQ.enq(tuple2(vaddr, Invalid));
                     if (verbose) $display("ITLB %m req (bare): ", fshow(vaddr));
                 end
+
 `ifdef PERF_COUNT
                 if(doStats) begin
                     accessCnt.incr(1);
                 end
 `endif
-                end //End entire action in case security passed
             endmethod
         endinterface
         interface Get response = toGet(hitQ);

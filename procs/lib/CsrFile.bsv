@@ -494,7 +494,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     // ( defines a virtual region for which enclave page tables are used in
     //   place of OS-controlled page tables)
     // (machine-mode non-standard read/write)
-    Reg#(Data) mevbase_csr <- mkCsrReg(-1); // impossible base & mask,
+    Reg#(Data) mevbase_csr <- mkCsrReg(maxBound); // impossible base & mask,
     Reg#(Data) mevmask_csr <- mkCsrReg(0);  // so no enclave accesses are possible
 
     // ### Enclave page table base
@@ -510,7 +510,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     // ( white-lists the DRAM regions the core is allowed to access via OS and
     //   enclave virtual addresses)
     // (machine-mode non-standard read/write)
-    Reg#(Data) mmrbm_csr <- mkCsrReg(-1);
+    Reg#(Data) mmrbm_csr <- mkCsrReg(maxBound);
     Reg#(Data) memrbm_csr <- mkCsrReg(0);
 
     // ### Protected region base and mask
@@ -518,7 +518,7 @@ module mkCsrFile#(Data hartid)(CsrFile);
     // ( these are used to prevent address translation into a specific range of
     //   physical addresses, for example to protect the security monitor from all software)
     // (machine-mode non-standard read/write)
-    Reg#(Data) mparbase_csr <- mkCsrReg(-1);
+    Reg#(Data) mparbase_csr <- mkCsrReg(maxBound);
     Reg#(Data) mparmask_csr <- mkCsrReg(0);
     Reg#(Data) meparbase_csr <- mkCsrReg(0);
     Reg#(Data) meparmask_csr <- mkCsrReg(0);
@@ -754,7 +754,9 @@ module mkCsrFile#(Data hartid)(CsrFile);
             sanctum_parmask:    mparmask_csr,
             sanctum_eparbase:   meparbase_csr,
             sanctum_eparmask:   meparmask_csr,
-            sanctum_authShared: (mspec_csr!=0)
+            // enclave / security monitor should never execute instructions
+            // from untrusted shared region
+            sanctum_authShared: False
 `endif
         };
     endmethod
@@ -779,7 +781,13 @@ module mkCsrFile#(Data hartid)(CsrFile);
             sanctum_parmask:    mparmask_csr,
             sanctum_eparbase:   meparbase_csr,
             sanctum_eparmask:   meparmask_csr,
-            sanctum_authShared: (mspec_csr!=0)
+            // enclave / security monitor can read/write untrusted shared
+            // region when speculation is off (either by mspec CSR or in M
+            // mode)
+            // XXX Because of the effects of mprv, we have to use prv_reg here
+            // instead of prv. Otherwise, we may be in M mode, but prv=S, and
+            // still forbid shared accesses
+            sanctum_authShared: mspec_reg != mSpecAll || prv_reg == prvM
 `endif
         };
     endmethod

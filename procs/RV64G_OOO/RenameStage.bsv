@@ -296,9 +296,11 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     endfunction
 
 `ifdef SECURITY
-    // speculation control
-    Bool specNone = csrf.rd(CSRmspec) == zeroExtend(mSpecNone);
-    Bool specNonMem = csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
+    // speculation control: always turn off speculation in M mode; otherwise
+    // controlled by mspec CSR
+    Bool machineMode = csrf.decodeInfo.prv == prvM;
+    Bool specNone = machineMode || csrf.rd(CSRmspec) == zeroExtend(mSpecNone);
+    Bool specNonMem = !machineMode && csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
 
     //rule checkSpecNone(specNone);
     //    $fdisplay(stderr, "RENAME SPECULATION STOPS!!");

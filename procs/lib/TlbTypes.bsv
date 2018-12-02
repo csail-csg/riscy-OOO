@@ -93,6 +93,17 @@ function Addr getPTBaseAddr(Ppn basePpn);
 endfunction
 
 `ifdef SECURITY
+// Check if an access from enclave or security monitor is out of its protection
+// domain. This should always return false for normal program or OS, becuase in
+// vminfo of OS/normal program, evbase = 0xfff...fff and evmask = 0
+function Bool outOfProtectionDomain(VMInfo vm_info, Addr vaddr);
+    // Default value for when the program requiring the translation is not protected
+    if (vm_info.sanctum_evbase == maxBound && vm_info.sanctum_evmask == 0) return False;
+    // If it is protected, then the size of the protection domain is a power of
+    // 2 starting at sanctum_evbase
+    else return ((vaddr & vm_info.sanctum_evmask) != vm_info.sanctum_evbase );
+endfunction
+
 // get the bitmask for accessed DRAM regions
 // FIXME This code assumes 64 x 32MB regions
 function Addr getAddrRegions(Addr addr, Bool isLeaf, PageWalkLevel level) provisos (

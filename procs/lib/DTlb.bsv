@@ -410,20 +410,25 @@ module mkDTlb#(
 
         // try to translate
         TlbReq r = getTlbReq(req.inst);
-        `ifdef SECURITY
+
+`ifdef SECURITY
+        // Security check
         // Forbid any data load shared outside of the protection domain
         // if shared load are not allowed
-        // No need to special case M mode with special vm_info value because we assume that we allow shared
-        // load all the time when in M mode. (Because we are non speculative)
-        if (!vm_info.sanctum_authShared && outOfProtectionDomain(vm_info,getTlbReq(req.inst).addr))begin
+        // No need to special case M mode with special vm_info value because we
+        // assume that we allow shared load all the time when in M mode.
+        // (Because we are always non speculative in M mode)
+        if (!vm_info.sanctum_authShared && outOfProtectionDomain(vm_info, r.addr))begin
             pendWait[idx] <= None;
             pendResp[idx] <= tuple2(?, Valid (LoadAccessFault));
         end
-        else
-        `endif
-
-        begin
-        if (vm_info.sv39) begin
+`else
+        // No security check
+        if (False) begin
+            noAction;
+        end
+`endif
+        else if (vm_info.sv39) begin
             let vpn = getVpn(r.addr);
             let trans_result = tlb.translate(vpn, vm_info.asid);
             if (trans_result.hit) begin
@@ -503,14 +508,13 @@ module mkDTlb#(
             pendResp[idx] <= tuple2(r.addr, Invalid);
             if(verbose) $display("DTLB %m req (bare): ", fshow(r));
         end
+
 `ifdef PERF_COUNT
         // perf: access
         if(doStats) begin
             accessCnt.incr(1);
         end
 `endif
-
-        end
         // conflict with wrong spec
         wrongSpec_procReq_conflict.wset(?);
     endmethod
