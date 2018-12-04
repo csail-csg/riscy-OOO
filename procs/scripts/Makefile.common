@@ -123,7 +123,7 @@ CONNECTALFLAGS += --verilog $(PROC_DIR)/verilog
 endif
 
 # simulate the effect of set-partition of LLC
-ifneq ($(SIM_LOG_LLC_PARTITION_NUM,)
+ifneq ($(SIM_LOG_LLC_PARTITION_NUM),)
 CONNECTALFLAGS += --bscflags=" -D SIM_LOG_LLC_PARTITION_NUM=$(SIM_LOG_LLC_PARTITION_NUM) "
 endif
 

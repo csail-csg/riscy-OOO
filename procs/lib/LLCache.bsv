@@ -152,6 +152,15 @@ module mkLLCache(LLCache);
 `ifdef SECURITY
 `ifndef DISABLE_SECURE_LLC
 
+`ifdef BSIM
+    // print the LLC partition in simulation
+    Reg#(Bool) showLLCPartition <- mkReg(True);
+    rule doShowLLCPartition(showLLCPartition);
+        $fdisplay(stderr, "[LLCache] log LLC partition = %d", valueof(LgLLCPartitionNum));
+        showLLCPartition <= False;
+    endrule
+`endif
+
     // rotate addr to achieve LLC set partition
     interface ParentCacheToChild to_child;
         interface FifoEnq rsFromC;
