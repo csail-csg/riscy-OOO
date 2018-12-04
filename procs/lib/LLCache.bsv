@@ -94,21 +94,33 @@ endinterface
 
 `ifdef SECURITY
 // We rotate the addr in/out LLC to achieve set partition
-typedef `LOG_DRAM_REGION_NUM LgDramRegionNum;
+// FIXME This is a hack: we simulate the performance of partitioning a large
+// LLC using a smaller LLC with less partitions. So LgLLCPartitionNum should
+// NOT be viewed as the number of DRAM regions.
+`ifdef SIM_LOG_LLC_PARTITION_NUM
+typedef `SIM_LOG_LLC_PARTITION_NUM LgLLCPartitionNum;
+`else
+typedef `LOG_DRAM_REGION_NUM LgLLCPartitionNum;
+`endif
 typedef `LOG_DRAM_REGION_SIZE LgDramRegionSz;
 typedef TAdd#(TAdd#(LLIndexSz, LgLLBankNum), LgLineSzBytes) LLIndexBankOffsetSz;
 
-function Addr secureRotateAddr(Addr addr);
-    // low bits: index + bank id + line offset without region
-    Bit#(TSub#(LLIndexBankOffsetSz, LgDramRegionNum)) low = truncate(addr);
-    // swap bits: to be swapped with dram region
-    Bit#(LgDramRegionNum) swap = truncate(addr >> (valueof(LLIndexBankOffsetSz) - valueof(LgDramRegionNum)));
+function Addr secureRotateAddr(Addr addr) provisos(
+    // region/partition id cannot be wider than index + bank id
+    Add#(LgLLCPartitionNum, a__, TAdd#(LLIndexSz, LgLLBankNum))
+);
+    // low bits: index + bank id + line offset without the higher bits which
+    // will be replaced by region/partition id
+    Bit#(TSub#(LLIndexBankOffsetSz, LgLLCPartitionNum)) low = truncate(addr);
+    // swap bits: higher bits of index + bank id to be swapped with region/partition
+    // id
+    Bit#(LgLLCPartitionNum) swap = truncate(addr >> (valueof(LLIndexBankOffsetSz) - valueof(LgLLCPartitionNum)));
     // middle bits between swap and region
     Bit#(TSub#(LgDramRegionSz, LLIndexBankOffsetSz)) mid = truncate(addr >> valueof(LLIndexBankOffsetSz));
-    // dram region
-    Bit#(LgDramRegionNum) region = truncate(addr >> valueof(LgDramRegionSz));
+    // region/partition id
+    Bit#(LgLLCPartitionNum) region = truncate(addr >> valueof(LgDramRegionSz));
     // high bits beyond phy mem boundary
-    Bit#(TSub#(AddrSz, TAdd#(LgDramRegionNum, LgDramRegionSz))) high = truncateLSB(addr);
+    Bit#(TSub#(AddrSz, TAdd#(LgLLCPartitionNum, LgDramRegionSz))) high = truncateLSB(addr);
     // exchange swap bits with region bits
     return {high, swap, mid, region, low};
 endfunction

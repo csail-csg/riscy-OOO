@@ -39,7 +39,10 @@ CORE_NUM ?= 1
 # TSO or WEAK
 TSO_MM ?= false
 # security
-SECURITY := false
+SECURITY ?= false
+SECURE_LLC ?= false
+SECURE_FLUSH ?= false
+SIM_LOG_LLC_PARTITION_NUM ?=
 # default check cache deadlock and rename error
 CHECK_DEADLOCK ?= true
 RENAME_DEBUG ?= true
