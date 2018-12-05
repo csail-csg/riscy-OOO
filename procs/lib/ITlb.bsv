@@ -248,10 +248,13 @@ module mkITlb(ITlb::ITlb);
                 // TODO TODO TODO TODO WARNING DANGER NO SECURITY HERE we need
                 // to replace sanctum_evbase and evmask with the actual fixed
                 // SM region
-                VMInfo mvm_info = vm_info;
-                mvm_info.sanctum_evbase = maxBound;
-                mvm_info.sanctum_evmask = 0;
-                if (outOfProtectionDomain(vm_info.prv == prvM ? mvm_info : vm_info, vaddr)) begin
+                VMInfo parvm_info = vm_info;
+                VMInfo eparvm_info = vm_info;
+                parvm_info.sanctum_evbase = maxBound;
+                parvm_info.sanctum_evmask = 0;
+                eparvm_info.sanctum_evbase = maxBound;
+                eparvm_info.sanctum_evmask = 0;
+                if ((vm_info.prv == prvM ? (outOfProtectionDomain(parvm_info,vaddr) && outOfProtectionDomain(eparvm_info,vaddr)) : outOfProtectionDomain(vm_info, vaddr))) begin
                     hitQ.enq(tuple2(?, Valid (InstAccessFault)));
                 end
 `else
