@@ -1,8 +1,14 @@
 
-SIZE ?= SMALL
+SIZE ?= MEDIUM
+SECURITY ?= false
 
-BUILD_DIR = ./build_$(SIZE)
-VERILOG_DIR = ./verilog_$(SIZE)
+BUILD_DIR := ./build_$(SIZE)
+VERILOG_DIR := ./verilog_$(SIZE)
+
+ifeq ($(SECURITY),true)
+BUILD_DIR := $(BUILD_DIR)_security
+VERILOG_DIR := $(VERILOG_DIR)_security
+endif
 
 EXT_PATH = -p +:$(RISCY_HOME)/procs/lib \
 		   -p +:$(RISCY_HOME)/procs/RV64G_OOO \
@@ -18,6 +24,11 @@ BSV_DEF = -D CORE_$(SIZE) \
 		  -D XILINX_INT_MUL_LATENCY=2
 # use Xilinx FPU so we can override FPU
 BSV_DEF += -D USE_XILINX_FPU
+
+# security
+ifeq ($(SECURITY),true)
+BSV_DEF += -D SECURITY
+endif
 
 all:
 	mkdir -p $(BUILD_DIR)
