@@ -274,7 +274,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     function Action printRename(Integer i,
                                 RegsReady regs_ready_cons,
                                 RegsReady regs_ready_aggr,
-                                ArchReegs arch_regs,
+                                ArchRegs arch_regs,
                                 PhyRegs phy_regs);
     action
         $display("  [doRenaming - %d] regs_ready: cons ", i, fshow(regs_ready_cons), " ; aggr ", fshow(regs_ready_aggr));
@@ -314,7 +314,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     endfunction
 
     // check for system inst that needs to replay
-    Bool firstReplay = doReplay(fetchStage.pipelines[0].first.dInst);
+    Bool firstReplay = doReplay(fetchStage.pipelines[0].first.dInst.iType);
 
     // System inst is renamed only when ROB is empty
     rule doRenaming_SystemInst(
@@ -371,8 +371,10 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
             doAssert(dInst.iType == Csr, "only CSR inst send to exe");
         end
         else begin
-            doAssert(dInst.iType == Fence || dInst.iType == SFence,
-                     dInst.iType == Sret || dInst.iType == Mret,
+            doAssert(dInst.iType == Fence ||
+                     dInst.iType == SFence ||
+                     dInst.iType == Sret ||
+                     dInst.iType == Mret,
                      "non-CSR inst not send to exe");
             doAssert(dInst.execFunc == tagged Other,
                      "non-exe inst exec func is other");
@@ -385,7 +387,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                 regs: phy_regs,
                 tag: inst_tag,
                 spec_bits: spec_bits,
-                spec_tag: spec_tag,
+                spec_tag: Invalid,
                 regs_ready: regs_ready_aggr // alu will recv bypass
             });
         end
@@ -429,11 +431,12 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     endrule
 
 `ifdef SECURITY
-    // speculation control: always turn off speculation in M mode; otherwise
-    // controlled by mspec CSR
+    // speculation control:
+    // M mode: turn off speculation for mem inst only
+    // non-M mode: controlled by mspec CSR
     Bool machineMode = csrf.decodeInfo.prv == prvM;
-    Bool specNone = machineMode || csrf.rd(CSRmspec) == zeroExtend(mSpecNone);
-    Bool specNonMem = !machineMode && csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
+    Bool specNone = !machineMode && csrf.rd(CSRmspec) == zeroExtend(mSpecNone);
+    Bool specNonMem = machineMode || csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
 
 `ifdef PERF_COUNT
     rule incSpecNoneCycles(inIfc.doStats && specNone);
@@ -445,7 +448,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 `endif
 
     // first inst is mem inst
-    function isMemInst(ExecFunc f);
+    function Bool isMemInst(ExecFunc f);
         return f matches tagged Mem .m ? True : False;
     endfunction
     Bool firstMem = isMemInst(fetchStage.pipelines[0].first.dInst.execFunc);
@@ -518,13 +521,12 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                     regs: phy_regs,
                     tag: inst_tag,
                     spec_bits: spec_bits,
-                    spec_tag: spec_tag,
+                    spec_tag: Invalid,
                     regs_ready: regs_ready_aggr // mem currently recv bypass
                 });
                 doAssert(ppc == pc + 4, "Mem next PC is not PC+4");
                 doAssert(!isValid(dInst.csr), "Mem never explicitly read/write CSR");
                 doAssert(isValid(dInst.imm), "Mem needs imm for virtual addr");
-                doAssert(!isValid(spec_tag), "should not have spec tag");
                 // put in ldstq
                 if(isLdQ) begin
                     lsq.enqLd(inst_tag, mem_inst, phy_regs.dst, spec_bits);

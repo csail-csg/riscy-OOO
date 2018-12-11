@@ -42,6 +42,7 @@ TSO_MM ?= false
 SECURITY ?= false
 SECURE_LLC ?= false
 SECURE_FLUSH ?= false
+SECURE_NONE ?= false
 SIM_LOG_LLC_PARTITION_NUM ?=
 # default check cache deadlock and rename error
 CHECK_DEADLOCK ?= true
@@ -75,6 +76,8 @@ else ifeq ($(SECURE_LLC),true)
 BUILD_DIR := $(BUILD_DIR).secure_llc
 else ifeq ($(SECURE_FLUSH),true)
 BUILD_DIR := $(BUILD_DIR).secure_flush
+else ifeq ($(SECURE_NONE),true)
+BUILD_DIR := $(BUILD_DIR).secure_none
 endif
 ifeq ($(CHECK_DEADLOCK),true)
 BUILD_DIR := $(BUILD_DIR).check_deadlock
