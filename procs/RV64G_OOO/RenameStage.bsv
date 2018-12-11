@@ -270,6 +270,311 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 `endif
     endrule
 
+    // print rename info
+    function Action printRename(Integer i,
+                                RegsReady regs_ready_cons,
+                                RegsReady regs_ready_aggr,
+                                ArchReegs arch_regs,
+                                PhyRegs phy_regs);
+    action
+        $display("  [doRenaming - %d] regs_ready: cons ", i, fshow(regs_ready_cons), " ; aggr ", fshow(regs_ready_aggr));
+        if (arch_regs.src1 matches tagged Valid .valid_src) begin
+            if (phy_regs.src1 matches tagged Valid .valid_src_renamed) begin
+                $display("    [SRC RENAMING] ", fshow(valid_src), " -> ", fshow(valid_src_renamed));
+            end else begin
+                $display("    [SRC RENAMING] ERROR: ", fshow(valid_src), " -> INVALID");
+                doAssert(False, "rename src1 invalid");
+            end
+        end
+        if (arch_regs.src2 matches tagged Valid .valid_src) begin
+            if (phy_regs.src2 matches tagged Valid .valid_src_renamed) begin
+                $fdisplay(stdout, "    [SRC RENAMING] ", fshow(valid_src), " -> ", fshow(valid_src_renamed));
+            end else begin
+                $fdisplay(stdout, "    [SRC RENAMING] ERROR: ", fshow(valid_src), " -> INVALID");
+                doAssert(False, "rename src2 invalid");
+            end
+        end
+        if (arch_regs.src3 matches tagged Valid .valid_src) begin
+            if (phy_regs.src3 matches tagged Valid .valid_src_renamed) begin
+                $fdisplay(stdout, "    [SRC RENAMING] ", fshow(valid_src), " -> ", fshow(valid_src_renamed));
+            end else begin
+                $fdisplay(stdout, "    [SRC RENAMING] ERROR: ", fshow(valid_src), " -> INVALID");
+                doAssert(False, "rename src3 invalid");
+            end
+        end
+        if (arch_regs.dst matches tagged Valid .valid_dst) begin
+            if (phy_regs.dst matches tagged Valid .valid_dst_renamed) begin
+                $fdisplay(stdout, "    [DST RENAMING] ", fshow(valid_dst), " => ", fshow(valid_dst_renamed));
+            end else begin
+                $fdisplay(stdout, "    [DST RENAMING] ERROR: ", fshow(valid_dst), " -> INVALID");
+                doAssert(False, "rename dst invalid");
+            end
+        end
+    endaction
+    endfunction
+
+    // check for system inst that needs to replay
+    Bool firstReplay = doReplay(fetchStage.pipelines[0].first.dInst);
+
+    // System inst is renamed only when ROB is empty
+    rule doRenaming_SystemInst(
+        !inIfc.pendingMMIOPRq // stall when MMIO pRq is pending
+        && epochManager.checkEpoch[0].check(fetchStage.pipelines[0].first.main_epoch) // correct path
+        && !isValid(firstTrap) // not trap
+        && firstReplay // system inst needs replay
+        && rob.isEmpty // stall for ROB empty
+    );
+        fetchStage.pipelines[0].deq;
+        let x = fetchStage.pipelines[0].first;
+        let pc = x.pc;
+        let ppc = x.ppc;
+        let main_epoch = x.main_epoch;
+        let dpTrain = x.dpTrain;
+        let inst = x.inst;
+        let dInst = x.dInst;
+        let arch_regs = x.regs;
+        let cause = x.cause;
+        if(verbose) $display("[doRenaming] system inst: ", fshow(x));
+
+        // update prev epoch
+        epochManager.updatePrevEpoch[0].update(main_epoch);
+        // Flip epoch without redirecting. This avoids doing incorrect work
+        incrEpochStallFetch;
+
+        // get spec bits (should be 0), and no need to checkout spec tag
+        let spec_bits = specTagManager.currentSpecBits;
+        doAssert(spec_bits == 0, "cannot have spec bits");
+
+        // do renaming (renaming is non-speculative)
+        let rename_result = regRenamingTable.rename[0].getRename(arch_regs);
+        let phy_regs = rename_result.phy_regs;
+        regRenamingTable.rename[0].claimRename(arch_regs, spec_bits);
+
+        // scoreboard lookup
+        let regs_ready_cons = sbCons.eagerLookup[0].get(phy_regs);
+        let regs_ready_aggr = sbAggr.eagerLookup[0].get(phy_regs);
+        sbCons.setBusy[0].set(phy_regs.dst);
+        sbAggr.setBusy[0].set(phy_regs.dst);
+
+        // print rename info
+        if (verbose) begin
+            printRename(0, regs_ready_cons, regs_ready_aggr, arch_regs, phy_regs);
+        end
+
+        // get ROB tag
+        let inst_tag = rob.enqPort[0].getEnqInstTag;
+
+        // CSR inst will be sent to ALU exe pipeline
+        Bool to_exec = False;
+        if (dInst.execFunc matches tagged Alu .alu) begin
+            to_exec = True;
+            doAssert(dInst.iType == Csr, "only CSR inst send to exe");
+        end
+        else begin
+            doAssert(dInst.iType == Fence || dInst.iType == SFence,
+                     dInst.iType == Sret || dInst.iType == Mret,
+                     "non-CSR inst not send to exe");
+            doAssert(dInst.execFunc == tagged Other,
+                     "non-exe inst exec func is other");
+        end
+
+        // send to ALU reservation station
+        if (to_exec) begin
+            reservationStationAlu[0].enq(ToReservationStation {
+                data: AluRSData {dInst: dInst, dpTrain: dpTrain},
+                regs: phy_regs,
+                tag: inst_tag,
+                spec_bits: spec_bits,
+                spec_tag: spec_tag,
+                regs_ready: regs_ready_aggr // alu will recv bypass
+            });
+        end
+
+        // send to ROB
+        Bool will_dirty_fpu_state = False;
+        if (arch_regs.dst matches tagged Valid( tagged Fpu .r )) begin
+            will_dirty_fpu_state = True;
+            doAssert(False, "system inst never touches FP regs");
+        end
+        RobInstState rob_inst_state = to_exec ? NotDone : Executed;
+        let y = ToReorderBuffer{pc: pc,
+                                iType: dInst.iType,
+                                csr: dInst.csr,
+                                claimed_phy_reg: True, // XXX we always claim a free reg in rename
+                                trap: Invalid, // no trap
+                                // default values of FullResult
+                                ppc_vaddr_csrData: PPC (ppc), // default use PPC
+                                fflags: 0,
+                                ////////
+                                will_dirty_fpu_state: will_dirty_fpu_state,
+                                rob_inst_state: rob_inst_state,
+                                lsqTag: ?,
+                                ldKilled: Invalid,
+                                memAccessAtCommit: False,
+                                lsqAtCommitNotified: False,
+                                nonMMIOStDone: False,
+                                epochIncremented: True, // system inst has incremented epoch
+                                spec_bits: spec_bits
+                               };
+        rob.enqPort[0].enq(y);
+
+        // record if we issue an CSR inst
+        if(dInst.iType == Csr) begin
+            inIfc.issueCsrInstOrInterrupt;
+        end
+
+`ifdef CHECK_DEADLOCK
+        renameCorrectPath.send;
+`endif
+    endrule
+
+`ifdef SECURITY
+    // speculation control: always turn off speculation in M mode; otherwise
+    // controlled by mspec CSR
+    Bool machineMode = csrf.decodeInfo.prv == prvM;
+    Bool specNone = machineMode || csrf.rd(CSRmspec) == zeroExtend(mSpecNone);
+    Bool specNonMem = !machineMode && csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
+
+`ifdef PERF_COUNT
+    rule incSpecNoneCycles(inIfc.doStats && specNone);
+        specNoneCycles.incr(1);
+    endrule
+    rule incSpecNonMemCycles(inIfc.doStats && specNonMem);
+        specNonMemCycles.incr(1);
+    endrule
+`endif
+
+    // first inst is mem inst
+    function isMemInst(ExecFunc f);
+        return f matches tagged Mem .m ? True : False;
+    endfunction
+    Bool firstMem = isMemInst(fetchStage.pipelines[0].first.dInst.execFunc);
+
+    // In case speculation is turned off for mem inst only, we rename mem inst
+    // only when ROB is empty
+    rule doRenaming_MemInst(
+        !inIfc.pendingMMIOPRq // stall when MMIO pRq is pending
+        && epochManager.checkEpoch[0].check(fetchStage.pipelines[0].first.main_epoch) // correct path
+        && !isValid(firstTrap) // not trap
+        && !firstReplay // not system inst
+        // turn off speculation for mem inst only, and first inst is mem
+        && (specNonMem && firstMem)
+        && rob.isEmpty // stall for ROB empty to process mem inst
+    );
+        fetchStage.pipelines[0].deq;
+        let x = fetchStage.pipelines[0].first;
+        let pc = x.pc;
+        let ppc = x.ppc;
+        let main_epoch = x.main_epoch;
+        let dpTrain = x.dpTrain;
+        let inst = x.inst;
+        let dInst = x.dInst;
+        let arch_regs = x.regs;
+        let cause = x.cause;
+        if(verbose) $display("[doRenaming] mem inst: ", fshow(x));
+
+        // update prev epoch
+        epochManager.updatePrevEpoch[0].update(main_epoch);
+
+        // get spec bits (should be 0), and no need to checkout spec tag
+        let spec_bits = specTagManager.currentSpecBits;
+        doAssert(spec_bits == 0, "cannot have spec bits");
+
+        // do renaming (renaming is non-speculative)
+        let rename_result = regRenamingTable.rename[0].getRename(arch_regs);
+        let phy_regs = rename_result.phy_regs;
+        regRenamingTable.rename[0].claimRename(arch_regs, spec_bits);
+
+        // scoreboard lookup
+        let regs_ready_cons = sbCons.eagerLookup[0].get(phy_regs);
+        let regs_ready_aggr = sbAggr.eagerLookup[0].get(phy_regs);
+        sbCons.setBusy[0].set(phy_regs.dst);
+        sbAggr.setBusy[0].set(phy_regs.dst);
+
+        // print rename info
+        if (verbose) begin
+            printRename(0, regs_ready_cons, regs_ready_aggr, arch_regs, phy_regs);
+        end
+
+        // get ROB tag
+        let inst_tag = rob.enqPort[0].getEnqInstTag;
+
+        // LSQ tag
+        LdStQTag lsq_tag = ?;
+
+        // send to MEM reservation station
+        if (dInst.execFunc matches tagged Mem .mem_inst) begin
+            Bool isLdQ = isLdQMemFunc(mem_inst.mem_func);
+            Maybe#(LdStQTag) lsqEnqTag = isLdQ ? lsq.enqLdTag : lsq.enqStTag;
+            if (lsqEnqTag matches tagged Valid .lsqTag) begin
+                // can process, send to Mem rs and LSQ
+                lsq_tag = lsqTag; // record LSQ tag
+                reservationStationMem.enq(ToReservationStation {
+                    data: MemRSData {
+                        mem_func: mem_inst.mem_func,
+                        imm: validValue(dInst.imm),
+                        ldstq_tag: lsqTag
+                    },
+                    regs: phy_regs,
+                    tag: inst_tag,
+                    spec_bits: spec_bits,
+                    spec_tag: spec_tag,
+                    regs_ready: regs_ready_aggr // mem currently recv bypass
+                });
+                doAssert(ppc == pc + 4, "Mem next PC is not PC+4");
+                doAssert(!isValid(dInst.csr), "Mem never explicitly read/write CSR");
+                doAssert(isValid(dInst.imm), "Mem needs imm for virtual addr");
+                doAssert(!isValid(spec_tag), "should not have spec tag");
+                // put in ldstq
+                if(isLdQ) begin
+                    lsq.enqLd(inst_tag, mem_inst, phy_regs.dst, spec_bits);
+                end
+                else begin
+                    lsq.enqSt(inst_tag, mem_inst, phy_regs.dst, spec_bits);
+                end
+            end
+            else begin
+                // cannot process this inst, stall
+                when(False, noAction);
+            end
+        end
+        else begin
+            doAssert(False, "Must be mem inst");
+        end
+
+        // send to ROB
+        Bool will_dirty_fpu_state = False;
+        if (arch_regs.dst matches tagged Valid( tagged Fpu .r )) begin
+            will_dirty_fpu_state = True;
+        end
+        RobInstState rob_inst_state = NotDone; // mem inst always needs execution
+        let y = ToReorderBuffer{pc: pc,
+                                iType: dInst.iType,
+                                csr: dInst.csr,
+                                claimed_phy_reg: True, // XXX we always claim a free reg in rename
+                                trap: Invalid, // no trap
+                                // default values of FullResult
+                                ppc_vaddr_csrData: PPC (ppc), // default use PPC
+                                fflags: 0,
+                                ////////
+                                will_dirty_fpu_state: will_dirty_fpu_state,
+                                rob_inst_state: rob_inst_state,
+                                lsqTag: lsq_tag,
+                                ldKilled: Invalid,
+                                memAccessAtCommit: False,
+                                lsqAtCommitNotified: False,
+                                nonMMIOStDone: False,
+                                epochIncremented: False,
+                                spec_bits: spec_bits
+                               };
+        rob.enqPort[0].enq(y);
+
+`ifdef CHECK_DEADLOCK
+        renameCorrectPath.send;
+`endif
+    endrule
+`endif
+
     // Count based scheduling in case of $n$ RS for the same inst type. We
     // assume all such RS are of the same size, and prioritize RS with smaller
     // valid (occupied) entries.
@@ -295,49 +600,29 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
         return rdy[idx] ? Valid (idx) : Invalid;
     endfunction
 
-`ifdef SECURITY
-    // speculation control: always turn off speculation in M mode; otherwise
-    // controlled by mspec CSR
-    Bool machineMode = csrf.decodeInfo.prv == prvM;
-    Bool specNone = machineMode || csrf.rd(CSRmspec) == zeroExtend(mSpecNone);
-    Bool specNonMem = !machineMode && csrf.rd(CSRmspec) == zeroExtend(mSpecNonMem);
-
-    //rule checkSpecNone(specNone);
-    //    $fdisplay(stderr, "RENAME SPECULATION STOPS!!");
-    //endrule
-
-`ifdef PERF_COUNT
-    rule incSpecNoneCycles(inIfc.doStats && specNone);
-        specNoneCycles.incr(1);
-    endrule
-    rule incSpecNonMemCycles(inIfc.doStats && specNonMem);
-        specNonMemCycles.incr(1);
-    endrule
-`endif
-`endif
-
     // rename correct path inst
     rule doRenaming(
         !inIfc.pendingMMIOPRq // stall when MMIO pRq is pending
         && epochManager.checkEpoch[0].check(fetchStage.pipelines[0].first.main_epoch) // correct path
         && !isValid(firstTrap) // not trap
+        && !firstReplay // not system inst
 `ifdef SECURITY
         // stall for ROB empty if we don't allow speculation at all
         && (!specNone || rob.isEmpty)
+        // don't process mem inst if we don't allow speculation for mem inst only
+        && !(specNonMem && firstMem)
 `endif
     );
-        // we stop superscalar rename after
-        // 1. epoch incremented (system inst)
-        //    - This makes epochManager up-to-date when checking wrong path inst
-        // 2. an instruction cannot be processed when
-        //    (a) It has trap
-        //    (b) It is wrong path
-        //    (c) It is system inst, but not the first inst (we delay this inst to next cycle)
-        //        because system inst need to wait all previous inst commit from ROB
-        //    (d) It does not have enough resource
+        // we stop superscalar rename when an instruction cannot be processed:
+        // (a) It has trap
+        // (b) It is wrong path
+        // (c) It is system inst (we handle system inst in a separate rule)
+        // (d) It does not have enough resource
         Bool stop = False;
         // We automatically stop after an inst cannot be deq from fetch stage
         // because canDeq signal for sup-fifo is consecutive
+
+        // Note that epoch will not change in this rule
 
         // track limited resource usage
         Vector#(AluExeNum, Bool) aluExeUsed = replicate(False);
@@ -392,10 +677,8 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                 if(isValid(getTrap(x))) begin
                     stop = True;
                 end
-                // for system inst, must be the first one, otherwise cannot process now
-                // leave to the next cycle
-                Bool needReplay = doReplay(dInst.iType);
-                if(needReplay && i != 0) begin
+                // for system inst, process in next cycle (in a different rule)
+                if(doReplay(dInst.iType)) begin
                     stop = True;
                 end
 `ifdef SECURITY
@@ -404,11 +687,11 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                 if(specNone && i != 0) begin
                     stop = True;
                 end
-                // When only non-mem inst can speculate, mem inst must be the
-                // first one, otherwise cannot process now
-                //if(dInst.execFunc matches tagged Mem .unused &&& specNonMem &&& i != 0) begin
-                //    stop = True;
-                //end
+                // When speculation is not allowed for mem inst only, stop when
+                // we seen any mem inst
+                if(specNonMem && isMemInst(dInst.execFunc)) begin
+                    stop = True;
+                end
 `endif
                 // check renaming table can be enq, otherwise cannot process now
                 if(!regRenamingTable.rename[i].canRename) begin
@@ -417,13 +700,8 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                 // Figure out if there is new speculation and if there is
                 // speculative renaming happening.
                 Bool new_speculation = False;
-                Bool speculative_renaming = False;
-                if (needReplay) begin
-                    // since we are incrementing the epoch in epochManager
-                    // without redirecting, we will not need to get a
-                    // spec tag because no speculation will be done.
-                    new_speculation = False;
-                end else if (dInst.execFunc matches tagged Br .br) begin
+                Bool speculative_renaming = False; // deprecated: this is originally for Ld/St checkpoint
+                if (dInst.execFunc matches tagged Br .br) begin
                     // This instruction can cause a redirection due to branch
                     // misprediction. Lets claim a checkpoint for this instruction.
                     // If this instruction is a JAL or JRAL instruction, then the
@@ -575,26 +853,6 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                         fetchStage.pipelines[i].deq;
                         epochManager.updatePrevEpoch[i].update(main_epoch);
                         
-                        // wait ROB empty and incrment epoch for system inst
-                        // since this is the first inst, no need to ensure epoch can be incr
-                        if (needReplay) begin
-                            when(rob.isEmpty, noAction);
-                            incrEpochStallFetch;
-                            // record if we issue an CSR inst
-                            if(dInst.iType == Csr) begin
-                                inIfc.issueCsrInstOrInterrupt;
-                            end
-                            stop = True; // stop after this system inst
-                        end
-
-`ifdef SECURITY
-                        // if only non-mem inst can speculate, wait ROB empty
-                        // for mem inst
-                        //if (to_mem && specNonMem) begin
-                        //    when(rob.isEmpty, noAction);
-                        //end
-`endif
-                        
                         // Claim a speculation tag
                         if (new_speculation) begin
                             specTagClaimed = True; // mark resource used
@@ -610,35 +868,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 
                         // display information
                         if (verbose) begin
-                            $display("  [doRenaming - %d] regs_ready: cons ", i, fshow(regs_ready_cons), " ; aggr ", fshow(regs_ready_aggr));
-                            if (arch_regs.src1 matches tagged Valid .valid_src) begin
-                                if (phy_regs.src1 matches tagged Valid .valid_src_renamed) begin
-                                    $fdisplay(stdout, "    [SRC RENAMING] ", fshow(valid_src), " -> ", fshow(valid_src_renamed));
-                                end else begin
-                                    $fdisplay(stdout, "    [SRC RENAMING] ERROR: ", fshow(valid_src), " -> INVALID");
-                                end
-                            end
-                            if (arch_regs.src2 matches tagged Valid .valid_src) begin
-                                if (phy_regs.src2 matches tagged Valid .valid_src_renamed) begin
-                                    $fdisplay(stdout, "    [SRC RENAMING] ", fshow(valid_src), " -> ", fshow(valid_src_renamed));
-                                end else begin
-                                    $fdisplay(stdout, "    [SRC RENAMING] ERROR: ", fshow(valid_src), " -> INVALID");
-                                end
-                            end
-                            if (arch_regs.src3 matches tagged Valid .valid_src) begin
-                                if (phy_regs.src3 matches tagged Valid .valid_src_renamed) begin
-                                    $fdisplay(stdout, "    [SRC RENAMING] ", fshow(valid_src), " -> ", fshow(valid_src_renamed));
-                                end else begin
-                                    $fdisplay(stdout, "    [SRC RENAMING] ERROR: ", fshow(valid_src), " -> INVALID");
-                                end
-                            end
-                            if (arch_regs.dst matches tagged Valid .valid_dst) begin
-                                if (phy_regs.dst matches tagged Valid .valid_dst_renamed) begin
-                                    $fdisplay(stdout, "    [DST RENAMING] ", fshow(valid_dst), " => ", fshow(valid_dst_renamed));
-                                end else begin
-                                    $fdisplay(stdout, "    [DST RENAMING] ERROR: ", fshow(valid_dst), " -> INVALID");
-                                end
-                            end
+                            printRename(i, regs_ready_cons, regs_ready_aggr, arch_regs, phy_regs);
                         end
 
                         // Enqueue into reorder buffer
@@ -664,7 +894,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                                 memAccessAtCommit: False,
                                                 lsqAtCommitNotified: False,
                                                 nonMMIOStDone: False,
-                                                epochIncremented: needReplay,
+                                                epochIncremented: False,
                                                 spec_bits: spec_bits
                                                };
                         rob.enqPort[i].enq(y);
