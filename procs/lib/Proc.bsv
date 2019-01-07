@@ -109,7 +109,7 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
     mkLLCDmaConnect(llc.dma, memLoader.to_mem, tlbToMem);
 
     // interface LLC to DRAM and control DRAM latency
-    let toDramIfc <- mkDramLLC(llc.to_mem);
+    DramLLC dramLLC <- mkDramLLC(llc.to_mem);
 
     // connect stats
     for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
@@ -130,7 +130,7 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
         coreIndInv[i] = core[i].coreIndInv;
     end
     ProcRequest procReqIfc <- mkProcReqSync(
-        coreReq, mmioPlatform, llc, portalClk, portalRst
+        coreReq, mmioPlatform, llc, dramLLC, portalClk, portalRst
     );
     ProcIndInv procIndInvIfc <- mkProcIndInvSync(
         coreIndInv, mmioPlatform, llc, portalClk, portalRst
@@ -156,7 +156,7 @@ module mkProc#(Clock portalClk, Reset portalRst)(Proc);
     interface bootRomIndInv = bootRom.hostIndInv;
     interface memLoaderReq = memLoader.hostReq;
     interface memLoaderIndInv = memLoader.hostIndInv;
-    interface toDram = toDramIfc;
+    interface toDram = dramLLC.toDram;
     interface deadlockIndInv = deadlock.indInv;
     interface renameDebugIndInv = renameDebug.indInv;
 endmodule

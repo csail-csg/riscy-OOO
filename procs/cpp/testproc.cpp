@@ -108,7 +108,7 @@ static void get_htif_addrs(const char *elf_file,
     }
 }
 
-int runTest(const char *elf_file, int core_num) {
+int runTest(const char *elf_file, int core_num, uint64_t mem_size) {
     sleep(1);
 
     // program boot rom
@@ -121,33 +121,34 @@ int runTest(const char *elf_file, int core_num) {
             "but ignores first %llu user commit stucks\n",
             ignore_user_commit_stucks);
 
+    // figure out addr overflow mask
+    int log_mem_sz = 0;
+    for(log_mem_sz = 0; log_mem_sz < 64; log_mem_sz++) {
+        if(mem_size == (uint64_t(1) << log_mem_sz)) {
+            break;
+        }
+    }
+    if(log_mem_sz >= 64) {
+        fprintf(stderr, "memory size %llu B is not power of 2\n",
+                (long long unsigned)mem_size);
+        exit(-1);
+    }
+    uint64_t addr_overflow_mask = (~uint64_t(0)) << log_mem_sz;
+
     // start processor
     uint64_t startpc = BOOT_ROM_BASE;
     uint64_t tohost_addr = 0;
     uint64_t fromhost_addr = 0;
     get_htif_addrs(elf_file, tohost_addr, fromhost_addr);
     fprintf(stderr, "startpc %llx, total %d cores, "
-            "toHost addr %llx, fromHost addr %llx\n",
+            "toHost addr %llx, fromHost addr %llx, "
+            "addr overflow mask %016llx\n",
             (long long unsigned)startpc, (int)core_num,
             (long long unsigned)tohost_addr,
-            (long long unsigned)fromhost_addr);
-    // sanctum hard-wire fromhost / tohost to 0x80009000 / 0x80009008,
-    // respectively
-    //if ( fromhost_addr != 0x80009000 ) {
-    //    fprintf(stderr, "[sanctum] Illegal fromhost_addr "
-    //            "(%08llx, but should be %08llx). Stopping.\n",
-    //            (long long unsigned)fromhost_addr,
-    //            (long long unsigned)0x80009000);
-    //    exit(1);
-    //}
-    //if ( tohost_addr != 0x80009008 ) {
-    //    fprintf(stderr, "[sanctum] Illegal tohost_addr "
-    //            "(%08llx, but should be %08llx). Stopping.\n",
-    //            (long long unsigned)tohost_addr,
-    //            (long long unsigned)0x80009008);
-    //    exit(1);
-    //}
-    procRequestProxy->start(startpc, tohost_addr, fromhost_addr);
+            (long long unsigned)fromhost_addr,
+            (long long unsigned)addr_overflow_mask);
+    procRequestProxy->start(startpc, tohost_addr, fromhost_addr,
+                            addr_overflow_mask);
 
     // wait for result
     int result = procIndication->waitResult();
@@ -313,7 +314,7 @@ int main(int argc, char * const *argv) {
     procIndication->spawn_to_host_handler();
 
     // run tests
-    int result = runTest(elf_file, core_num);
+    int result = runTest(elf_file, core_num, mem_size);
 
     //delete riscy_htif;
     //riscy_htif = NULL;

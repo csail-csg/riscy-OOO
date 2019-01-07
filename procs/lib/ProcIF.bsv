@@ -26,7 +26,8 @@ import Performance::*;
 interface ProcRequest;
     method Action start(
         Bit#(64) startpc,
-        Bit#(64) toHostAddr, Bit#(64) fromHostAddr
+        Bit#(64) toHostAddr, Bit#(64) fromHostAddr,
+        Bit#(64) addrOverflowMask
     );
     method Action from_host(Bit#(64) v);
     method Action perfReq(Bit#(8) core, PerfLocation loc, PerfType t); // performance

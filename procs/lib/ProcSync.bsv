@@ -35,6 +35,7 @@ import Core::*;
 import SyncFifo::*;
 import MMIOPlatform::*;
 import LLCache::*;
+import DramLLC::*;
 import Performance::*;
 
 // indication methods that are truly in use by processor
@@ -114,13 +115,13 @@ endmodule
 // this module should be under user clock domain
 module mkProcReqSync#(
     Vector#(CoreNum, CoreReq) req,
-    MMIOPlatform mmio, LLCache llc,
+    MMIOPlatform mmio, LLCache llc, DramLLC dramLLC,
     Clock portalClk, Reset portalRst
 )(ProcRequest);
     Clock userClk <- exposeCurrentClock;
     Reset userRst <- exposeCurrentReset;
     SyncFIFOIfc#(
-        Tuple3#(Addr, Addr, Addr)
+        Tuple4#(Addr, Addr, Addr, Addr)
     ) startQ <- mkSyncFifo(1, portalClk, portalRst, userClk, userRst);
     SyncFIFOIfc#(Data) hostQ <- mkSyncFifo(
         1, portalClk, portalRst, userClk, userRst
@@ -130,12 +131,13 @@ module mkProcReqSync#(
     );
 
     rule doStart;
-        // broad cast to each core and MMIO platform
-        let {pc, toHost, fromHost} <- toGet(startQ).get;
+        // broad cast to each core, MMIO platform, and DRAM
+        let {pc, toHost, fromHost, addrMask} <- toGet(startQ).get;
         for(Integer i = 0; i < valueof(CoreNum); i = i+1) begin
             req[i].start(pc, toHost, fromHost);
         end
         mmio.start(toHost, fromHost);
+        dramLLC.start(addrMask);
         // check addr alignment
         doAssert(toHost[2:0] == 0, "tohost addr must be 8B aligned");
         doAssert(fromHost[2:0] == 0, "fromhost addr must be 8B aligned");
@@ -161,9 +163,10 @@ module mkProcReqSync#(
 
     method Action start(
         Addr startpc,
-        Addr toHostAddr, Addr fromHostAddr
+        Addr toHostAddr, Addr fromHostAddr,
+        Addr addrOverflowMask
     );
-        startQ.enq(tuple3(startpc, toHostAddr, fromHostAddr));
+        startQ.enq(tuple4(startpc, toHostAddr, fromHostAddr, addrOverflowMask));
     endmethod
     method Action from_host(Data v);
         hostQ.enq(v);

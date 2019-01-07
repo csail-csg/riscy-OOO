@@ -39,14 +39,26 @@ import DramCommon::*;
 import MMIOAddrs::*;
 import LLCache::*;
 
+// XXX Processor may fetch out-of-range addresses into cache. Normally, these
+// data should be in S state, and should never be written back to memory.
+// However, since the current cache does not have E state, for single-core
+// efficiency, the processor may acquire M state even for a load. This will
+// lead to writebacks of these out-of-range addresses. We have to prevent these
+// writebacks from overwriting memory values. Therefore, when receiving a
+// out-of-range req, we never send it to DRAM, but mark it as done directly.
+
 export mkDramLLC;
+export DramLLC(..);
 
 typedef Bit#(TLog#(DramMaxReqs)) DramReqIdx;
 typedef Bit#(TLog#(DramLatency)) DramTimer;
 
-module mkDramLLC#(
-    MemFifoClient#(idT, childT) llc
-)(Client#(DramUserReq, DramUserData)) provisos(
+interface DramLLC;
+    interface Client#(DramUserReq, DramUserData) toDram;
+    method Action start(Addr addrOverflowMask);
+endinterface
+
+module mkDramLLC#(MemFifoClient#(idT, childT) llc)(DramLLC) provisos(
     Bits#(idT, a__), Bits#(childT, b__),
     FShow#(ToMemMsg#(idT, childT)), FShow#(MemRsMsg#(idT, childT)),
     Add#(SizeOf#(Line), 0, DramUserDataSz) // make sure Line sz = Dram data sz
@@ -63,15 +75,20 @@ module mkDramLLC#(
     // FIFO of reads in DRAM
     FIFO#(DramReqIdx) pendRdQ <- mkSizedFIFO(valueof(DramMaxReads));
 
+    // addr overflow mask (set once at init time)
+    Reg#(Addr) addrOverflowMask <- mkReg(0);
+    Reg#(Bool) maskSet <- mkReg(False);
+
     // MSHRs to keep in-flight read and write requests
-    Vector#(DramMaxReqs, Ehr#(2, Bool))      valid      <- replicateM(mkEhr(False));
-    Vector#(DramMaxReqs, Ehr#(1, idT))       reqId      <- replicateM(mkEhr(?));
-    Vector#(DramMaxReqs, Ehr#(1, childT))    reqChild   <- replicateM(mkEhr(?));
-    Vector#(DramMaxReqs, Ehr#(1, Bool))      reqIsLd    <- replicateM(mkEhr(?));
-    Vector#(DramMaxReqs, Ehr#(2, DramTimer)) remainTime <- replicateM(mkEhr(?));
-    Vector#(DramMaxReqs, Ehr#(2, Bool))      dataReady  <- replicateM(mkEhr(?));
-    Vector#(DramMaxReqs, Ehr#(2, Bool))      responding <- replicateM(mkEhr(?));
-    RegFile#(DramReqIdx, DramUserData)       respData   <- mkRegFile(0, fromInteger(valueof(DramMaxReqs) - 1));
+    Vector#(DramMaxReqs, Ehr#(2, Bool))      valid        <- replicateM(mkEhr(False));
+    Vector#(DramMaxReqs, Ehr#(1, idT))       reqId        <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(1, childT))    reqChild     <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(1, Bool))      reqIsLd      <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(1, Bool))      addrOverflow <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(2, DramTimer)) remainTime   <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(2, Bool))      dataReady    <- replicateM(mkEhr(?));
+    Vector#(DramMaxReqs, Ehr#(2, Bool))      responding   <- replicateM(mkEhr(?));
+    RegFile#(DramReqIdx, DramUserData)       respData     <- mkRegFile(0, fromInteger(valueof(DramMaxReqs) - 1));
 
     let valid_sendResp = getVEhrPort(valid, 0); // write
     let valid_findResp = getVEhrPort(valid, 1);
@@ -88,6 +105,9 @@ module mkDramLLC#(
     let reqIsLd_findResp = getVEhrPort(reqIsLd, 0);
     let reqIsLd_dramResp = getVEhrPort(reqIsLd, 0);
     let reqIsLd_req      = getVEhrPort(reqIsLd, 0); // write
+
+    let addrOverflow_sendResp = getVEhrPort(addrOverflow, 0);
+    let addrOverflow_req      = getVEhrPort(addrOverflow, 0); // write
 
     let remainTime_sendResp = getVEhrPort(remainTime, 0);
     let remainTime_findResp = getVEhrPort(remainTime, 0);
@@ -115,7 +135,8 @@ module mkDramLLC#(
     // DRAM latncy: the real latency is latency+2, so subtract 2 here
     DramTimer latency = fromInteger(valueof(DramLatency) - 2);
 
-    Bool inited = freeQInited;
+    // Don't accept req until freeQ and addrOverflow mask are initialized
+    Bool inited = freeQInited && maskSet;
 
     rule doInitFreeQ(!freeQInited);
         freeQ.enq(initFreeQIdx);
@@ -136,12 +157,15 @@ module mkDramLLC#(
         end
     endrule
 
-    function DramUserAddr getDramAddrFromLLC(Addr a);
+    // return DRAM addr and whether addr overflow
+    function Tuple2#(DramUserAddr, Bool) getDramAddrFromLLC(Addr a);
         // when requesting DRAM, we need to subtract the main mem base from the
         // requesting addr
         Addr dramBase = {mainMemBaseAddr, 3'b0};
         Addr addr = a - dramBase;
-        return truncate(addr >> valueof(TLog#(DramUserBESz)));
+        Bool overflow = (addr & addrOverflowMask) != 0;
+        DramUserAddr dramAddr = truncate(addr >> valueof(TLog#(DramUserBESz)));
+        return tuple2(dramAddr, overflow);
     endfunction
 
     rule doReq(inited);
@@ -157,20 +181,24 @@ module mkDramLLC#(
         idT id = ?;
         childT child = ?;
         Bool isLd = False;
+        Bool addr_overflow = False;
         case(req) matches
             tagged Ld .ld: begin
+                let {addr, overflow} = getDramAddrFromLLC(ld.addr);
                 dramReq = DramUserReq {
-                    addr: getDramAddrFromLLC(ld.addr),
+                    addr: addr,
                     data: ?,
                     wrBE: 0
                 };
                 id = ld.id;
                 child = ld.child;
                 isLd = True;
+                addr_overflow = overflow;
             end
             tagged Wb .wb: begin
+                let {addr, overflow} = getDramAddrFromLLC(wb.addr);
                 dramReq = DramUserReq {
-                    addr: getDramAddrFromLLC(wb.addr),
+                    addr: addr,
                     data: pack(wb.data),
                     wrBE: pack(wb.byteEn)
                 };
@@ -178,26 +206,50 @@ module mkDramLLC#(
                 id = ?;
                 child = ?;
                 isLd = False;
+                addr_overflow = overflow;
             end
             default: begin
                 doAssert(False, "unknown LLC req");
             end
         endcase
-        // req DRAM and pend read FIFO
-        dramReqQ.enq(dramReq);
-        if(isLd) begin
-            pendRdQ.enq(idx);
+
+        if(addr_overflow) begin
+            // we mark this entry as 0 latency and data ready (in case of
+            // load). (We don't discard the data or set the responding bit,
+            // because we need to go through other rules to recycle the entry
+            // and send load response.)
+            valid_req[idx] <= True;
+            reqId_req[idx] <= id;
+            reqChild_req[idx] <= child;
+            reqIsLd_req[idx] <= isLd;
+            addrOverflow_req[idx] <= True;
+            remainTime_req[idx] <= 0;
+            dataReady_req[idx] <= isLd; // load will have a dummy data
+            responding_req[idx] <= False;
+            if(verbose) begin
+                $display("[DramLLC doReq] mark overflow req as responding: ",
+                         fshow(req), " ; ", fshow(idx));
+            end
         end
-        // set up entry
-        valid_req[idx] <= True;
-        reqId_req[idx] <= id;
-        reqChild_req[idx] <= child;
-        reqIsLd_req[idx] <= isLd;
-        remainTime_req[idx] <= latency;
-        dataReady_req[idx] <= False;
-        responding_req[idx] <= False;
-        if(verbose) begin
-            $display("[DramLLC doReq] ", fshow(req), " ; ", fshow(idx), "; ", fshow(dramReq));
+        else begin
+            // valid addr, req DRAM and pend read FIFO
+            dramReqQ.enq(dramReq);
+            if(isLd) begin
+                pendRdQ.enq(idx);
+            end
+            // set up entry
+            valid_req[idx] <= True;
+            reqId_req[idx] <= id;
+            reqChild_req[idx] <= child;
+            reqIsLd_req[idx] <= isLd;
+            addrOverflow_req[idx] <= False;
+            remainTime_req[idx] <= latency;
+            dataReady_req[idx] <= False;
+            responding_req[idx] <= False;
+            if(verbose) begin
+                $display("[DramLLC doReq] send DRAM req: ",
+                         fshow(req), " ; ", fshow(idx), "; ", fshow(dramReq));
+            end
         end
     endrule
 
@@ -240,19 +292,23 @@ module mkDramLLC#(
         // send resp to LLC in case of a load
         if(reqIsLd_sendResp[idx]) begin
             MemRsMsg#(idT, childT) resp = MemRsMsg {
-                data: unpack(respData.sub(idx)),
+                // For security, let's give a fixed value if address is
+                // overflowed
+                data: addrOverflow_sendResp[idx] ? unpack(0) : unpack(respData.sub(idx)),
                 child: reqChild_sendResp[idx],
                 id: reqId_sendResp[idx]
             };
             llc.rsFromM.enq(resp);
             doAssert(dataReady_sendResp[idx], "data must be valid");
             if(verbose) begin
-                $display("[DramLLC sendResp] Ld ", fshow(idx), "; ", fshow(resp));
+                $display("[DramLLC sendResp] Ld ", fshow(idx), "; ",
+                         fshow(addrOverflow_sendResp[idx]), "; ", fshow(resp));
             end
         end
         else begin
             if(verbose) begin
-                $display("[DramLLC sendResp] St ", fshow(idx));
+                $display("[DramLLC sendResp] St ", fshow(idx), "; ",
+                         fshow(addrOverflow_sendResp[idx]));
             end
         end
         // free entry
@@ -260,6 +316,13 @@ module mkDramLLC#(
         freeQ.enq(idx);
     endrule
 
-    interface Get request = toGet(dramReqQ);
-    interface Put response = toPut(dramRespQ);
+    interface Client toDram;
+        interface Get request = toGet(dramReqQ);
+        interface Put response = toPut(dramRespQ);
+    endinterface
+    
+    method Action start(Addr mask) if(!maskSet);
+        addrOverflowMask <= mask;
+        maskSet <= True;
+    endmethod
 endmodule
