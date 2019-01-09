@@ -132,7 +132,7 @@ Simulation is too slow to boot Linux, so we boot Linux on FPGA.
 It should be noted that we cross-compile benchmark programs to RISC-V and build Linux images on our local machines instead of on AWS.
 On AWS, we compile/synthesize the processor and run it on FPGA.
 
-On AWS, we compile (and synthesize) the design on a C4 (e.g., c4.4xlarge) machine which runs the FPGA Developer AMI provided by AWS.
+On AWS, we compile (and synthesize) the design on a C4 (e.g., c4.4xlarge) machine which runs the *FPGA Developer AMI* (our AMI version is 1.5.0) provided by AWS.
 After compilation, we run the design on FPGA using an F1 (e.g., f1.2xlarge) machine.
 As a result, this repo should be cloned to a place shared by C4 and F1.
 We are using Amazon EFS to share files between C4 and F1 machines.
@@ -170,7 +170,7 @@ Here is our way of setup the AWS HDK repo:
         $ git checkout 111191a7b4cffa6f135671f1f1863ff2567b1861 -b riscy-OOO
 
 - Make sure that Xilinx synthesis tool `vivado` is in PATH.
-The vivado version we are using on AWS is `v2017.1_sdxop`.
+The vivado version we are using on AWS is `v2018.2_AR71275_op`.
 
 - Clone this `riscy-OOO` repo, get all the submodules, and setup environment variables.
 
