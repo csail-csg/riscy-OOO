@@ -95,6 +95,16 @@ We can build the image as follows:
     We have put some prebuilt Linux images (bbls) containing the PARSEC benchmarks in `tools/images`.
     The sources files of PARSEC benchmarks that we are using can be found at https://github.com/csail-csg/parsec.
     Unfortunately, we cannot release the prebuilt images for SPEC benchmarks due to license issues.
+    
+- Build boot rom.
+The processor uses a small boot rom to load the Linux image to its memory.
+We can build the boot rom as follows:
+
+        $ cd $RISCY_HOME/procs/rom
+        $ make
+
+    The boot-rom executables are `$RISCY_HOM/procs/rom/out/rom_core_<X>`, where `<X>` is the number of cores in the processor.
+    That is, booting a single-core processor should use `rom_core_1`, while booting a 4-core processor should use `rom_core_4`.
 
 ## Simulation on a Local Ubuntu Machine
 - Build the OOO processor with `$N` cores for simulation.
@@ -151,13 +161,13 @@ Here are the steps to setup C4.
 
 - Get the AWS HDK repo (https://github.com/aws/aws-fpga).
 It should be put at `~/aws-fpga`.
-We are using commit `e107da6487221a820a07ebd3b82de71c5362c313` of the HDK repo; we have not tested the lastest commit.
+We are using commit `111191a7b4cffa6f135671f1f1863ff2567b1861` of the HDK repo (shell version 1.4.5).
 Here is our way of setup the AWS HDK repo:
 
         $ cd ~
         $ git clone https://github.com/aws/aws-fpga.git
         $ cd aws-fpga
-        $ git checkout e107da6487221a820a07ebd3b82de71c5362c313 -b riscy-OOO
+        $ git checkout 111191a7b4cffa6f135671f1f1863ff2567b1861 -b riscy-OOO
 
 - Make sure that Xilinx synthesis tool `vivado` is in PATH.
 The vivado version we are using on AWS is `v2017.1_sdxop`.
@@ -219,7 +229,7 @@ Here are the steps to setup F1:
         $ cd ~
         $ git clone https://github.com/aws/aws-fpga.git
         $ cd aws-fpga
-        $ git checkout e107da6487221a820a07ebd3b82de71c5362c313 -b riscy-OOO
+        $ git checkout 111191a7b4cffa6f135671f1f1863ff2567b1861 -b riscy-OOO
         $ source sdk_setup.sh
 
 - Build RISC-V front-end server.
@@ -244,10 +254,10 @@ Here are the steps to setup F1:
         $ sudo fpga-load-local-image -S 0 -I agfi-yyy
 
 - Run the design to boot Linux.
-We need to copy the bbl (e.g., `tools/RV64G/build-pk/bbl`) to F1.
+We need to copy the bbl (e.g., `tools/RV64G/build-pk/bbl`) and boot rom (e.g., `procs/rom/out/rom_core_$N`) to F1.
 The following command boots Linux with 2GB memory.
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/awsf1/bin/ubuntu.exe --core-num $N --mem-size 2048 --ignore-user-stucks 1000000 -- /path/to/bbl
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/awsf1/bin/ubuntu.exe --core-num $N --mem-size 2048 --ignore-user-stucks 1000000 --rom /path/to/rom_core_$N --elf /path/to/bbl
     
     The processor detects potential deadlock by checking if a user level instruction has been executed during a period of time.
     This will output a lot of "deadlock" warnings when the processor is booting linux or idling in shell.
@@ -263,7 +273,7 @@ The following command boots Linux with 2GB memory.
 For example, the makefile can be invoked in the following way to build for C4:
 
     $ cd $RISCY_HOME/procs/RV64G_OOO
-    $ make gen.awsf1 CORE_NUM=$N DTC_PATH=/usr/bin/dtc CORE_SIZE=<SMALL/LARGE/...> CACHE_SIZE=<SMALL/LARGE/...> TSO_MM=<true/false> CHECK_DEADLOCK=<true/false> RENAME_DEBUG=<true/false> USER_CLK_PERIOD=<clock period in ns>
+    $ make gen.awsf1 CORE_NUM=$N DTC_PATH=/usr/bin/dtc CORE_SIZE=<SMALL/MEDIUM/LARGE/...> CACHE_SIZE=<SMALL/MEDIUM/LARGE/...> TSO_MM=<true/false> CHECK_DEADLOCK=<true/false> RENAME_DEBUG=<true/false> USER_CLK_PERIOD=<clock period in ns>
 
 Below are the expanations for these options.
 It should be noted that these options can also be applied when building for simulation (i.e., for `make build.verilator`).
@@ -355,7 +365,7 @@ VC707 shoud only be able to hold 1 core.
 - Boot Linux on FPGA.
 Since VC707 only has 1GB DRAM, we boot Linux with 1GB memory.
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.core_SMALL.cache_LARGE.weak.check_deadlock/vc707/bin/ubuntu.exe --core-num 1 --mem-size 1024  --ignore-user-stucks 1000000 -- /path/to/bbl
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.core_SMALL.cache_LARGE.weak.check_deadlock/vc707/bin/ubuntu.exe --core-num 1 --mem-size 1024  --ignore-user-stucks 1000000 --rom /path/to/rom_core_$N --elf /path/to/bbl
 
     The above command will automaticall program the FPGA.
     If it is the first time to program the VC707 FPGA, the program may fail to run.
