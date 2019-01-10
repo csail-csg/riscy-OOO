@@ -312,6 +312,8 @@ As an example, when we build the 4-core TSO multiprocessor on AWS, we invoke the
 
 Since 4 OOO cores will make the FPGA pretty congested, we use the smallest core and cache configurations (`TINY` and `MC`, respectively), and we turn off the checks for deadlock and renaming.
 We also lower down the clock frequency to 25MHz (i.e., 40ns period).
+If the synthesis fails because of not enough resources, we can try to tweak the synthesis strategy in `'aws-fpga/hdk/common/shell_v04261818/build/scripts/strategy_DEFAULT.tcl`.
+For example, we can turn on `phys_opt` (i.e., `set phys_opt = 1` instead of `=0`).
 
 ## Performance Counter
 To collect performance data, we have deployed many performance counters in the processor design, and these counters can be queried by host software (see `$RISCY_HOME/procs/cpp/PerfStats.h`).
