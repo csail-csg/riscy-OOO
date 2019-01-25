@@ -152,7 +152,7 @@ Here are the steps to setup C4.
 - Install dependencies:
 
         $ sudo yum check-update
-        $ sudo yum install -y vim python34 python34-pip
+        $ sudo yum install -y python34 python34-pip
         $ sudo python -m pip install ply
         $ sudo python3 -m pip install boto3
         $ sudo python3 -m pip install requests
