@@ -10,6 +10,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--testdir', dest = 'test_dir',
                     required = False, default = '')
 parser.add_argument('--jobs', dest = 'jobs', required = False, default = 1)
+parser.add_argument('--elfgcc', dest = 'elf_gcc', action = 'store_true')
 args = parser.parse_args()
 
 root = os.path.join(os.environ['RISCY_HOME'], 'tools')
@@ -53,7 +54,8 @@ cmd = ('cd {}; '.format(build_dir) +
        'rm -rf build-pk; mkdir -p build-pk; cd build-pk; ' +
        '../../riscv-pk/configure ' +
        '--prefix={} '.format(build_dir) +
-       '--host=riscv64-unknown-linux-gnu ' +
+       '--host=riscv64-unknown-' +
+       ('elf ' if args.elf_gcc else 'linux-gnu ') +
        '--with-payload={}; '.format(os.path.join(linux_dir, 'vmlinux')) +
        'make -j{}; make install'.format(args.jobs))
 print 'Running: {}'.format(cmd)
