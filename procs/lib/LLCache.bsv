@@ -32,12 +32,21 @@ import ProcTypes::*;
 import CCTypes::*;
 import LLPipe::*;
 import LLCRqMshr::*;
+import LLCRqMshrSecureModel::*;
 import LLBank::*;
 import L1CoCache::*;
 import LLCDmaConnect::*;
 import Performance::*;
 
 // Last-Level
+
+// whether we model the effect of MSHR partition for security purpose
+`ifdef SECURITY
+`ifndef DISABLE_SECURE_LLC_MSHR
+`define USE_LLC_MSHR_SECURE_MODEL
+`endif
+`endif
+
 typedef `LOG_LLC_LINES LgLLLineNum;
 typedef `LOG_LLC_WAYS LgLLWayNum;
 typedef TExp#(LgLLWayNum) LLWayNum;
@@ -51,13 +60,32 @@ typedef GetTagSz#(LgLLBankNum, LgLLSetNum) LLTagSz;
 typedef Bit#(LLTagSz) LLTag;
 typedef Bit#(TLog#(LLWayNum)) LLWay;
 
+`ifdef USE_LLC_MSHR_SECURE_MODEL
+typedef TDiv#(DramMaxReqs, 2) LLCRqNum; // SECURITY: limit MSHR size <= DRAM bandwidth
+`else
 typedef LLWayNum LLCRqNum;
+`endif
 typedef Bit#(TLog#(LLCRqNum)) LLCRqMshrIdx;
 
 // all L1$ are children
 typedef L1Num LLChildNum;
 typedef Bit#(TLog#(LLChildNum)) LLChild;
 typedef L1Way LLCRqId;
+
+`ifdef USE_LLC_MSHR_SECURE_MODEL
+module mkLastLvCRqMshr(
+    LLCRqMshr#(LLChildNum, LLCRqNum, LLWay, LLTag, cRqT)
+) provisos(
+    Alias#(cRqT, LLRq#(LLCRqId, LLCDmaReqId, LLChild))
+);
+    function Addr getAddr(cRqT r) = r.addr;
+    LLCRqMshrSecureModel#(
+        `SIM_LOG_LLC_MSHR_BANK_NUM, LLChildNum, LLCRqNum, LLWay, LLTag, cRqT
+    ) m <- mkLLCRqMshrSecureModel(getAddr);
+    return m.mshr;
+endmodule
+
+`else
 
 (* synthesize *)
 module mkLastLvCRqMshr(
@@ -69,6 +97,7 @@ module mkLastLvCRqMshr(
     let m <- mkLLCRqMshr(getAddr);
     return m;
 endmodule
+`endif
 
 (* synthesize *)
 module mkLLPipeline(

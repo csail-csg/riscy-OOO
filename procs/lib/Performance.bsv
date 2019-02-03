@@ -48,7 +48,8 @@ typedef enum {
     LLCDmaMemLdCnt,
     LLCDmaMemLdLat,
     LLCNormalMemLdCnt,
-    LLCNormalMemLdLat
+    LLCNormalMemLdLat,
+    LLCMshrBlockCycles // full MSHR blocks new cRq
 } LLCPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {

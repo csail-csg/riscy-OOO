@@ -258,6 +258,7 @@ public:
         init(LLC, LLCDmaMemLdLat, "LLC DMA mem load total latency");
         init(LLC, LLCNormalMemLdCnt, "LLC normal mem load num");
         init(LLC, LLCNormalMemLdLat, "LLC normal mem load total latency");
+        init(LLC, LLCMshrBlockCycles, "LLC mshr block cycles");
     }
 };
 
