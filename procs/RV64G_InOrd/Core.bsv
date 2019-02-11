@@ -370,13 +370,6 @@ module mkCore#(CoreId coreId)(Core);
     Reg#(Bool)  flush_tlbs <- mkReg(False);
     Reg#(Bool)  update_vm_info <- mkReg(False);
     Reg#(Bool)  flush_reservation <- mkReg(False);
-`ifdef SECURITY
-    Reg#(Bool)  flush_caches <- mkReg(False);
-    Reg#(Bool)  flush_brpred <- mkReg(False);
-`else
-    Reg#(Bool)  flush_caches <- mkReadOnlyReg(False);
-    Reg#(Bool)  flush_brpred <- mkReadOnlyReg(False);
-`endif
 
     // performance counters
     Reg#(Bool) doStats = coreFix.doStatsIfc; // whether data is collected
@@ -464,8 +457,6 @@ module mkCore#(CoreId coreId)(Core);
         method setFlushTlbs = flush_tlbs._write(True);
         method setUpdateVMInfo = update_vm_info._write(True);
         method setFlushReservation = flush_reservation._write(True);
-        method setFlushBrPred = flush_brpred._write(True);
-        method setFlushCaches = flush_caches._write(True);
         method killAll = coreFix.killAll;
         method redirectPc = fetchStage.redirect;
         method setFetchWaitRedirect = fetchStage.setWaitRedirect;
@@ -527,42 +518,9 @@ module mkCore#(CoreId coreId)(Core);
         end
     endrule
 
-`ifdef SECURITY
-    // Use wires to capture flush regs and empty signals. This is ok because
-    // there cannot be any activity to make empty -> not-empty or need-flush ->
-    // no-need-flush when we are trying to flush.
-    PulseWire doFlushCaches <- mkPulseWire;
-    PulseWire doFlushBrPred <- mkPulseWire;
-
-    rule setDoFlushCaches(flush_caches && fetchStage.emptyForFlush && lsq.noWrongPathLoads);
-        doFlushCaches.send;
-    endrule
-
-    rule setDoFlushBrPred(flush_brpred && fetchStage.emptyForFlush);
-        doFlushBrPred.send;
-    endrule
-
-    // security flush cache: need to wait for wrong path loads or inst fetches
-    // to finish
-    rule flushCaches(doFlushCaches);
-        flush_caches <= False;
-        iMem.flush;
-        dMem.flush;
-    endrule
-
-    // security flush branch predictors: wait for wrong path inst fetches to
-    // finish
-    rule flushBrPred(doFlushBrPred);
-        flush_brpred <= False;
-        fetchStage.flush_predictors;
-    endrule
-`endif
-
     rule readyToFetch(
         !flush_reservation && !flush_tlbs && !update_vm_info &&
-        !flush_caches && !flush_brpred &&
-        iTlb.flush_done && dTlb.flush_done &&
-        iMem.flush_done && dMem.flush_done && fetchStage.flush_predictors_done
+        iTlb.flush_done && dTlb.flush_done
     );
         fetchStage.done_flushing();
     endrule
