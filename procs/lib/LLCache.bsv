@@ -23,6 +23,9 @@
 
 `include "ProcConfig.bsv"
 
+import Vector::*;
+import FIFO::*;
+import Connectable::*;
 import GetPut::*;
 import Assert::*;
 import CacheUtils::*;
@@ -108,14 +111,35 @@ endmodule
 `endif
 
 `ifdef USE_LLC_ARBITER_SECURE_MODEL
+
+`ifdef SIM_LLC_ARBITER_NUM // Model a real arbiter at the pipeline input
 typedef `SIM_LLC_ARBITER_NUM SimLLCArbNum;
+`else // Only model added latency at the pipline input, no bandwidth loss
+typedef `SIM_LLC_ARBITER_LAT SimLLCArbLat;
+`endif
 (* synthesize *)
 module mkLLPipeline(
     LLPipe#(LgLLBankNum, LLChildNum, LLWayNum, LLIndex, LLTag, LLCRqMshrIdx)
+) provisos (
+    Alias#(LLPipeIn#(LLChild, LLWay, LLCRqMshrIdx), pipeInT)
 );
     // pipeline
     LLPipe#(LgLLBankNum, LLChildNum, LLWayNum, LLIndex, LLTag, LLCRqMshrIdx) m <- mkLLPipe;
 
+`ifdef BSIM
+    // print the arbiter num
+    Reg#(Bool) showArbiter <- mkReg(True);
+    rule doShowArbiter(showArbiter);
+`ifdef SIM_LLC_ARBITER_NUM
+        $display("[LLPipe] Arbiter size %d", valueof(SimLLCArbNum));
+`else
+        $display("[LLPipe] Arbiter latency %d", valueof(SimLLCArbLat));
+`endif
+        showArbiter <= False;
+    endrule
+`endif
+
+`ifdef SIM_LLC_ARBITER_NUM
     // round-robin reg: only allow entry to pipeline when turn == 0. This
     // models the effect of a circular/fair arbiter.
     Reg#(Bit#(TLog#(SimLLCArbNum))) turn <- mkReg(0);
@@ -125,18 +149,20 @@ module mkLLPipeline(
         turn <= turn == fromInteger(valueof(SimLLCArbNum) - 1) ? 0 : turn + 1;
     endrule
 
-`ifdef BSIM
-    // print the arbiter num
-    Reg#(Bool) showArbiter <- mkReg(True);
-    rule doShowArbiter(showArbiter);
-        $display("[LLPipe] Arbiter size %d", valueof(SimLLCArbNum));
-        showArbiter <= False;
-    endrule
-`endif
-
-    method Action send(LLPipeIn#(LLChild, LLWay, LLCRqMshrIdx) r) if(turn == 0);
+    method Action send(pipeInT r) if(turn == 0);
         m.send(r);
     endmethod
+`else
+    // delay input
+    Vector#(SimLLCArbLat, FIFO#(pipeInT)) delayQ <- replicateM(mkFIFO);
+
+    for(Integer i = 0; i < valueof(SimLLCArbLat) - 1; i = i+1) begin
+        mkConnection(toGet(delayQ[i]), toPut(delayQ[i + 1]));
+    end
+    mkConnection(toGet(delayQ[valueof(SimLLCArbLat) - 1]).get, m.send);
+
+    method send = delayQ[0].enq;
+`endif
 
     method notEmpty = m.notEmpty;
     method first = m.first;
