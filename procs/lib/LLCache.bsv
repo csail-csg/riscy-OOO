@@ -125,6 +125,15 @@ module mkLLPipeline(
         turn <= turn == fromInteger(valueof(SimLLCArbNum) - 1) ? 0 : turn + 1;
     endrule
 
+`ifdef BSIM
+    // print the arbiter num
+    Reg#(Bool) showArbiter <- mkReg(True);
+    rule doShowArbiter(showArbiter);
+        $display("[LLPipe] Arbiter size %d", valueof(SimLLCArbNum));
+        showArbiter <= False;
+    endrule
+`endif
+
     method Action send(LLPipeIn#(LLChild, LLWay, LLCRqMshrIdx) r) if(turn == 0);
         m.send(r);
     endmethod
