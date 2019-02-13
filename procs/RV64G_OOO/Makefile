@@ -44,7 +44,10 @@ SECURE_LLC ?= false
 SECURE_FLUSH ?= false
 SECURE_NONE ?= false
 SECURE_MSHR ?= false
+SECURE_ARBITER ?= false
 SIM_LOG_LLC_PARTITION_NUM ?=
+SIM_LOG_LLC_MSHR_BANK_NUM ?=
+SIM_LLC_ARBITER_NUM ?=
 # default check cache deadlock and rename error
 CHECK_DEADLOCK ?= true
 RENAME_DEBUG ?= true
@@ -81,6 +84,8 @@ else ifeq ($(SECURE_NONE),true)
 BUILD_DIR := $(BUILD_DIR).secure_none
 else ifeq ($(SECURE_MSHR),true)
 BUILD_DIR := $(BUILD_DIR).secure_mshr
+else ifeq ($(SECURE_ARBITER),true)
+BUILD_DIR := $(BUILD_DIR).secure_arbiter
 endif
 ifeq ($(CHECK_DEADLOCK),true)
 BUILD_DIR := $(BUILD_DIR).check_deadlock

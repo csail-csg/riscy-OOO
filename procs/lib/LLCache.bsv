@@ -47,6 +47,14 @@ import Performance::*;
 `endif
 `endif
 
+// whether we model the effect of the circular/fair arbiter at the entry point
+// of LLC pipeline for security purpose
+`ifdef SECURITY
+`ifndef DISABLE_SECURE_LLC_ARBITER
+`define USE_LLC_ARBITER_SECURE_MODEL
+`endif
+`endif
+
 typedef `LOG_LLC_LINES LgLLLineNum;
 typedef `LOG_LLC_WAYS LgLLWayNum;
 typedef TExp#(LgLLWayNum) LLWayNum;
@@ -99,6 +107,36 @@ module mkLastLvCRqMshr(
 endmodule
 `endif
 
+`ifdef USE_LLC_ARBITER_SECURE_MODEL
+typedef `SIM_LLC_ARBITER_NUM SimLLCArbNum;
+(* synthesize *)
+module mkLLPipeline(
+    LLPipe#(LgLLBankNum, LLChildNum, LLWayNum, LLIndex, LLTag, LLCRqMshrIdx)
+);
+    // pipeline
+    LLPipe#(LgLLBankNum, LLChildNum, LLWayNum, LLIndex, LLTag, LLCRqMshrIdx) m <- mkLLPipe;
+
+    // round-robin reg: only allow entry to pipeline when turn == 0. This
+    // models the effect of a circular/fair arbiter.
+    Reg#(Bit#(TLog#(SimLLCArbNum))) turn <- mkReg(0);
+
+    (* fire_when_enabled, no_implicit_conditions *)
+    rule incrTurn;
+        turn <= turn == fromInteger(valueof(SimLLCArbNum) - 1) ? 0 : turn + 1;
+    endrule
+
+    method Action send(LLPipeIn#(LLChild, LLWay, LLCRqMshrIdx) r) if(turn == 0);
+        m.send(r);
+    endmethod
+
+    method notEmpty = m.notEmpty;
+    method first = m.first;
+    method unguard_first = m.unguard_first;
+    method deqWrite = m.deqWrite;
+endmodule
+
+`else
+
 (* synthesize *)
 module mkLLPipeline(
     LLPipe#(LgLLBankNum, LLChildNum, LLWayNum, LLIndex, LLTag, LLCRqMshrIdx)
@@ -106,6 +144,7 @@ module mkLLPipeline(
     let m <- mkLLPipe;
     return m;
 endmodule
+`endif
 
 typedef LLBank#(LgLLBankNum, LLChildNum, LLWayNum, LLIndexSz, LLTagSz, LLCRqNum, LLCRqId, LLCDmaReqId) LLBankWrapper;
 //typedef MemFifoClient#(LdMemRqId#(LLCRqMshrIdx), void) LLCMemFifoClient;
