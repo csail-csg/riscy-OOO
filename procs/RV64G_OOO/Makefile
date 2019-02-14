@@ -47,6 +47,7 @@ SECURE_MSHR ?= false
 SECURE_ARBITER ?= false
 SIM_LOG_LLC_PARTITION_NUM ?=
 SIM_LOG_LLC_MSHR_BANK_NUM ?=
+DISABLE_SECURE_DRAM_BW ?=
 SIM_LLC_ARBITER_NUM ?=
 SIM_LLC_ARBITER_LAT ?=
 # default check cache deadlock and rename error
