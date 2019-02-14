@@ -54,7 +54,9 @@ import Performance::*;
 // of LLC pipeline for security purpose
 `ifdef SECURITY
 `ifndef DISABLE_SECURE_LLC_ARBITER
+`ifndef DISABLE_SECURE_BW
 `define USE_LLC_ARBITER_SECURE_MODEL
+`endif
 `endif
 `endif
 
@@ -72,7 +74,7 @@ typedef Bit#(LLTagSz) LLTag;
 typedef Bit#(TLog#(LLWayNum)) LLWay;
 
 `ifdef USE_LLC_MSHR_SECURE_MODEL
-`ifndef DISABLE_SECURE_DRAM_BW
+`ifndef DISABLE_SECURE_BW
 typedef TDiv#(DramMaxReqs, 2) LLCRqNum; // SECURITY: limit MSHR size <= DRAM bandwidth
 `else
 typedef LLWayNum LLCRqNum; // ignore DRAM bandwidth contention, keep using the old mshr size

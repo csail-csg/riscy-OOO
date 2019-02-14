@@ -37,9 +37,9 @@
 # SECURE_ARBITER: true or false
 # SIM_LOG_LLC_PARTITION_NUM
 # SIM_LOG_LLC_MSHR_BANK_NUM
-# DISABLE_SECURE_DRAM_BW: true or false
 # SIM_LLC_ARBITER_NUM
 # SIM_LLC_ARBITER_LAT
+# DISABLE_SECURE_BW: true or false
 # CHECK_DEADLOCK: true or false
 # RENAME_DEBUG: true or false
 # BUILD_DIR
@@ -168,17 +168,17 @@ ifneq ($(SIM_LOG_LLC_MSHR_BANK_NUM),)
 CONNECTALFLAGS += --bscflags=" -D SIM_LOG_LLC_MSHR_BANK_NUM=$(SIM_LOG_LLC_MSHR_BANK_NUM) "
 endif
 
-# whether we shrink LLC MSHR size to prevent DRAM BW attack
-ifeq ($(DISABLE_SECURE_DRAM_BW),true)
-CONNECTALFLAGS += --bscflags=" -D DISABLE_SECURE_DRAM_BW "
-endif
-
 # simulate the effect of LLC arbiter
 ifneq ($(SIM_LLC_ARBITER_NUM),)
 CONNECTALFLAGS += --bscflags=" -D SIM_LLC_ARBITER_NUM=$(SIM_LLC_ARBITER_NUM) "
 else ifneq ($(SIM_LLC_ARBITER_LAT),)
 CONNECTALFLAGS += --bscflags=" -D SIM_LLC_ARBITER_LAT=$(SIM_LLC_ARBITER_LAT) "
 else
+endif
+
+# disable things related to bandwidth attack
+ifeq ($(DISABLE_SECURE_BW),true)
+CONNECTALFLAGS += --bscflags=" -D DISABLE_SECURE_BW "
 endif
 
 # perf counter
