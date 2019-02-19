@@ -24,19 +24,14 @@
 import Scoreboard::*;
 import SynthParam::*;
 
-// conservative sb
-typedef RenamingScoreboard#(WrConsPortNum, SbLazyLookupPortNum) ScoreboardCons;
-(* synthesize *)
-module mkScoreboardCons(ScoreboardCons);
-    let m <- mkRenamingScoreboard;
-    return m;
-endmodule
+// In-order core has only 1 scoreboard associated with RF. Both scoreboard and
+// RF are bypass, i.e., there is no lazy lookup in scoreboard. This can save
+// some explicit bypass wires.
 
-// aggressive sb
-typedef RenamingScoreboard#(WrAggrPortNum, 0) ScoreboardAggr;
+typedef InorderRenamingScoreboard#(RFileWrPortNum, RFileRdPortNum) ScoreboardSynth;
 (* synthesize *)
-module mkScoreboardAggr(ScoreboardAggr);
-    let m <- mkRenamingScoreboard;
+module mkScoreboardSynth(ScoreboardSynth);
+    let m <- mkInorderRenamingScoreboard;
     return m;
 endmodule
 

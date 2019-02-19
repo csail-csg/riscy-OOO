@@ -31,7 +31,7 @@ import ProcTypes::*;
 import SynthParam::*;
 import Exec::*;
 import Performance::*;
-import ReservationStationEhr::*;
+import InorderRS::*;
 import ReservationStationFpuMulDiv::*;
 import ReorderBuffer::*;
 import HasSpecBits::*;
@@ -39,14 +39,6 @@ import SpecFifo::*;
 import MulDiv::*;
 import Fpu::*;
 import Bypass::*;
-
-typedef struct {
-    // inst info
-    ExecFunc execFunc;
-    PhyRegs regs;
-    InstTag tag;
-    // FpuMulDiv must not have valid spec tag
-} FpuMulDivDispatchToRegRead deriving(Bits, Eq, FShow);
 
 typedef struct {
     // inst info
@@ -67,13 +59,6 @@ typedef struct {
 } FpuMulDivExeToFinish deriving(Bits, Eq, FShow);
 
 // synthesized pipeline fifos
-typedef SpecFifo_SB_deq_enq_C_deq_enq#(1, FpuMulDivDispatchToRegRead) FpuMulDivDispToRegFifo;
-(* synthesize *)
-module mkFpuMulDivDispToRegFifo(FpuMulDivDispToRegFifo);
-    let m <- mkSpecFifo_SB_deq_enq_C_deq_enq(False);
-    return m;
-endmodule
-
 typedef SpecFifo_SB_deq_enq_C_deq_enq#(1, FpuMulDivRegReadToExe) FpuMulDivRegToExeFifo;
 (* synthesize *)
 module mkFpuMulDivRegToExeFifo(FpuMulDivRegToExeFifo);
@@ -83,7 +68,7 @@ endmodule
 
 interface FpuMulDivExeInput;
     // conservative scoreboard check in reg read stage
-    method RegsReady sbCons_lazyLookup(PhyRegs r);
+    method RegsReady sb_lookup(PhyRegs r);
     // Phys reg file
     method Data rf_rd1(PhyRIndx rindx);
     method Data rf_rd2(PhyRIndx rindx);
@@ -97,14 +82,14 @@ interface FpuMulDivExeInput;
     // write reg file & set both conservative and aggressive sb & wake up inst
     method Action writeRegFile(PhyRIndx dst, Data data);
     // spec update
-    method Action conflictWrongSpec;
+    //method Action conflictWrongSpec;
     // performance
     method Bool doStats;
 endinterface
 
 interface FpuMulDivExePipeline;
     // recv bypass from the ALU exe and finish stages
-    interface Vector#(TMul#(2, AluExeNum), RecvBypass) recvBypass;
+    interface Vector#(AluExeNum, RecvBypass) recvBypass;
     interface ReservationStationFpuMulDiv rsFpuMulDivIfc;
     interface SpeculationUpdate specUpdate;
     // performance
@@ -118,11 +103,10 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
     ReservationStationFpuMulDiv rsFpuMulDiv <- mkReservationStationFpuMulDiv;
 
     // pipeline fifos
-    let dispToRegQ <- mkFpuMulDivDispToRegFifo;
     let regToExeQ <- mkFpuMulDivRegToExeFifo;
     
     // wire to recv bypass
-    Vector#(TMul#(2, AluExeNum), RWire#(Tuple2#(PhyRIndx, Data))) bypassWire <- replicateM(mkRWire);
+    Vector#(AluExeNum, RWire#(Tuple2#(PhyRIndx, Data))) bypassWire <- replicateM(mkRWire);
 
     // mul div fpu func units
     MulDivExec mulDivExec <- mkMulDivExec;
@@ -137,47 +121,30 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
     Count#(Data) exeFpSqrtCnt <- mkCount(0);
 `endif
 
-    rule doDispatchFpuMulDiv;
-        rsFpuMulDiv.doDispatch;
-        let x = rsFpuMulDiv.dispatchData;
-        if(verbose) $display("[doDispatchFpuMulDiv] ", fshow(x));
-
-        // FPU MUL DIV never have exception or misprecition, so no spec tag
-        doAssert(!isValid(x.spec_tag), "FpuMulDiv should not carry any spec tag");
-        
-        // go to next stage
-        dispToRegQ.enq(ToSpecFifo {
-            data: FpuMulDivDispatchToRegRead {
-                execFunc: x.data.execFunc,
-                regs: x.regs,
-                tag: x.tag
-            },
-            spec_bits: x.spec_bits
-        });
-    endrule
-
     rule doRegReadFpuMulDiv;
-        dispToRegQ.deq;
-        let dispToReg = dispToRegQ.first;
-        let x = dispToReg.data;
-        if(verbose) $display("[doRegReadFpuMulDiv] ", fshow(dispToReg));
+        rsFpuMulDiv.deq;
+        let x = rsFpuMulDiv.first;
+        if(verbose) $display("[doRegReadFpuMulDiv] ", fshow(x));
+
+        // FPU MUL DIV never have branches, so no spec tag
+        doAssert(!isValid(x.data.spec_tag), "FpuMulDiv should not carry any spec tag");
 
         // check conservative scoreboard
-        let regsReady = inIfc.sbCons_lazyLookup(x.regs);
+        let regsReady = inIfc.sb_lookup(x.regs);
 
-        // get rVal1 (check bypass)
+        // get rVal1 (check bypass, stall automatically)
         Data rVal1 = ?;
         if(x.regs.src1 matches tagged Valid .src1) begin
             rVal1 <- readRFBypass(src1, regsReady.src1, inIfc.rf_rd1(src1), bypassWire);
         end
 
-        // get rVal2 (check bypass)
+        // get rVal2 (check bypass, stall automatically)
         Data rVal2 = ?;
         if(x.regs.src2 matches tagged Valid .src2) begin
             rVal2 <- readRFBypass(src2, regsReady.src2, inIfc.rf_rd2(src2), bypassWire);
         end
 
-        // get rVal3 (check bypass)
+        // get rVal3 (check bypass, stall automatically)
         Data rVal3 = ?;
         if(x.regs.src3 matches tagged Valid .src3) begin
             rVal3 <- readRFBypass(src3, regsReady.src3, inIfc.rf_rd3(src3), bypassWire);
@@ -186,14 +153,14 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         // go to next stage
         regToExeQ.enq(ToSpecFifo {
             data: FpuMulDivRegReadToExe {
-                execFunc: x.execFunc,
+                execFunc: x.data.execFunc,
                 dst: x.regs.dst,
                 tag: x.tag,
                 rVal1: rVal1,
                 rVal2: rVal2,
                 rVal3: rVal3
             },
-            spec_bits: dispToReg.spec_bits
+            spec_bits: x.spec_bits
         });
     endrule
 
@@ -223,7 +190,7 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
 
     function Action doFinish(Maybe#(PhyDst) dst, InstTag tag, Data data, Bit#(5) fflags);
     action
-        // write to register file
+        // write to bypass register file
         if(dst matches tagged Valid .valid_dst) begin
             inIfc.writeRegFile(valid_dst.indx, data);
         end
@@ -304,7 +271,6 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
 
     interface specUpdate = joinSpeculationUpdate(vec(
         rsFpuMulDiv.specUpdate,
-        dispToRegQ.specUpdate,
         regToExeQ.specUpdate,
         fpuExec.specUpdate,
         mulDivExec.specUpdate

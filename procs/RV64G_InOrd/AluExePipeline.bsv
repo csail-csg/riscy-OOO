@@ -34,27 +34,16 @@ import Exec::*;
 import Performance::*;
 import BrPred::*;
 import DirPredictor::*;
-import ReservationStationEhr::*;
+import InorderRS::*;
 import ReservationStationAlu::*;
 import ReorderBuffer::*;
 import SpecFifo::*;
 import HasSpecBits::*;
 import Bypass::*;
 
-// ALU pipeline has 4 stages
-// dispatch -> reg read -> exe -> finish (write reg)
-// bypass is sent out from the end of exe stage
-// and reg read stage will recv bypass
-
-typedef struct {
-    // inst info
-    DecodedInst dInst;
-    PhyRegs regs;
-    InstTag tag;
-    DirPredTrainInfo dpTrain;
-    // specualtion
-    Maybe#(SpecTag) spec_tag;
-} AluDispatchToRegRead deriving(Bits, Eq, FShow);
+// ALU pipeline has 3 stages
+// reg read -> exe -> finish (write reg)
+// bypass is sent from exe to reg read
 
 typedef struct {
     // inst info
@@ -85,20 +74,13 @@ typedef struct {
     Maybe#(SpecTag) spec_tag;
 } AluExeToFinish deriving(Bits, Eq, FShow);
 
-// XXX currently ALU/Br should not have any exception, so we don't have cause feild above
+// XXX currently ALU/Br should not have any exception, so we don't have cause field above
 // TODO FIXME In future, if branch target is unaligned to 4 bytes, we may have exception
 // and probably JR/JAL should NOT write dst reg when exception happens
 // However, currently JR/JAL renaming is included in the previous checkpoint
 // so we need to explicitly check exception and don't write reg
 
 // synthesized pipeline fifos
-typedef SpecFifo_SB_deq_enq_C_deq_enq#(1, AluDispatchToRegRead) AluDispToRegFifo;
-(* synthesize *)
-module mkAluDispToRegFifo(AluDispToRegFifo);
-    let m <- mkSpecFifo_SB_deq_enq_C_deq_enq(False);
-    return m;
-endmodule
-
 // this one must be 1 elem FIFO, otherwise we cannot get correct bypass
 typedef SpecFifo_SB_deq_enq_C_deq_enq#(1, AluRegReadToExe) AluRegToExeFifo;
 (* synthesize *)
@@ -125,8 +107,8 @@ typedef struct {
 } FetchTrainBP deriving(Bits, Eq, FShow);
 
 interface AluExeInput;
-    // conservative scoreboard check in reg read stage
-    method RegsReady sbCons_lazyLookup(PhyRegs r);
+    // scoreboard check in reg read stage
+    method RegsReady sb_lookup(PhyRegs r);
     // Phys reg file
     method Data rf_rd1(PhyRIndx rindx);
     method Data rf_rd2(PhyRIndx rindx);
@@ -140,11 +122,9 @@ interface AluExeInput;
     method Action fetch_train_predictors(FetchTrainBP train);
 
     // global broadcast methods
-    // set aggressive sb & wake up inst in RS
-    method Action setRegReadyAggr(PhyRIndx dst);
-    // send bypass from exe and finish stage
-    interface Vector#(2, SendBypass) sendBypass;
-    // write reg file & set conservative sb
+    // send bypass from exe stage
+    interface SendBypass sendBypass;
+    // write reg file & sb
     method Action writeRegFile(PhyRIndx dst, Data data);
     // redirect
     method Action redirect(Addr new_pc, SpecTag spec_tag, InstTag inst_tag);
@@ -156,8 +136,8 @@ interface AluExeInput;
 endinterface
 
 interface AluExePipeline;
-    // recv bypass from exe and finish stages of each ALU pipeline
-    interface Vector#(TMul#(2, AluExeNum), RecvBypass) recvBypass;
+    // recv bypass from exe stage of each ALU pipeline
+    interface Vector#(AluExeNum, RecvBypass) recvBypass;
     interface ReservationStationAlu rsAluIfc;
     interface SpeculationUpdate specUpdate;
     method Data getPerf(ExeStagePerfType t);
@@ -169,14 +149,10 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
     // alu reservation station
     ReservationStationAlu rsAlu <- mkReservationStationAlu;
     // pipeline fifos
-    let dispToRegQ <- mkAluDispToRegFifo;
     let regToExeQ <- mkAluRegToExeFifo;
     let exeToFinQ <- mkAluExeToFinFifo;
     // wire to recv bypass
-    Vector#(TMul#(2, AluExeNum), RWire#(Tuple2#(PhyRIndx, Data))) bypassWire <- replicateM(mkRWire);
-    // index to send bypass, ordering doesn't matter
-    Integer exeSendBypassPort = 0;
-    Integer finishSendBypassPort = 1;
+    Vector#(AluExeNum, RWire#(Tuple2#(PhyRIndx, Data))) bypassWire <- replicateM(mkRWire);
 
 `ifdef PERF_COUNT
     // performance counters
@@ -185,39 +161,15 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
     Count#(Data) exeRedirectOtherCnt <- mkCount(0);
 `endif
 
-    rule doDispatchAlu;
-        rsAlu.doDispatch;
-        let x = rsAlu.dispatchData;
-        if(verbose) $display("[doDispatchAlu] ", fshow(x));
-
-        // set reg ready aggressively
-        if(x.regs.dst matches tagged Valid .dst) begin
-            inIfc.setRegReadyAggr(dst.indx);
-        end
-        
-        // go to next stage
-        dispToRegQ.enq(ToSpecFifo {
-            data: AluDispatchToRegRead {
-                dInst: x.data.dInst,
-                regs: x.regs,
-                tag: x.tag,
-                dpTrain: x.data.dpTrain,
-                spec_tag: x.spec_tag
-            },
-            spec_bits: x.spec_bits
-        });
-    endrule
-
     rule doRegReadAlu;
-        dispToRegQ.deq;
-        let dispToReg = dispToRegQ.first;
-        let x = dispToReg.data;
-        if(verbose) $display("[doRegReadAlu] ", fshow(dispToReg));
+        rsAlu.deq;
+        let x = rsAlu.first;
+        if(verbose) $display("[doRegReadAlu] ", fshow(x));
 
-        // check conservative scoreboard
-        let regsReady = inIfc.sbCons_lazyLookup(x.regs);
+        // check scoreboard
+        let regsReady = inIfc.sbCons_lookup(x.regs);
 
-        // get rVal1 (check bypass)
+        // get rVal1 (check bypass, stall automatically)
         Data rVal1 = ?;
         if(x.dInst.csr matches tagged Valid .csr) begin
             rVal1 = inIfc.csrf_rd(csr);
@@ -226,7 +178,7 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
             rVal1 <- readRFBypass(src1, regsReady.src1, inIfc.rf_rd1(src1), bypassWire);
         end
 
-        // get rVal2 (check bypass)
+        // get rVal2 (check bypass, stall automatically)
         Data rVal2 = ?;
         if(x.regs.src2 matches tagged Valid .src2) begin
             rVal2 <- readRFBypass(src2, regsReady.src2, inIfc.rf_rd2(src2), bypassWire);
@@ -239,17 +191,17 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
         // go to next stage
         regToExeQ.enq(ToSpecFifo {
             data: AluRegReadToExe {
-                dInst: x.dInst,
+                dInst: x.data.dInst,
                 dst: x.regs.dst,
                 tag: x.tag,
-                dpTrain: x.dpTrain,
+                dpTrain: x.data.dpTrain,
                 rVal1: rVal1,
                 rVal2: rVal2,
                 pc: pc,
                 ppc: ppc,
                 spec_tag: x.spec_tag
             },
-            spec_bits: dispToReg.spec_bits
+            spec_bits: x.spec_bits
         });
     endrule
 
@@ -271,7 +223,7 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
 
         // send bypass
         if(x.dst matches tagged Valid .dst) begin
-            inIfc.sendBypass[exeSendBypassPort].send(dst.indx, exec_result.data);
+            inIfc.sendBypass.send(dst.indx, exec_result.data);
         end
 
         // go to next stage
@@ -296,9 +248,8 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
         let x = exeToFin.data;
         if(verbose) $display("[doFinishAlu] ", fshow(exeToFin));
 
-        // send bypass & write reg file
+        // write bypass reg file
         if(x.dst matches tagged Valid .dst) begin
-            inIfc.sendBypass[finishSendBypassPort].send(dst.indx, x.data);
             inIfc.writeRegFile(dst.indx, x.data);
         end
 
@@ -363,7 +314,6 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
 
     interface specUpdate = joinSpeculationUpdate(vec(
         rsAlu.specUpdate,
-        dispToRegQ.specUpdate,
         regToExeQ.specUpdate,
         exeToFinQ.specUpdate
     ));

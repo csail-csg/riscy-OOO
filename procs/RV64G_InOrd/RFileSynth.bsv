@@ -21,14 +21,15 @@
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-`include "ProcConfig.bsv"
 import PhysRFile::*;
 import SynthParam::*;
+
+// BYPASS reg file: writes < reads
 
 typedef RFile#(RFileWrPortNum, RFileRdPortNum) RFileSynth;
 
 (* synthesize *)
 module mkRFileSynth(RFileSynth);
-    let m <- mkRFile(`LAZY_RS_RF);
+    let m <- mkRFile(False);
     return m;
 endmodule

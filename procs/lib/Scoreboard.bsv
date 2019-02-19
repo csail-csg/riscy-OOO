@@ -252,3 +252,73 @@ module mkRenamingScoreboard(RenamingScoreboard#(setReadyNum, lazyLookupNum)) pro
 
     interface setReady = setReadyIfc;
 endmodule
+
+
+// BYPASS scoreboard to use with register renaming in an in-order core
+// setReady < lookup < setBusy
+interface InorderRenamingScoreboard#(
+    numeric type setReadyNum, numeric type lookupNum
+);
+    interface Vector#(lookupNum, SbLookup) lookup; // together with RF read
+    interface Vector#(SupSize, SbSetBusy) setBusy; // at rename
+    interface Vector#(setReadyNum, Put#(PhyRIndx)) setReady; // exe finishes
+endinterface
+
+module mkInorderRenamingScoreboard(
+    InorderRenamingScoreboard#(setReadyNum, lookupNum)
+) provisos (
+    NumAlias#(portNum, TAdd#(SupSize, setReadyNum)) 
+);
+    // sb[i] == False => register ready to read
+    // sb[i] == True => register will be written soon, not ready to read
+    Vector#(NumPhyReg, Ehr#(portNum, Bool)) sb <- replicateM(mkEhr(False));
+
+    function Integer setReady_port(Integer i) = i;
+    function Integer lookup_port = valueof(setReadyNum);
+    function Integer setBusy_port(Integer i) = i + valueof(setReadyNum);
+
+    // function to derive set ready interface
+    function Put#(PhyIndx) getSetReadyIfc(Integer i);
+        return (interface Put;
+            method Action put(PhyRIndx dst);
+                sb[dst][setReady_port(i)] <= False;
+            endmethod
+        endinterface);
+    endfunction
+
+    // function to derive lookup interface
+    function SbLookup getLookupIfc(Integer i);
+        Vector#(NumPhyReg, Bool) sbVec = readVEhr(lookup_port, sb);
+        return (interface SbLookup;
+            method RegsReady get(PhyRegs r);
+                // everything is ready by default
+                RegsReady ret = RegsReady{src1: True, src2: True, src3: True, dst: True};
+                if (r.src1 matches tagged Valid .x) begin
+                    ret.src1 = !sbVec[x];
+                end
+                if (r.src2 matches tagged Valid .x) begin
+                    ret.src2 = !sbVec[x];
+                end
+                if (r.src3 matches tagged Valid .x) begin
+                    ret.src3 = !sbVec[x];
+                end
+                return ret;
+            endmethod
+        endinterface);
+    endfunction
+
+    // function to derive set busy interface
+    function SbSetBusy getSetBusyIfc(Integer i);
+        return (interface SbSetBusy;
+            method Action set(Maybe#(PhyDst) dst);
+                if (dst matches tagged Valid .valid_dst) begin
+                    sb[valid_dst.indx][setBusy_port(i)] <= True;
+                end
+            endmethod
+        endinterface);
+    endfunction
+
+    interface setBusy = map(getSetBusyIfc, genVector);
+    interface eagerLookup = map(getEagerLookupIfc, genVector);
+    interface setReady = map(getSetReadyIfc, genVector);
+endmodule

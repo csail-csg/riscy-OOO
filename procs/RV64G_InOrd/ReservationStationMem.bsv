@@ -24,7 +24,7 @@
 `include "ProcConfig.bsv"
 import Types::*;
 import ProcTypes::*;
-import ReservationStationEhr::*;
+import InorderRS::*;
 import SynthParam::*;
 
 typedef struct {
@@ -33,10 +33,9 @@ typedef struct {
     LdStQTag ldstq_tag;
 } MemRSData deriving(Bits, Eq, FShow);
 
-// MEM pipeline is aggressive, i.e. it recv bypass and early RS wakeup
-typedef ReservationStation#(`RS_MEM_SIZE, WrAggrPortNum, MemRSData) ReservationStationMem;
+typedef InorderRS#(`RS_MEM_SIZE, MemRSData) ReservationStationMem;
 (* synthesize *)
 module mkReservationStationMem(ReservationStationMem);
-    let m <- mkReservationStation(`LAZY_RS_RF, `RS_LAZY_ENQ, False);
+    let m <- mkReservationStation(`RS_LAZY_ENQ, False);
     return m;
 endmodule

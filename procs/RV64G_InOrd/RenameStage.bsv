@@ -42,7 +42,7 @@ import ScoreboardSynth::*;
 import CsrFile::*;
 import SpecTagManager::*;
 import EpochManager::*;
-import ReservationStationEhr::*;
+import InorderRS::*;
 import ReservationStationAlu::*;
 import ReservationStationMem::*;
 import ReservationStationFpuMulDiv::*;
@@ -58,8 +58,7 @@ interface RenameInput;
     interface FetchStage fetchIfc; // just for debug
     interface ReorderBufferSynth robIfc;
     interface RegRenamingTable rtIfc;
-    interface ScoreboardCons sbConsIfc;
-    interface ScoreboardAggr sbAggrIfc;
+    interface ScoreboardSynth sbIfc;
     interface CsrFile csrfIfc;
     interface EpochManager emIfc;
     interface SpecTagManager smIfc;
@@ -92,8 +91,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     FetchStage fetchStage = inIfc.fetchIfc;
     ReorderBufferSynth rob = inIfc.robIfc;
     RegRenamingTable regRenamingTable = inIfc.rtIfc;
-    ScoreboardCons sbCons = inIfc.sbConsIfc;
-    ScoreboardAggr sbAggr = inIfc.sbAggrIfc;
+    ScoreboardSynth sb = inIfc.sbConsIfc;
     CsrFile csrf = inIfc.csrfIfc;
     EpochManager epochManager = inIfc.emIfc;
     SpecTagManager specTagManager = inIfc.smIfc;
@@ -268,12 +266,10 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 
     // print rename info
     function Action printRename(Integer i,
-                                RegsReady regs_ready_cons,
-                                RegsReady regs_ready_aggr,
                                 ArchRegs arch_regs,
                                 PhyRegs phy_regs);
     action
-        $display("  [doRenaming - %d] regs_ready: cons ", i, fshow(regs_ready_cons), " ; aggr ", fshow(regs_ready_aggr));
+        $display("  [doRenaming - %d]", i);
         if (arch_regs.src1 matches tagged Valid .valid_src) begin
             if (phy_regs.src1 matches tagged Valid .valid_src_renamed) begin
                 $display("    [SRC RENAMING] ", fshow(valid_src), " -> ", fshow(valid_src_renamed));
@@ -346,15 +342,12 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
         let phy_regs = rename_result.phy_regs;
         regRenamingTable.rename[0].claimRename(arch_regs, spec_bits);
 
-        // scoreboard lookup
-        let regs_ready_cons = sbCons.eagerLookup[0].get(phy_regs);
-        let regs_ready_aggr = sbAggr.eagerLookup[0].get(phy_regs);
-        sbCons.setBusy[0].set(phy_regs.dst);
-        sbAggr.setBusy[0].set(phy_regs.dst);
+        // scoreboard set busy
+        sb.setBusy[0].set(phy_regs.dst);
 
         // print rename info
         if (verbose) begin
-            printRename(0, regs_ready_cons, regs_ready_aggr, arch_regs, phy_regs);
+            printRename(0, arch_regs, phy_regs);
         end
 
         // get ROB tag
@@ -378,13 +371,12 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
 
         // send to ALU reservation station
         if (to_exec) begin
-            reservationStationAlu[0].enq(ToReservationStation {
+            reservationStationAlu[0].enq(ToInorderRS {
                 data: AluRSData {dInst: dInst, dpTrain: dpTrain},
                 regs: phy_regs,
                 tag: inst_tag,
                 spec_bits: spec_bits,
-                spec_tag: Invalid,
-                regs_ready: regs_ready_aggr // alu will recv bypass
+                spec_tag: Invalid
             });
         end
 
@@ -563,10 +555,6 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                     let rename_result = regRenamingTable.rename[i].getRename(arch_regs);
                     let phy_regs = rename_result.phy_regs;
 
-                    // scoreboard lookup
-                    let regs_ready_cons = sbCons.eagerLookup[i].get(phy_regs);
-                    let regs_ready_aggr = sbAggr.eagerLookup[i].get(phy_regs);
-
                     // get ROB tag
                     let inst_tag = rob.enqPort[i].getEnqInstTag;
 
@@ -597,13 +585,12 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                         if(scheduleRS(aluRSCount, aluReady) matches tagged Valid .k) begin
                             // can process, send to ALU rs
                             aluExeUsed[k] = True; // mark resource used
-                            reservationStationAlu[k].enq(ToReservationStation {
+                            reservationStationAlu[k].enq(ToInorderRS {
                                 data: AluRSData {dInst: dInst, dpTrain: dpTrain},
                                 regs: phy_regs,
                                 tag: inst_tag,
                                 spec_bits: spec_bits,
-                                spec_tag: spec_tag,
-                                regs_ready: regs_ready_aggr // alu will recv bypass
+                                spec_tag: spec_tag
                             });
                         end
                         else begin
@@ -617,13 +604,12 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                         if(scheduleRS(fpuMulDivRSCount, fpuMulDivReady) matches tagged Valid .k) begin
                             // can process, send to FPU MUL DIV rs
                             fpuMulDivExeUsed[k] = True; // mark resource used
-                            reservationStationFpuMulDiv[k].enq(ToReservationStation {
+                            reservationStationFpuMulDiv[k].enq(ToInorderRS {
                                 data: FpuMulDivRSData {execFunc: dInst.execFunc},
                                 regs: phy_regs,
                                 tag: inst_tag,
                                 spec_bits: spec_bits,
-                                spec_tag: spec_tag,
-                                regs_ready: regs_ready_aggr // fpu mul div recv bypass
+                                spec_tag: spec_tag
                             });
                             doAssert(ppc == pc + 4, "FpuMulDiv next PC is not PC+4");
                             doAssert(!isValid(dInst.csr), "FpuMulDiv never explicitly read/write CSR");
@@ -643,7 +629,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 // can process, send to Mem rs and LSQ
                                 memExeUsed = True; // mark resource used
                                 lsq_tag = lsqTag; // record LSQ tag
-                                reservationStationMem.enq(ToReservationStation {
+                                reservationStationMem.enq(ToInorderRS {
                                     data: MemRSData {
                                         mem_func: mem_inst.mem_func,
                                         imm: validValue(dInst.imm),
@@ -652,8 +638,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                     regs: phy_regs,
                                     tag: inst_tag,
                                     spec_bits: spec_bits,
-                                    spec_tag: spec_tag,
-                                    regs_ready: regs_ready_aggr // mem currently recv bypass
+                                    spec_tag: spec_tag
                                 });
                                 doAssert(ppc == pc + 4, "Mem next PC is not PC+4");
                                 doAssert(!isValid(dInst.csr), "Mem never explicitly read/write CSR");
@@ -696,12 +681,11 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                         regRenamingTable.rename[i].claimRename(arch_regs, renaming_spec_bits);
 
                         // Scoreboard Operations
-                        sbCons.setBusy[i].set(phy_regs.dst);
-                        sbAggr.setBusy[i].set(phy_regs.dst);
+                        sb.setBusy[i].set(phy_regs.dst);
 
                         // display information
                         if (verbose) begin
-                            printRename(i, regs_ready_cons, regs_ready_aggr, arch_regs, phy_regs);
+                            printRename(i, arch_regs, phy_regs);
                         end
 
                         // Enqueue into reorder buffer

@@ -34,7 +34,7 @@ import MemoryTypes::*;
 import SynthParam::*;
 import Exec::*;
 import Performance::*;
-import ReservationStationEhr::*;
+import InorderRS::*;
 import ReservationStationMem::*;
 import ReorderBuffer::*;
 import TlbTypes::*;
@@ -100,13 +100,6 @@ typedef struct {
 } WaitStResp deriving(Bits, Eq, FShow);
 
 // synthesized pipeline fifos
-typedef SpecFifo_SB_deq_enq_C_deq_enq#(1, MemDispatchToRegRead) MemDispToRegFifo;
-(* synthesize *)
-module mkMemDispToRegFifo(MemDispToRegFifo);
-    let m <- mkSpecFifo_SB_deq_enq_C_deq_enq(False);
-    return m;
-endmodule
-
 typedef SpecFifo_SB_deq_enq_C_deq_enq#(1, MemRegReadToExe) MemRegToExeFifo;
 (* synthesize *)
 module mkMemRegToExeFifo(MemRegToExeFifo);
@@ -132,7 +125,7 @@ endmodule
 
 interface MemExeInput;
     // conservative scoreboard check in reg read stage
-    method RegsReady sbCons_lazyLookup(PhyRegs r);
+    method RegsReady sb_lookup(PhyRegs r);
     // Phys reg file
     method Data rf_rd1(PhyRIndx rindx);
     method Data rf_rd2(PhyRIndx rindx);
@@ -149,10 +142,7 @@ interface MemExeInput;
     method Action mmioRespDeq;
 
     // global broadcast methods
-    // set aggressive sb & wake up RS 
-    method Action setRegReadyAggr_mem(PhyRIndx dst);
-    method Action setRegReadyAggr_forward(PhyRIndx dst);
-    // write reg file & set conservative sb
+    // write reg file & sb (with bypass)
     method Action writeRegFile(PhyRIndx dst, Data data);
 
     // performance
@@ -161,7 +151,7 @@ endinterface
 
 interface MemExePipeline;
     // recv bypass from exe and finish stages of each ALU pipeline
-    interface Vector#(TMul#(2, AluExeNum), RecvBypass) recvBypass;
+    interface Vector#(AluExeNum, RecvBypass) recvBypass;
     interface ReservationStationMem rsMemIfc;
     interface DTlbSynth dTlbIfc;
     interface SplitLSQ lsqIfc;
@@ -202,11 +192,10 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     ReservationStationMem rsMem <- mkReservationStationMem;
 
     // pipeline fifos
-    let dispToRegQ <- mkMemDispToRegFifo;
     let regToExeQ <- mkMemRegToExeFifo;
 
     // wire to recv bypass
-    Vector#(TMul#(2, AluExeNum), RWire#(Tuple2#(PhyRIndx, Data))) bypassWire <- replicateM(mkRWire);
+    Vector#(AluExeNum, RWire#(Tuple2#(PhyRIndx, Data))) bypassWire <- replicateM(mkRWire);
 
     // TLB
     DTlbSynth dTlb <- mkDTlbSynth;
@@ -251,9 +240,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             // early wake up RS and set SB
             // this is done only when the resp is not wrong path
             LSQHitInfo info <- lsq.getHit(Ld (tag));
-            if(info.dst matches tagged Valid .dst &&& !info.waitWPResp) begin
-                inIfc.setRegReadyAggr_mem(dst.indx);
-            end
             if(verbose) begin
                 $display("[Ld resp] ", fshow(id), "; ", fshow(d), "; ", fshow(info));
             end
@@ -325,24 +311,42 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // Reservation Station Stuff
     //=======================================================
 
-    rule doDispatchMem;
-        rsMem.doDispatch;
-        let x = rsMem.dispatchData;
-        if(verbose) $display("[doDispatchMem] ", fshow(x));
+    rule doRegReadMem;
+        rsMem.deq;
+        let x = rsMem.first;
+        if(verbose) $display("[doRegReadMem] ", fshow(x));
 
         // check store not having dst reg: this is for setting store to be
         // executed after address transation
         doAssert(!(x.data.mem_func == St && isValid(x.regs.dst)),
                  "St cannot have dst reg");
+        // Mem insts never branch, no spec tag
+        doAssert(!isValid(x.data.spec_tag), "Mem should not carry any spec tag");
         
+        // check conservative scoreboard
+        let regsReady = inIfc.sb_lookup(x.regs);
+
+        // get rVal1 (check bypass, stall automatically)
+        Data rVal1 = ?;
+        if(x.regs.src1 matches tagged Valid .src1) begin
+            rVal1 <- readRFBypass(src1, regsReady.src1, inIfc.rf_rd1(src1), bypassWire);
+        end
+
+        // get rVal2 (check bypass, stall automatically)
+        Data rVal2 = ?;
+        if(x.regs.src2 matches tagged Valid .src2) begin
+            rVal2 <- readRFBypass(src2, regsReady.src2, inIfc.rf_rd2(src2), bypassWire);
+        end
+
         // go to next stage
-        dispToRegQ.enq(ToSpecFifo {
-            data: MemDispatchToRegRead {
+        regToExeQ.enq(ToSpecFifo {
+            data: MemRegReadToExe {
                 mem_func: x.data.mem_func,
                 imm: x.data.imm,
-                regs: x.regs,
                 tag: x.tag,
-                ldstq_tag: x.data.ldstq_tag
+                ldstq_tag: x.data.ldstq_tag,
+                rVal1: rVal1,
+                rVal2: rVal2
             },
             spec_bits: x.spec_bits
         });
@@ -353,41 +357,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             ldToUseLatTimer.start(idx);
         end
 `endif
-    endrule
-
-    rule doRegReadMem;
-        dispToRegQ.deq;
-        let dispToReg = dispToRegQ.first;
-        let x = dispToReg.data;
-        if(verbose) $display("[doRegReadMem] ", fshow(dispToReg));
-
-        // check conservative scoreboard
-        let regsReady = inIfc.sbCons_lazyLookup(x.regs);
-
-        // get rVal1 (check bypass)
-        Data rVal1 = ?;
-        if(x.regs.src1 matches tagged Valid .src1) begin
-            rVal1 <- readRFBypass(src1, regsReady.src1, inIfc.rf_rd1(src1), bypassWire);
-        end
-
-        // get rVal2 (check bypass)
-        Data rVal2 = ?;
-        if(x.regs.src2 matches tagged Valid .src2) begin
-            rVal2 <- readRFBypass(src2, regsReady.src2, inIfc.rf_rd2(src2), bypassWire);
-        end
-
-        // go to next stage
-        regToExeQ.enq(ToSpecFifo {
-            data: MemRegReadToExe {
-                mem_func: x.mem_func,
-                imm: x.imm,
-                tag: x.tag,
-                ldstq_tag: x.ldstq_tag,
-                rVal1: rVal1,
-                rVal2: rVal2
-            },
-            spec_bits: dispToReg.spec_bits
-        });
     endrule
 
     rule doExeMem;
@@ -534,10 +503,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // summarize
         if(issRes matches tagged Forward .forward) begin
             forwardQ.enq(tuple2(info.tag, forward.data));
-            // early wake up
-            if(forward.dst matches tagged Valid .dst) begin
-                inIfc.setRegReadyAggr_forward(dst.indx);
-            end
 `ifdef PERF_COUNT
             // perf: load forward
             if(inIfc.doStats) begin
@@ -577,18 +542,18 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doIssueLd(info, True);
     endrule
 
-    // we have ordered setRegReadyAggr_forward < setRegReadyAggr_mem to make
-    // issue rule and cache resp rule to fire concurrently in weak model.
-    // However, in TSO, when doAssert is removed in FPGA synthesis, lsq.deqLd
-    // and lsq.issueLd are conflict-free with each other. This makes
-    // doDeqLdQ_XX_deq rules ordered after doIssueLdFromXX rules, and leads to
-    // schedule cycles (because bluespec compiler picks sub-optimal conflicts
-    // to resolve some cycles). Therefore we manually create conflict and
-    // precedence here using preempts.
-    (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromUpdate" *)
-    (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromIssueQ" *)
-    (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromUpdate" *)
-    (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromIssueQ" *)
+    // // we have ordered setRegReadyAggr_forward < setRegReadyAggr_mem to make
+    // // issue rule and cache resp rule to fire concurrently in weak model.
+    // // However, in TSO, when doAssert is removed in FPGA synthesis, lsq.deqLd
+    // // and lsq.issueLd are conflict-free with each other. This makes
+    // // doDeqLdQ_XX_deq rules ordered after doIssueLdFromXX rules, and leads to
+    // // schedule cycles (because bluespec compiler picks sub-optimal conflicts
+    // // to resolve some cycles). Therefore we manually create conflict and
+    // // precedence here using preempts.
+    // (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromUpdate" *)
+    // (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromIssueQ" *)
+    // (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromUpdate" *)
+    // (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromIssueQ" *)
 
     (* descending_urgency = "doIssueLdFromIssueQ, doIssueLdFromUpdate" *) // prioritize older load
     rule doIssueLdFromUpdate(issueLd.wget matches tagged Valid .info);
@@ -602,6 +567,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         LSQRespLdResult res <- lsq.respLd(tag, data);
         if(verbose) $display(rule_name, " ", fshow(tag), "; ", fshow(data), "; ", fshow(res));
         if(res.dst matches tagged Valid .dst) begin
+            // write bypass reg file and sb
             inIfc.writeRegFile(dst.indx, res.data);
 `ifdef PERF_COUNT
             // perf: load to use latency
@@ -695,10 +661,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // get resp data (need shifting)
         let d <- toGet(respLrScAmoQ).get;
         Data resp = gatherLoad(lsqDeqLd.paddr, lsqDeqLd.byteEn, lsqDeqLd.unsignedLd, d); 
-        // write reg file & set ROB as Executed & wakeup rs
+        // write bypass reg file and sb & set ROB as Executed
         if(lsqDeqLd.dst matches tagged Valid .dst) begin
             inIfc.writeRegFile(dst.indx, resp);
-            inIfc.setRegReadyAggr_mem(dst.indx);
         end
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, Invalid);
         if(verbose) $display("[doDeqLdQ_Lr_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
@@ -748,10 +713,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // get resp (need to shift data)
         let d = inIfc.mmioRespVal.data;
         Data resp = gatherLoad(lsqDeqLd.paddr, lsqDeqLd.byteEn, lsqDeqLd.unsignedLd, d);
-        // write reg file & wakeup rs (this wakeup is late but MMIO is rare) & set ROB as Executed
+        // write bypass reg file and sb & set ROB as Executed
         if(lsqDeqLd.dst matches tagged Valid .dst) begin
             inIfc.writeRegFile(dst.indx, resp);
-            inIfc.setRegReadyAggr_mem(dst.indx);
         end
         inIfc.rob_setExecuted_deqLSQ(lsqDeqLd.instTag, Invalid, Invalid);
         if(verbose) $display("[doDeqLdQ_MMIO_deq] ", fshow(lsqDeqLd), "; ", fshow(d), "; ", fshow(resp));
@@ -886,10 +850,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         waitLrScAmoMMIOResp <= Invalid;
         // get resp data (no need to shift for Sc and Amo)
         Data resp <- toGet(respLrScAmoQ).get;
-        // write reg file & set ROB as Executed & wake up rs
+        // write bypass reg file and sb & set ROB as Executed
         if(lsqDeqSt.dst matches tagged Valid .dst) begin
             inIfc.writeRegFile(dst.indx, resp);
-            inIfc.setRegReadyAggr_mem(dst.indx);
         end
         inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, Invalid);
         if(verbose) $display("[doDeqStQ_ScAmo_deq] ", fshow(lsqDeqSt), "; ", fshow(resp));
@@ -943,10 +906,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         waitLrScAmoMMIOResp <= Invalid;
         // get resp (no need to shift for AMO)
         Data resp = inIfc.mmioRespVal.data;
-        // write reg file & wakeup rs (this wakeup is late but MMIO is rare) & set ROB as Executed
+        // write bypass reg file and sb & set ROB as Executed
         if(lsqDeqSt.dst matches tagged Valid .dst) begin
             inIfc.writeRegFile(dst.indx, resp);
-            inIfc.setRegReadyAggr_mem(dst.indx);
         end
         inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, Invalid);
         if(verbose) $display("[doDeqStQ_MMIO_deq] ", fshow(lsqDeqSt), "; ", fshow(resp));
@@ -1022,7 +984,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     interface dMemIfc = dMem;
     interface specUpdate = joinSpeculationUpdate(vec(
         rsMem.specUpdate,
-        dispToRegQ.specUpdate,
         regToExeQ.specUpdate,
         dTlb.specUpdate,
         lsq.specUpdate

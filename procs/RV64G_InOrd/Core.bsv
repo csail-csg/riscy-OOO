@@ -62,7 +62,7 @@ import ScoreboardSynth::*;
 import SpecTagManager::*;
 import Fpu::*;
 import MulDiv::*;
-import ReservationStationEhr::*;
+import InorderRS::*;
 import ReservationStationAlu::*;
 import ReservationStationMem::*;
 import ReservationStationFpuMulDiv::*;
@@ -157,21 +157,12 @@ module mkCore#(CoreId coreId)(Core);
 
     // back end
     RFileSynth rf <- mkRFileSynth;
+    ScoreboardSynth sb <- mkScoreboardSynth; // sb is tied with RF
     CsrFile csrf <- mkCsrFile(zeroExtend(coreId)); // hartid in CSRF should be core id
     RegRenamingTable regRenamingTable <- mkRegRenamingTable;
     EpochManager epochManager <- mkEpochManager;
     SpecTagManager specTagManager <- mkSpecTagManager;
     ReorderBufferSynth rob <- mkReorderBufferSynth;
-
-    // We have two scoreboards: one conservative and other aggressive
-    // - Aggressive sb is checked at rename stage, so inst after rename may be issued early
-    // - Conservative sb is checked at reg read stage, to ensure correctness
-    // Every pipeline should set both sb if it needs to write reg
-    // - Conservative sb is set when data is written into rf
-    // - Aggressive sb is set when pipeline sends out wakeup for reservation staion
-    //   Note that wakeup can be sent early if it knows when the data will be produced
-    ScoreboardCons sbCons <- mkScoreboardCons; // conservative sb
-    ScoreboardAggr sbAggr <- mkScoreboardAggr; // aggressive sb
 
     // MMIO: need to track in flight CSR inst or interrupt; note we can at most
     // 1 CSR inst or 1 interrupt in ROB, so just use 1 bit track it. Commit
@@ -212,61 +203,19 @@ module mkCore#(CoreId coreId)(Core);
         // whether perf data is collected
         Reg#(Bool) doStatsReg <- mkConfigReg(False); 
 
-        // redirect func
-        //function Action redirectFunc(Addr trap_pc, Maybe#(SpecTag) spec_tag, InstTag inst_tag );
-        //action
-        //    if (verbose) $fdisplay(stdout, "[redirect_action] new pc = 0x%8x, spec_tag = ", trap_pc, fshow(spec_tag));
-        //    epochManager.redirect;
-        //    fetchStage.redirect(trap_pc);
-        //    if (spec_tag matches tagged Valid .valid_spec_tag) begin
-        //        globalSpecUpdate.incorrectSpec(valid_spec_tag, inst_tag);
-        //    end
-        //endaction
-        //endfunction
-
-        // write aggressive elements + wakupe reservation stations
-        function Action writeAggr(Integer wrAggrPort, PhyRIndx dst);
+        // write bypass rf and sb
+        function Action writeReg(Integer wrPort, PhyRIndx dst, Data data);
         action
-            sbAggr.setReady[wrAggrPort].put(dst);
-            for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
-                fix.aluExeIfc[i].rsAluIfc.setRegReady[wrAggrPort].put(Valid (dst));
-            end
-            for(Integer i = 0; i < valueof(FpuMulDivExeNum); i = i+1) begin
-                fix.fpuMulDivExeIfc[i].rsFpuMulDivIfc.setRegReady[wrAggrPort].put(Valid (dst));
-            end
-            fix.memExeIfc.rsMemIfc.setRegReady[wrAggrPort].put(Valid (dst));
-        endaction
-        endfunction
-
-        // write conservative elements
-        function Action writeCons(Integer wrConsPort, PhyRIndx dst, Data data);
-        action
-            rf.write[wrConsPort].wr(dst, data);
-            sbCons.setReady[wrConsPort].put(dst);
+            rf.write[wrPort].wr(dst, data);
+            sb.setReady[wrPort].put(dst);
         endaction
         endfunction
 
         Vector#(AluExeNum, FIFO#(FetchTrainBP)) trainBPQ <- replicateM(mkFIFO);
         Vector#(AluExeNum, AluExePipeline) aluExe;
         for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
-            Vector#(2, SendBypass) sendBypassIfc; // exe and finish
-            for(Integer sendPort = 0; sendPort < 2; sendPort = sendPort + 1) begin
-                sendBypassIfc[sendPort] = (interface SendBypass;
-                    method Action send(PhyRIndx dst, Data data);
-                        // broadcast bypass
-                        Integer recvPort = valueof(AluExeNum) * sendPort + i;
-                        for(Integer j = 0; j < valueof(FpuMulDivExeNum); j = j+1) begin
-                            fix.fpuMulDivExeIfc[j].recvBypass[recvPort].recv(dst, data);
-                        end
-                        fix.memExeIfc.recvBypass[recvPort].recv(dst, data);
-                        for(Integer j = 0; j < valueof(AluExeNum); j = j+1) begin
-                            fix.aluExeIfc[j].recvBypass[recvPort].recv(dst, data);
-                        end
-                    endmethod
-                endinterface);
-            end
             let aluExeInput = (interface AluExeInput;
-                method sbCons_lazyLookup = sbCons.lazyLookup[aluRdPort(i)].get;
+                method sb_lookup = sb.lookup[aluRdPort(i)].get;
                 method rf_rd1 = rf.read[aluRdPort(i)].rd1;
                 method rf_rd2 = rf.read[aluRdPort(i)].rd2;
                 method csrf_rd = csrf.rd;
@@ -275,8 +224,20 @@ module mkCore#(CoreId coreId)(Core);
                 method rob_setExecuted = rob.setExecuted_doFinishAlu[i].set;
                 method fetch_train_predictors = toPut(trainBPQ[i]).put;
                 method setRegReadyAggr = writeAggr(aluWrAggrPort(i));
-                interface sendBypass = sendBypassIfc;
-                method writeRegFile = writeCons(aluWrConsPort(i));
+                interface SendBypass sendBypass;
+                    method Action send(PhyRIndx dst, Data data);
+                        // broadcast bypass
+                        Integer recvPort = i;
+                        for(Integer j = 0; j < valueof(FpuMulDivExeNum); j = j+1) begin
+                            fix.fpuMulDivExeIfc[j].recvBypass[recvPort].recv(dst, data);
+                        end
+                        fix.memExeIfc.recvBypass[recvPort].recv(dst, data);
+                        for(Integer j = 0; j < valueof(AluExeNum); j = j+1) begin
+                            fix.aluExeIfc[j].recvBypass[recvPort].recv(dst, data);
+                        end
+                    endmethod
+                endinterface
+                method writeRegFile = writeReg(aluWrPort(i));
                 method Action redirect(Addr new_pc, SpecTag spec_tag, InstTag inst_tag);
                     if (verbose) begin
                         $display("[ALU redirect - %d] ", i, fshow(new_pc),
@@ -303,24 +264,21 @@ module mkCore#(CoreId coreId)(Core);
         Vector#(FpuMulDivExeNum, FpuMulDivExePipeline) fpuMulDivExe;
         for(Integer i = 0; i < valueof(FpuMulDivExeNum); i = i+1) begin
             let fpuMulDivExeInput = (interface FpuMulDivExeInput;
-                method sbCons_lazyLookup = sbCons.lazyLookup[fpuMulDivRdPort(i)].get;
+                method sb_lookup = sb.lookup[fpuMulDivRdPort(i)].get;
                 method rf_rd1 = rf.read[fpuMulDivRdPort(i)].rd1;
                 method rf_rd2 = rf.read[fpuMulDivRdPort(i)].rd2;
                 method rf_rd3 = rf.read[fpuMulDivRdPort(i)].rd3;
                 method csrf_rd = csrf.rd;
                 method rob_setExecuted = rob.setExecuted_doFinishFpuMulDiv[i].set;
-                method Action writeRegFile(PhyRIndx dst, Data data);
-                    writeAggr(fpuMulDivWrAggrPort(i), dst);
-                    writeCons(fpuMulDivWrConsPort(i), dst, data);
-                endmethod
-                method conflictWrongSpec = globalSpecUpdate.conflictWrongSpec[finishFpuMulDivConflictWrongSpecPort(i)].put(?);
+                method writeRegFile = writeReg(fpuMulDivWrConsPort(i));
+                //method conflictWrongSpec = globalSpecUpdate.conflictWrongSpec[finishFpuMulDivConflictWrongSpecPort(i)].put(?);
                 method doStats = doStatsReg._read;
             endinterface);
             fpuMulDivExe[i] <- mkFpuMulDivExePipeline(fpuMulDivExeInput);
         end
 
         let memExeInput = (interface MemExeInput;
-            method sbCons_lazyLookup = sbCons.lazyLookup[memRdPort].get;
+            method sb_lookup = sb.lookup[memRdPort].get;
             method rf_rd1 = rf.read[memRdPort].rd1;
             method rf_rd2 = rf.read[memRdPort].rd2;
             method csrf_rd = csrf.rd;
@@ -331,9 +289,7 @@ module mkCore#(CoreId coreId)(Core);
             method mmioReq = mmio.dataReq;
             method mmioRespVal = mmio.dataRespVal;
             method mmioRespDeq = mmio.dataRespDeq;
-            method setRegReadyAggr_mem = writeAggr(memWrAggrPort);
-            method setRegReadyAggr_forward = writeAggr(forwardWrAggrPort);
-            method writeRegFile = writeCons(memWrConsPort);
+            method writeRegFile = writeReg(memWrConsPort);
             method doStats = doStatsReg._read;
         endinterface);
         let memExe <- mkMemExePipeline(memExeInput);
@@ -423,8 +379,7 @@ module mkCore#(CoreId coreId)(Core);
         interface fetchIfc = fetchStage;
         interface robIfc = rob;
         interface rtIfc = regRenamingTable;
-        interface sbConsIfc = sbCons;
-        interface sbAggrIfc = sbAggr;
+        interface sbIfc = sb;
         interface csrfIfc = csrf;
         interface emIfc = epochManager;
         interface smIfc = specTagManager;
@@ -472,19 +427,6 @@ module mkCore#(CoreId coreId)(Core);
         endmethod
     endinterface);
     CommitStage commitStage <- mkCommitStage(commitInput);
-
-    // send rob enq time to reservation stations
-    (* fire_when_enabled, no_implicit_conditions *)
-    rule sendRobEnqTime;
-        InstTime t = rob.getEnqTime;
-        reservationStationMem.setRobEnqTime(t);
-        for(Integer i = 0; i < valueof(FpuMulDivExeNum); i = i+1) begin
-            reservationStationFpuMulDiv[i].setRobEnqTime(t);
-        end
-        for(Integer i = 0; i < valueof(AluExeNum); i = i+1) begin
-            reservationStationAlu[i].setRobEnqTime(t);
-        end
-    endrule
 
     // preempt has 2 functions here
     // 1. break scheduling cycles
