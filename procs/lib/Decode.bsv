@@ -630,8 +630,25 @@ function DecodeResult decode(Instruction inst);
         end
 
         MiscMem: begin
-            dInst.iType = Fence;
-            dInst.execFunc = tagged Other;
+            case (funct3)
+                fnFENCEI: begin
+                    dInst.iType = FenceI;
+                    dInst.execFunc = tagged Other;
+                end
+                fnFENCE: begin
+                    dInst.iType = Fence;
+                    dInst.execFunc = tagged Mem (MemInst {
+                        mem_func: Fence,
+                        amo_func: None,
+                        unsignedLd: False,
+                        byteEn: replicate(False),
+                        // TODO more precise aq and rl
+                        aq: True,
+                        rl: True
+                    });
+                end
+                default: illegalInst = True;
+            endcase
             regs.dst  = Invalid;
             regs.src1 = Invalid;
             regs.src2 = Invalid;

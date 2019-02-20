@@ -46,7 +46,7 @@ typedef Bit#(LgDataSzInst) DataInstOffset;
 
 // These types show up in many places so they are defined here
 typedef enum {Swap, Add, Xor, And, Or, Min, Max, Minu, Maxu, None} AmoFunc deriving(Bits, Eq, FShow, Bounded);
-typedef enum { Ld, St, Lr, Sc, Amo } MemFunc deriving(Bits, Eq, FShow); // only mem access that needs addr translate is included
+typedef enum { Ld, St, Lr, Sc, Amo, Fence } MemFunc deriving(Bits, Eq, FShow);
 typedef struct {
   AmoFunc func;
   Bool    doubleWord;

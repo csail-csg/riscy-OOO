@@ -60,20 +60,6 @@ export isStQMemFunc;
 // Lr/Sc/Amo: enq and Idle -> set computed -> issue to mem -> get resp and deq
 // Fence: enq and Idle -> deq
 
-// XXX Currently I rely on the fact that specbits of an entry in LSQ contain
-// the spectag of itself, so I could kill load easily via specUpdate interface
-// when load speculation fails.
-
-// XXX The load specbits in ROB must contain the spectag of itself right after
-// address translation, because any exception caused by addr translation should
-// kill LSQ entry but not ROB entry, but failed load speculation should kill
-// both ROB and LSQ entries
-
-// XXX When detecting eagerly executed loads, we only consider aligned addr for
-// dword granularity This reduces the complexity of checking, i.e. we don't
-// consider the byte en of each mem access But This forces all accesses to the
-// same dword addr to be executed in order
-
 // XXX I choose to kill an eager load L even when it is still executing.  An
 // alternative way is to re-execute L. However, this won't work well with
 // bypassing load result.  Consider L is forced to re-execute because an older
@@ -84,8 +70,9 @@ export isStQMemFunc;
 // However, if S is waken up from reservation station after L2, then we
 // deadlock.
 
-// TODO Fence is currently not inserted into LSQ. we need to set its aq/rl
-// bits in future and put it into LSQ
+// Fence is kept in SQ with its aq/rl bits. It is treated like an AMO , i.e.,
+// it waits for commit signal from ROB to be dequeued, and then sets the ROB
+// entry executed.
 
 // For TSO, to make our OOO execution conform to TSO, we need to *verify* each
 // load and store sequentially to mimic TSO I2E operational model. Besides the
@@ -209,7 +196,7 @@ typedef struct {
     Bool             waitWPResp;
 } LdQEntry deriving (Bits, Eq, FShow);
 
-typedef enum {St, Sc, Amo} StQMemFunc deriving(Bits, Eq, FShow);
+typedef enum {St, Sc, Amo, Fence} StQMemFunc deriving(Bits, Eq, FShow);
 
 // SQ holds St, Sc and Amo. This type is for documentation purpose, it is not
 // really used.
@@ -371,24 +358,30 @@ interface SplitLSQ;
     // (2) one of the following is true:
     //     (a) fault
     //     (b) non-MMIO Ld, done and all older SQ entries have been dequeued or
-    //     verified (the load may be killed)
+    //         verified (the load may be killed)
     //     (c) MMIO or Lr, computed, atCommit, and no older SQ entry (this also
-    //     handles .rl associated with Lr)
-    // NOTE: there is no pure fence in LQ right now
+    //         handles .rl associated with Lr)
     // NOTE: XXX A killed load is dequeued in the same way as normal loads. We
-    // should not dequeue a killed load to early, because it may have already
-    // waken up a younger instruction but have not yet written to phy reg file.
-    // In this case, the younger instruction will stuck at reg read stage,
-    // preventing an instruction older than the killed load from execution.
-    // This in turn prevents the killed load from committing and flushing,
-    // i.e., we deadlock.
+    //       should not dequeue a killed load to early, because it may have
+    //       already waken up a younger instruction but have not yet written to
+    //       phy reg file.  In this case, the younger instruction will stuck at
+    //       reg read stage, preventing an instruction older than the killed
+    //       load from execution.  This in turn prevents the killed load from
+    //       committing and flushing, i.e., we deadlock.
+    // NOTE: .aq of Lr is handled by stalling load execution in issueLd and no
+    //       Ld-St reordering (i.e., St/Sc/Amo execute at/after commit).
+    //       Therefore, we typically do not need to check .aq at deq time.
+    //       However, the only exception is when we use a self-invalidation
+    //       coherence.
     // Outside world should do the following:
     // (1) issue Lr or MMIO to memory system only at deq port
     // (2) For WEAK model, check .rl associated with Lr and SB empty before
-    // issuing Lr
+    //     issuing Lr
     // (3) set ROB entry of deq mem inst to Executed (so that ROB can commit)
     // (4) Fore WEAK model, before issuing (non-MMIO) Lr, ensure SB does not
-    // contain overlapping address
+    //     contain overlapping address
+    // (5) For WEAK model and self-invalidation caches, check .aq of
+    //     Sc/Amo/Fence, and flush L1 cache.
     method LdQDeqEntry firstLd;
     method Action deqLd;
     // Deq SQ entry, and wakeup stalled loads. Also change the readFrom and
@@ -396,20 +389,25 @@ interface SplitLSQ;
     // (1) valid
     // (2) one of the following is true:
     //     (a) fault
-    //     (b) computed, and atCommit (this implies no older LQ entry)
-    // NOTE: .rl associated with Sc/Amo is automatically handled by in order
-    // deq, .aq in LQ is automatically handled by no older LQ entry, and there
-    // is no pure fence in SQ right now.
+    //     (b) computed or entry is a Fence, and atCommit (this implies no
+    //         older LQ entry)
+    // NOTE: .aq of Sc/Amo/Fence is handled by stalling load execution in
+    //       issueLd and in-order deq of SQ. Therefore, we typically do not
+    //       need to check .aq at deq time. However, the only exception is when
+    //       we use a self-invalidation coherence.
     // Outside world should do the following:
-    // (1) issue Sc/Amo/MMIO to memory system at deq port
+    // (1) issue Sc/Amo/MMIO to memory system or deq Fence at deq port
     // (2) for WEAK model, issue normal St to SB
     // (3) for TSO, issue normal St to memory
-    // (4) For WEAK model, check .rl associated with Sc/Amo and SB empty before
-    // issuing Sc/Amo
-    // (5) set ROB entry of dequeued Sc/Amo/MMIO to Executed (normal St should
-    // have been set as Executed when addr and data are computed)
-    // (6) Fore WEAK model, before issuing non-MMIO Sc/Amo, ensure SB does not
-    // contain overlapping address
+    // (4) Check .rl associated with Sc/Amo/Fence and SB empty before
+    //     issuing Sc/Amo or dequing Fence. Since Sc/Amo/Fence can deq only
+    //     at/after inst commit, there cannot be any older load.
+    // (5) set ROB entry of dequeued Sc/Amo/MMIO/Fence to Executed (normal St should
+    //     have been set as Executed when addr and data are computed)
+    // (6) For WEAK model, before issuing non-MMIO Sc/Amo, ensure SB does not
+    //     contain overlapping address
+    // (7) For WEAK model and self-invalidation caches, check .aq of
+    //     Sc/Amo/Fence, and flush L1 cache.
     method StQDeqEntry firstSt;
     method Action deqSt;
 `ifdef TSO_MM
@@ -490,6 +488,7 @@ function StQMemFunc getStQMemFunc(MemFunc f);
         St: (St);
         Sc: (Sc);
         Amo: (Amo);
+        Fence: (Fence);
         default: ?;
     endcase);
 endfunction
@@ -503,7 +502,7 @@ endfunction
 
 function Bool isStQMemFunc(MemFunc f);
     return (case(f)
-        St, Sc, Amo: (True);
+        St, Sc, Amo, Fence: (True);
         default: (False);
     endcase);
 endfunction
@@ -1134,7 +1133,15 @@ module mkSplitLSQ(SplitLSQ);
     // (1) all older loads are dequeued
     // (2) for normal non-MMIO St, addr and data are computed
     // (3) for Sc/Amo/MMIO, it is dequeued (by completing memory access)
-    // WEAK verify only requires that addr is computed
+    // (4) for Fence, it is dequeued
+    // NOTE: XXX Not verifying any Sc/Amo/Fence in SQ helps load speculation.
+    //       That is, a loads can speculate past Sc.aq/Amo/Fence. This is
+    //       because the speculative load cannot deq from LQ until the older
+    //       Sc.aq/Amo/Fence is dequeued from SQ. The load will be squashed by
+    //       cache eviction if it issues too early.
+
+    // WEAK verify only requires that addr is computed or it is a fence.
+
     // NOTE that when SQ is full and all verified, verifyP will point to a
     // valid and verified entry
     rule verifySt(st_valid_verify[st_verifyP_verify] &&
@@ -1167,8 +1174,8 @@ module mkSplitLSQ(SplitLSQ);
              st_computed_verify[verP], noAction);
 
 `else
-        // WEAK: just check computed
-        when(st_computed_verify[verP], noAction);
+        // WEAK: just check computed or fence
+        when(st_computed_verify[verP] || st_memFunc[verP] == Fence, noAction);
 `endif
 
         // mark as verified and move verify ptr
@@ -1330,8 +1337,9 @@ module mkSplitLSQ(SplitLSQ);
                 return True; // fault
             end
             else begin
-                // computed and at commit
-                return st_computed_deqSt[deqP] && st_atCommit_deqSt[deqP];
+                // computed or fence, and at commit
+                return (st_computed_deqSt[deqP] ||
+                        st_memFunc[deqP] == Fence) && st_atCommit_deqSt[deqP];
             end
         end
     endfunction
@@ -1716,9 +1724,10 @@ module mkSplitLSQ(SplitLSQ);
         // verfication of fence or AMO will be stalled until their fencing
         // effects are taken. And this will stall the verfication of younger
         // loads. The .rl->.aq ordering is also enforced by executing Lr/Sc/Amo
-        // at sequential verification time (in RISC-V .aq and .rl can only be
-        // found in Lr/Sc/Amo). TODO maybe it is better to use .aq as a hint
-        // to throttle speculative load execution.
+        // sequentially at commit time (in RISC-V .aq and .rl can only be found
+        // in Lr/Sc/Amo).
+        // TODO maybe it is better to use .aq as a hint to throttle speculative
+        // load execution.
 
         // We only search for older overlapping SQ entries for bypass:
         // (1) valid older SQ entry
@@ -1780,8 +1789,8 @@ module mkSplitLSQ(SplitLSQ);
 `else
 
         // WEAK model needs to do two searches
-        // (1) Overlaping unissued Ld/Lr or fence in LQ (e.g., .aq in Lr)
-        // (2) Overlaping St/Sc/Amo or fence in SQ (e.g., .aq in Amo)
+        // (1) Overlaping unissued Ld/Lr or .aq of Lr in LQ
+        // (2) Overlaping St/Sc/Amo or .aq of Sc/Amo/Fence in SQ
         // XXX Strictly speaking, we should stall the load as long as there is
         // a fence. However, since we keep fence/Ld->St ordering, we can allow
         // a store younger than the fence to forward data to the load.
@@ -1832,7 +1841,7 @@ module mkSplitLSQ(SplitLSQ);
         if(isValid(matchLdTag) && (!isValid(matchStTag) ||
                                    (isValid(ldTagOlderSt) && 
                                     validValue(ldTagOlderSt) >= stVTag))) begin
-            // stalled by Ld, Lr or acquire fence in LQ
+            // stalled by Ld, Lr or acquire in LQ
             issRes = Stall (LdQ);
             if(ld_acq[ldTag]) begin
                 ld_depLdQDeq_issue[tag] <= matchLdTag;
@@ -1851,7 +1860,7 @@ module mkSplitLSQ(SplitLSQ);
                  validValue(ldTagOlderSt) < stVTag)) begin
             // bypass or stall by SQ
             if(st_acq[stTag]) begin
-                // stall by acquire fence in SQ
+                // stall by acquire in SQ
                 issRes = Stall (StQ);
                 ld_depStQDeq_issue[tag] <= matchStTag;
             end

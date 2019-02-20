@@ -342,7 +342,8 @@ typedef enum {
     Auipc,
     Fpu,
     Csr,
-    Fence, SFence,
+    Fence,
+    FenceI, SFence,
     Ecall, Ebreak,
     Sret, Mret, // do not support URET
     Interrupt // we may turn an inst to an interrupt in implementation
@@ -747,7 +748,7 @@ Bit#(7) privSFENCEVMA  = 7'h9;
 function Bool isSystem(IType iType) = (
     iType == Unsupported || iType == Interrupt ||
     iType == Ecall || iType == Ebreak || iType == Csr ||
-    iType == SFence || iType == Fence ||
+    iType == SFence || iType == FenceI ||
     iType == Sret || iType == Mret
 );
 

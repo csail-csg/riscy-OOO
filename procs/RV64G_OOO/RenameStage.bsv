@@ -371,7 +371,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
             doAssert(dInst.iType == Csr, "only CSR inst send to exe");
         end
         else begin
-            doAssert(dInst.iType == Fence ||
+            doAssert(dInst.iType == FenceI ||
                      dInst.iType == SFence ||
                      dInst.iType == Sret ||
                      dInst.iType == Mret,
@@ -512,21 +512,24 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
             if (lsqEnqTag matches tagged Valid .lsqTag) begin
                 // can process, send to Mem rs and LSQ
                 lsq_tag = lsqTag; // record LSQ tag
-                reservationStationMem.enq(ToReservationStation {
-                    data: MemRSData {
-                        mem_func: mem_inst.mem_func,
-                        imm: validValue(dInst.imm),
-                        ldstq_tag: lsqTag
-                    },
-                    regs: phy_regs,
-                    tag: inst_tag,
-                    spec_bits: spec_bits,
-                    spec_tag: Invalid,
-                    regs_ready: regs_ready_aggr // mem currently recv bypass
-                });
+                if (dInst.iType != Fence) begin // Fence does not go to RS
+                    reservationStationMem.enq(ToReservationStation {
+                        data: MemRSData {
+                            mem_func: mem_inst.mem_func,
+                            imm: validValue(dInst.imm),
+                            ldstq_tag: lsqTag
+                        },
+                        regs: phy_regs,
+                        tag: inst_tag,
+                        spec_bits: spec_bits,
+                        spec_tag: Invalid,
+                        regs_ready: regs_ready_aggr // mem currently recv bypass
+                    });
+                end
                 doAssert(ppc == pc + 4, "Mem next PC is not PC+4");
                 doAssert(!isValid(dInst.csr), "Mem never explicitly read/write CSR");
-                doAssert(isValid(dInst.imm), "Mem needs imm for virtual addr");
+                doAssert((dInst.iType != Fence) == isValid(dInst.imm),
+                         "Mem (non-Fence) needs imm for virtual addr");
                 // put in ldstq
                 if(isLdQ) begin
                     lsq.enqLd(inst_tag, mem_inst, phy_regs.dst, spec_bits);
@@ -563,7 +566,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 rob_inst_state: rob_inst_state,
                                 lsqTag: lsq_tag,
                                 ldKilled: Invalid,
-                                memAccessAtCommit: False,
+                                memAccessAtCommit: False, // set by ROB in case of fence
                                 lsqAtCommitNotified: False,
                                 nonMMIOStDone: False,
                                 epochIncremented: False,
@@ -812,18 +815,20 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 // can process, send to Mem rs and LSQ
                                 memExeUsed = True; // mark resource used
                                 lsq_tag = lsqTag; // record LSQ tag
-                                reservationStationMem.enq(ToReservationStation {
-                                    data: MemRSData {
-                                        mem_func: mem_inst.mem_func,
-                                        imm: validValue(dInst.imm),
-                                        ldstq_tag: lsqTag
-                                    },
-                                    regs: phy_regs,
-                                    tag: inst_tag,
-                                    spec_bits: spec_bits,
-                                    spec_tag: spec_tag,
-                                    regs_ready: regs_ready_aggr // mem currently recv bypass
-                                });
+                                if (dInst.iType != Fence) begin // fence does not go to RS
+                                    reservationStationMem.enq(ToReservationStation {
+                                        data: MemRSData {
+                                            mem_func: mem_inst.mem_func,
+                                            imm: validValue(dInst.imm),
+                                            ldstq_tag: lsqTag
+                                        },
+                                        regs: phy_regs,
+                                        tag: inst_tag,
+                                        spec_bits: spec_bits,
+                                        spec_tag: spec_tag,
+                                        regs_ready: regs_ready_aggr // mem currently recv bypass
+                                    });
+                                end
                                 doAssert(ppc == pc + 4, "Mem next PC is not PC+4");
                                 doAssert(!isValid(dInst.csr), "Mem never explicitly read/write CSR");
                                 doAssert(isValid(dInst.imm), "Mem needs imm for virtual addr");
@@ -893,7 +898,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                                 rob_inst_state: rob_inst_state,
                                                 lsqTag: lsq_tag,
                                                 ldKilled: Invalid,
-                                                memAccessAtCommit: False,
+                                                memAccessAtCommit: False, // set by ROB in case of fence
                                                 lsqAtCommitNotified: False,
                                                 nonMMIOStDone: False,
                                                 epochIncremented: False,

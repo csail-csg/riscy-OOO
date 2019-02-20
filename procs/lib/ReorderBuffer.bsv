@@ -56,8 +56,9 @@ typedef struct {
     RobInstState       rob_inst_state; // was executed (i.e. can commit)
     LdStQTag           lsqTag; // tag for LSQ
     Maybe#(LdKilledBy) ldKilled; // mispeculative load + reason for the kill
-    // some mem access is only performed at commit time, so ROB should notify
-    // LSQ that the instrution arrives at commit stage and access can start
+    // Fence and some mem access are only performed at commit time, so ROB
+    // should notify LSQ that the instrution arrives at commit stage and access
+    // can start
     Bool               memAccessAtCommit;
     // we have notified LSQ that inst is at commit
     Bool               lsqAtCommitNotified;
@@ -245,12 +246,12 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         spec_bits[sb_enq_port] <= x.spec_bits;
         lsqTag <= x.lsqTag;
         ldKilled[ldKill_enq_port] <= Invalid;
-        memAccessAtCommit[accessCom_enq_port] <= False;
+        memAccessAtCommit[accessCom_enq_port] <= x.iType == Fence;
         lsqAtCommitNotified[lsqNotified_enq_port] <= False;
         nonMMIOStDone[nonMMIOSt_enq_port] <= False;
         // check
         doAssert(!isValid(x.ldKilled), "ld killed must be false");
-        doAssert(!x.memAccessAtCommit, "mem access at commit must be false");
+        doAssert(x.memAccessAtCommit == False, "mem access at commit must be false");
         doAssert(!x.lsqAtCommitNotified, "lsq notified must be false");
         doAssert(!x.nonMMIOStDone, "non mmio st must be false");
     endmethod
