@@ -34,6 +34,6 @@ typedef struct {
 typedef InorderRS#(`RS_FPUMULDIV_SIZE, FpuMulDivRSData) ReservationStationFpuMulDiv;
 (* synthesize *)
 module mkReservationStationFpuMulDiv(ReservationStationFpuMulDiv);
-    let m <- mkReservationStation(`RS_LAZY_ENQ, valueof(FpuMulDivExeNum) > 1);
+    let m <- mkInorderRS(`RS_LAZY_ENQ, valueof(FpuMulDivExeNum) > 1);
     return m;
 endmodule

@@ -91,7 +91,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
     FetchStage fetchStage = inIfc.fetchIfc;
     ReorderBufferSynth rob = inIfc.robIfc;
     RegRenamingTable regRenamingTable = inIfc.rtIfc;
-    ScoreboardSynth sb = inIfc.sbConsIfc;
+    ScoreboardSynth sb = inIfc.sbIfc;
     CsrFile csrf = inIfc.csrfIfc;
     EpochManager epochManager = inIfc.emIfc;
     SpecTagManager specTagManager = inIfc.smIfc;

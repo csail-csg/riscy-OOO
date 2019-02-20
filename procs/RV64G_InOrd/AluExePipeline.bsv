@@ -167,11 +167,11 @@ module mkAluExePipeline#(AluExeInput inIfc)(AluExePipeline);
         if(verbose) $display("[doRegReadAlu] ", fshow(x));
 
         // check scoreboard
-        let regsReady = inIfc.sbCons_lookup(x.regs);
+        let regsReady = inIfc.sb_lookup(x.regs);
 
         // get rVal1 (check bypass, stall automatically)
         Data rVal1 = ?;
-        if(x.dInst.csr matches tagged Valid .csr) begin
+        if(x.data.dInst.csr matches tagged Valid .csr) begin
             rVal1 = inIfc.csrf_rd(csr);
         end
         else if(x.regs.src1 matches tagged Valid .src1) begin

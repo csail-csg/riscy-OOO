@@ -127,7 +127,7 @@ module mkFpuMulDivExePipeline#(FpuMulDivExeInput inIfc)(FpuMulDivExePipeline);
         if(verbose) $display("[doRegReadFpuMulDiv] ", fshow(x));
 
         // FPU MUL DIV never have branches, so no spec tag
-        doAssert(!isValid(x.data.spec_tag), "FpuMulDiv should not carry any spec tag");
+        doAssert(!isValid(x.spec_tag), "FpuMulDiv should not carry any spec tag");
 
         // check conservative scoreboard
         let regsReady = inIfc.sb_lookup(x.regs);

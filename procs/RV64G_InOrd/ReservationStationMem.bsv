@@ -36,6 +36,6 @@ typedef struct {
 typedef InorderRS#(`RS_MEM_SIZE, MemRSData) ReservationStationMem;
 (* synthesize *)
 module mkReservationStationMem(ReservationStationMem);
-    let m <- mkReservationStation(`RS_LAZY_ENQ, False);
+    let m <- mkInorderRS(`RS_LAZY_ENQ, False);
     return m;
 endmodule

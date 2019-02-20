@@ -321,7 +321,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doAssert(!(x.data.mem_func == St && isValid(x.regs.dst)),
                  "St cannot have dst reg");
         // Mem insts never branch, no spec tag
-        doAssert(!isValid(x.data.spec_tag), "Mem should not carry any spec tag");
+        doAssert(!isValid(x.spec_tag), "Mem should not carry any spec tag");
         
         // check conservative scoreboard
         let regsReady = inIfc.sb_lookup(x.regs);

@@ -278,7 +278,7 @@ module mkInorderRenamingScoreboard(
     function Integer setBusy_port(Integer i) = i + valueof(setReadyNum);
 
     // function to derive set ready interface
-    function Put#(PhyIndx) getSetReadyIfc(Integer i);
+    function Put#(PhyRIndx) getSetReadyIfc(Integer i);
         return (interface Put;
             method Action put(PhyRIndx dst);
                 sb[dst][setReady_port(i)] <= False;
@@ -319,6 +319,6 @@ module mkInorderRenamingScoreboard(
     endfunction
 
     interface setBusy = map(getSetBusyIfc, genVector);
-    interface eagerLookup = map(getEagerLookupIfc, genVector);
+    interface lookup = map(getLookupIfc, genVector);
     interface setReady = map(getSetReadyIfc, genVector);
 endmodule

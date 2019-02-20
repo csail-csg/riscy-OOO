@@ -74,7 +74,8 @@ module mkInorderRS#(Bool lazyEnq, Bool countValid)(
     Alias#(countT, Bit#(TLog#(TAdd#(size, 1)))),
     Log#(TAdd#(1, size), TLog#(TAdd#(size, 1))),
     Bits#(dataT, a__),
-    Add#(1, b__, size)
+    Add#(1, b__, size),
+    Add#(c__, TLog#(size), TLog#(TMul#(2, size)))
 );
     Vector#(size, Ehr#(2, Bool))         valid    <- replicateM(mkEhr(False));
     Vector#(size, Reg#(dataT))           data     <- replicateM(mkRegU);
@@ -116,7 +117,7 @@ module mkInorderRS#(Bool lazyEnq, Bool countValid)(
                         : zeroExtend(i);
     endfunction
     // Virtual index
-    Vector#(size, virIdxT) virIdxes = map(getVirIdx. genWith(fromInteger));
+    Vector#(size, virIdxT) virIdxes = map(getVirIdx, genWith(fromInteger));
 
     // find the oldest entry that satisfies a constraint (i.e. smallest virtual
     // index)
@@ -270,7 +271,7 @@ module mkInorderRS#(Bool lazyEnq, Bool countValid)(
             if(findOldest(killedValid) matches tagged Valid .idx) begin
                 new_enqP = idx;
             end
-            ld_enqP <= new_enqP;
+            enqP <= new_enqP;
 
             // conflict with enq, deq
             wrongSpec_enq_conflict.wset(?);
