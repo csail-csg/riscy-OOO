@@ -58,7 +58,8 @@ typedef struct {
     Maybe#(LdKilledBy) ldKilled; // mispeculative load + reason for the kill
     // Fence and some mem access are only performed at commit time, so ROB
     // should notify LSQ that the instrution arrives at commit stage and access
-    // can start
+    // can start. XXX For fence, this bit is set at rename stage. For mem
+    // accesses like Lr/Sc/Amo/MMIO, this bit is set by mem exe pipeline.
     Bool               memAccessAtCommit;
     // we have notified LSQ that inst is at commit
     Bool               lsqAtCommitNotified;
