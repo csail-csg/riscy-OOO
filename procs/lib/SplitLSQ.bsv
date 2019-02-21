@@ -1174,8 +1174,8 @@ module mkSplitLSQ(SplitLSQ);
              st_computed_verify[verP], noAction);
 
 `else
-        // WEAK: just check computed or fence
-        when(st_computed_verify[verP] || st_memFunc[verP] == Fence, noAction);
+        // WEAK: just check computed XXX don't verify fence for now
+        when(st_computed_verify[verP], noAction);
 `endif
 
         // mark as verified and move verify ptr
@@ -1743,8 +1743,20 @@ module mkSplitLSQ(SplitLSQ);
         endfunction
         Vector#(StQSize, Bool) overlapSts = map(isOverlapSt,
                                                 genWith(fromInteger));
+        // FIXME DEBUG: Search older fences in SQ
+        function Bool isFence(StQTag i);
+            Bool valid_older = validOlderSts[i];
+            return valid_older && st_memFunc[i] == Fence;
+        endfunction
+        Vector#(StQSize, Bool) fences = map(isFence, genWith(fromInteger));
+
         // search the youngest store, and derive issue result
-        if(findYoungestSt(overlapSts) matches tagged Valid .stTag) begin
+        // FIXME DEBUG: we first search for fences in SQ
+        if(findYoungestSt(fences) matches tagged Valid .fenceTag) begin
+            issRes = Stall (StQ);
+            ld_depStQDeq_issue[tag] <= Valid (fenceTag); 
+        end
+        else if(findYoungestSt(overlapSts) matches tagged Valid .stTag) begin
             // find an overlaping SQ entry, check its type
             case(st_memFunc[stTag])
                 Sc, Amo: begin
@@ -1833,14 +1845,27 @@ module mkSplitLSQ(SplitLSQ);
                                               genWith(fromInteger));
         Maybe#(StQTag) matchStTag = findYoungestSt(checkSts);
 
+        // FIXME DEBUG: Search for older fences in SQ
+        function Bool isFence(StQTag i);
+            Bool valid_older = validOlderSts[i];
+            return valid_older && st_memFunc[i] == Fence;
+        endfunction
+        Vector#(StQSize, Bool) fences = map(isFence, genWith(fromInteger));
+
         // select the younger one from LQ and SQ search results
         LdQTag ldTag = validValue(matchLdTag);
         Maybe#(StQVirTag) ldTagOlderSt = olderStVirTags[ldTag];
         StQTag stTag = validValue(matchStTag);
         StQVirTag stVTag = stVirTags[stTag];
-        if(isValid(matchLdTag) && (!isValid(matchStTag) ||
-                                   (isValid(ldTagOlderSt) && 
-                                    validValue(ldTagOlderSt) >= stVTag))) begin
+
+        // FIXME DEBUG: we first search for fences in SQ
+        if(findYoungestSt(fences) matches tagged Valid .fenceTag) begin
+            issRes = Stall (StQ);
+            ld_depStQDeq_issue[tag] <= Valid (fenceTag); 
+        end
+        else if(isValid(matchLdTag) && (!isValid(matchStTag) ||
+                                        (isValid(ldTagOlderSt) && 
+                                         validValue(ldTagOlderSt) >= stVTag))) begin
             // stalled by Ld, Lr or acquire in LQ
             issRes = Stall (LdQ);
             if(ld_acq[ldTag]) begin
@@ -2083,6 +2108,8 @@ module mkSplitLSQ(SplitLSQ);
                      "addr BE should be naturally aligned");
             doAssert(st_specBits_deqSt[deqP] == 0,
                      "must have zero spec bits");
+            doAssert((st_memFunc[deqP] == Fence) == !st_computed_deqSt[deqP],
+                     "only fence is not computed");
         end
 
         // remove entry
