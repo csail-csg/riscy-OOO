@@ -831,7 +831,8 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 end
                                 doAssert(ppc == pc + 4, "Mem next PC is not PC+4");
                                 doAssert(!isValid(dInst.csr), "Mem never explicitly read/write CSR");
-                                doAssert(isValid(dInst.imm), "Mem needs imm for virtual addr");
+                                doAssert((dInst.iType != Fence) == isValid(dInst.imm),
+                                         "Mem (non-Fence) needs imm for virtual addr");
                                 doAssert(!isValid(spec_tag), "should not have spec tag");
                                 // put in ldstq
                                 if(isLdQ) begin
