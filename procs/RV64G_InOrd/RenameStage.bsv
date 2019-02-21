@@ -360,7 +360,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
             doAssert(dInst.iType == Csr, "only CSR inst send to exe");
         end
         else begin
-            doAssert(dInst.iType == Fence ||
+            doAssert(dInst.iType == FenceI ||
                      dInst.iType == SFence ||
                      dInst.iType == Sret ||
                      dInst.iType == Mret,
@@ -629,20 +629,23 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                 // can process, send to Mem rs and LSQ
                                 memExeUsed = True; // mark resource used
                                 lsq_tag = lsqTag; // record LSQ tag
-                                reservationStationMem.enq(ToInorderRS {
-                                    data: MemRSData {
-                                        mem_func: mem_inst.mem_func,
-                                        imm: validValue(dInst.imm),
-                                        ldstq_tag: lsqTag
-                                    },
-                                    regs: phy_regs,
-                                    tag: inst_tag,
-                                    spec_bits: spec_bits,
-                                    spec_tag: spec_tag
-                                });
+                                if (dInst.iType != Fence) begin // Fence does not go to RS
+                                    reservationStationMem.enq(ToInorderRS {
+                                        data: MemRSData {
+                                            mem_func: mem_inst.mem_func,
+                                            imm: validValue(dInst.imm),
+                                            ldstq_tag: lsqTag
+                                        },
+                                        regs: phy_regs,
+                                        tag: inst_tag,
+                                        spec_bits: spec_bits,
+                                        spec_tag: spec_tag
+                                    });
+                                end
                                 doAssert(ppc == pc + 4, "Mem next PC is not PC+4");
                                 doAssert(!isValid(dInst.csr), "Mem never explicitly read/write CSR");
-                                doAssert(isValid(dInst.imm), "Mem needs imm for virtual addr");
+                                doAssert((dInst.iType != Fence) == isValid(dInst.imm),
+                                         "Mem (non-Fence) needs imm for virtual addr");
                                 doAssert(!isValid(spec_tag), "should not have spec tag");
                                 // put in ldstq
                                 if(isLdQ) begin
@@ -708,7 +711,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                                 rob_inst_state: rob_inst_state,
                                                 lsqTag: lsq_tag,
                                                 ldKilled: Invalid,
-                                                memAccessAtCommit: False,
+                                                memAccessAtCommit: False, // set by ROB in case of Fence
                                                 lsqAtCommitNotified: False,
                                                 nonMMIOStDone: False,
                                                 epochIncremented: False,

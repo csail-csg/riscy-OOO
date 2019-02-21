@@ -805,6 +805,21 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endrule
 `endif
 
+    // deq Fence from SQ. Since we are not using self-invalidation protocols
+    // for now, we can ignore .aq. Only need to check SB in case of .rl.
+    rule doDeqStQ_Fence(
+        !isValid(lsqDeqSt.fault)
+        && lsqDeqSt.memFunc == Fence
+`ifndef TSO_MM
+        && (!lsqDeqSt.rel || stb.isEmpty) // check SB in case of release
+`endif
+    );
+        lsq.deqSt;
+        // set ROB executed
+        inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, Invalid);
+        if(verbose) $display("[doDeqStQ_Fence] ", fshow(lsqDeqSt));
+    endrule
+
     // issue non-MMIO Sc/Amo without fault when
     // (1) not waiting for Lr/Sc/Amo/MMIO resp
     // (2) WEAK: SB does not match that addr
