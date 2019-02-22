@@ -160,7 +160,8 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
                 zeroExtend(c), s.pc, pack(s.iType), isException, isInterrupt, trapVal,
                 pack(s.state), s.claimedPhyReg, s.ldKilled, s.memAccessAtCommit,
                 s.lsqAtCommitNotified, s.nonMMIOStDone, s.epochIncremented,
-                zeroExtend(s.specBits), s.stbEmpty, s.stqEmpty, s.tlbNoPendingReq, s.prv
+                zeroExtend(s.specBits), s.stbEmpty, s.stqEmpty, s.tlbNoPendingReq, s.prv,
+                s.instCount
             );
         endrule
 
@@ -171,7 +172,8 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
                 zeroExtend(c), s.pc, pack(s.iType), isException, isInterrupt, trapVal,
                 pack(s.state), s.claimedPhyReg, s.ldKilled, s.memAccessAtCommit,
                 s.lsqAtCommitNotified, s.nonMMIOStDone, s.epochIncremented,
-                zeroExtend(s.specBits), s.stbEmpty, s.stqEmpty, s.tlbNoPendingReq, s.prv
+                zeroExtend(s.specBits), s.stbEmpty, s.stqEmpty, s.tlbNoPendingReq, s.prv,
+                s.instCount
             );
         endrule
 

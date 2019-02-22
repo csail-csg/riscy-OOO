@@ -58,6 +58,8 @@ typedef struct {
     Bool tlbNoPendingReq;
     // CSR info: previlige mode
     Bit#(2) prv;
+    // inst count
+    Data instCount;
 } CommitStuck deriving(Bits, Eq, FShow);
 
 interface CommitInput;
@@ -203,7 +205,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             stbEmpty: inIfc.stbEmpty,
             stqEmpty: inIfc.stqEmpty,
             tlbNoPendingReq: inIfc.tlbNoPendingReq,
-            prv: csrf.decodeInfo.prv
+            prv: csrf.decodeInfo.prv,
+            instCount: csrf.rd(CSRinstret)
         };
     endfunction
 

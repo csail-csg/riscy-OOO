@@ -56,7 +56,7 @@ interface DeadlockIndication;
         Bool memAccessAtCommit, Bool lsqAtCommitNotified,
         Bool nonMMIOStDone, Bool epochIncremented,
         Bit#(32) specBits, Bool stbEmpty, Bool stqEmpty,
-        Bool tlbNoPendingReq, Bit#(2) prv
+        Bool tlbNoPendingReq, Bit#(2) prv, Bit#(64) instCount
     );
     method Action commitUserInstStuck(
         Bit#(8) core, Bit#(64) pc, Bit#(5) iType,
@@ -65,6 +65,6 @@ interface DeadlockIndication;
         Bool memAccessAtCommit, Bool lsqAtCommitNotified,
         Bool nonMMIOStDone, Bool epochIncremented,
         Bit#(32) specBits, Bool stbEmpty, Bool stqEmpty,
-        Bool tlbNoPendingReq, Bit#(2) prv
+        Bool tlbNoPendingReq, Bit#(2) prv, Bit#(64) instCount
     );
 endinterface
