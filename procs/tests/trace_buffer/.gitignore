@@ -1,0 +1,5 @@
+sim*
+*.so
+build*
+*.txt
+*.log
