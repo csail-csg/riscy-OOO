@@ -915,10 +915,14 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endrule
 
     // issue MMIO St/Amo when
+    // (0) XXX Not a fence. MMIO bit of an fence entry in SQ may be
+    // uninitialized. For other entries, MMIO bit must be initialized because
+    // the deq entry is computed.
     // (1) not waiting for Lr/Sc/Amo/MMIO resp
     // (2) WEAK: if .rl bit is set, SB is empty
     rule doDeqStQ_MMIO_issue(
         !isValid(lsqDeqSt.fault)
+        && lsqDeqSt.memFunc != Fence
         && lsqDeqSt.isMMIO
         && waitLrScAmoMMIOResp == Invalid
 `ifndef TSO_MM
