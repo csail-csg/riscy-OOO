@@ -128,10 +128,11 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     RegRenamingTable regRenamingTable = inIfc.rtIfc;
     CsrFile csrf = inIfc.csrfIfc;
 
-    // wires to set atCommit in LSQ: avoid scheduling cycle. Using wire should
-    // be fine, because LSQ does not need to see atCommit signal immediately.
-    // The only concern is about killAll which checks atCommit in LSQ, but we
-    // never call killAll and setAtCommit in the same cycle.
+    // FIXME FIXME FIXME wires to set atCommit in LSQ: avoid scheduling cycle.
+    // Using wire should be fine, because LSQ does not need to see atCommit
+    // signal immediately. XXX The concern is about killAll which checks
+    // atCommit in LSQ, but we never call killAll and setAtCommit in the same
+    // cycle.
     Vector#(SupSize, RWire#(LdStQTag)) setLSQAtCommit <- replicateM(mkRWire);
 
     for(Integer i = 0; i< valueof(SupSize); i = i+1) begin

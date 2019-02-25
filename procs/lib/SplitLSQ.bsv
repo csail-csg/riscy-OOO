@@ -360,7 +360,8 @@ interface SplitLSQ;
     //     (b) non-MMIO Ld, done and all older SQ entries have been dequeued or
     //         verified (the load may be killed)
     //     (c) MMIO or Lr, computed, atCommit, and no older SQ entry (this also
-    //         handles .rl associated with Lr)
+    //         handles .rl associated with Lr). XXX No older SQ entry also
+    //         handles the case that an older fence is in SQ.
     // NOTE: XXX A killed load is dequeued in the same way as normal loads. We
     //       should not dequeue a killed load to early, because it may have
     //       already waken up a younger instruction but have not yet written to
@@ -1141,6 +1142,9 @@ module mkSplitLSQ(SplitLSQ);
     //       cache eviction if it issues too early.
 
     // WEAK verify only requires that addr is computed or it is a fence.
+    // Verifying a fence is OK because normal loads will be stalled from issue
+    // by the fence, and XXX Lr and MMIO Ld needs to wait for all older SQ
+    // entry to deq.
 
     // NOTE that when SQ is full and all verified, verifyP will point to a
     // valid and verified entry
