@@ -577,18 +577,18 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doIssueLd(info, True);
     endrule
 
-    // // we have ordered setRegReadyAggr_forward < setRegReadyAggr_mem to make
-    // // issue rule and cache resp rule to fire concurrently in weak model.
-    // // However, in TSO, when doAssert is removed in FPGA synthesis, lsq.deqLd
-    // // and lsq.issueLd are conflict-free with each other. This makes
-    // // doDeqLdQ_XX_deq rules ordered after doIssueLdFromXX rules, and leads to
-    // // schedule cycles (because bluespec compiler picks sub-optimal conflicts
-    // // to resolve some cycles). Therefore we manually create conflict and
-    // // precedence here using preempts.
-    // (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromUpdate" *)
-    // (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromIssueQ" *)
-    // (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromUpdate" *)
-    // (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromIssueQ" *)
+    // we have ordered setRegReadyAggr_forward < setRegReadyAggr_mem to make
+    // issue rule and cache resp rule to fire concurrently in weak model.
+    // However, in TSO, when doAssert is removed in FPGA synthesis, lsq.deqLd
+    // and lsq.issueLd are conflict-free with each other. This makes
+    // doDeqLdQ_XX_deq rules ordered after doIssueLdFromXX rules, and leads to
+    // schedule cycles (because bluespec compiler picks sub-optimal conflicts
+    // to resolve some cycles). Therefore we manually create conflict and
+    // precedence here using preempts.
+    (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromUpdate" *)
+    (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromIssueQ" *)
+    (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromUpdate" *)
+    (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromIssueQ" *)
 
     (* descending_urgency = "doIssueLdFromIssueQ, doIssueLdFromUpdate" *) // prioritize older load
     rule doIssueLdFromUpdate(issueLd.wget matches tagged Valid .info);
@@ -647,9 +647,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     rule doDeqLdQ_Ld_Mem(
         !isValid(lsqDeqLd.fault) &&
         lsqDeqLd.memFunc == Ld && !lsqDeqLd.isMMIO
-        // avoid confict with deq Lr or Ld-MMIO
-        && waitLrScAmoMMIOResp != Lr
-        && waitLrScAmoMMIOResp != MMIO (WaitMMIOResp {isLd: True})
     );
         if(verbose) $display("[doDeqLdQ_Ld] ", fshow(lsqDeqLd));
         lsq.deqLd;
@@ -823,10 +820,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         !isValid(lsqDeqSt.fault) &&&
         lsqDeqSt.memFunc == St &&& !lsqDeqSt.isMMIO &&&
         stb.getEnqIndex(lsqDeqSt.paddr) matches tagged Valid .sbIdx
-        // avoid conflict with deq Lr/Sc/Amo/Ld-MMIO/St-MMIO. Note that deq
-        // Lr/Ld-MMIO requires no older entry in SQ. Since Lr/Ld-MMIO is at
-        // commit, SQ head cannot commited, and we cannot deq SQ to SB.
-        &&& waitLrScAmo == Invalid
     );
         lsq.deqSt;
         // send to SB
@@ -853,9 +846,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     rule doDeqStQ_Fence(
         !isValid(lsqDeqSt.fault)
         && lsqDeqSt.memFunc == Fence
-        // avoid conflict with deq Lr/Sc/Amo/Ld-MMIO/St-MMIO. Since Fence is at
-        // commit, we cannot deq Lr/Sc/Amo/MMIO which can only be deq at commit
-        && waitLrScAmoMMIOResp == Invalid
 `ifndef TSO_MM
         && (!lsqDeqSt.rel || stb.isEmpty) // check SB in case of release
 `endif
