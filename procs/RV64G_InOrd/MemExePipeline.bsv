@@ -542,18 +542,18 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doIssueLd(info, True);
     endrule
 
-    // // we have ordered setRegReadyAggr_forward < setRegReadyAggr_mem to make
-    // // issue rule and cache resp rule to fire concurrently in weak model.
-    // // However, in TSO, when doAssert is removed in FPGA synthesis, lsq.deqLd
-    // // and lsq.issueLd are conflict-free with each other. This makes
-    // // doDeqLdQ_XX_deq rules ordered after doIssueLdFromXX rules, and leads to
-    // // schedule cycles (because bluespec compiler picks sub-optimal conflicts
-    // // to resolve some cycles). Therefore we manually create conflict and
-    // // precedence here using preempts.
-    // (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromUpdate" *)
-    // (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromIssueQ" *)
-    // (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromUpdate" *)
-    // (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromIssueQ" *)
+    // we have ordered setRegReadyAggr_forward < setRegReadyAggr_mem to make
+    // issue rule and cache resp rule to fire concurrently in weak model.
+    // However, in TSO, when doAssert is removed in FPGA synthesis, lsq.deqLd
+    // and lsq.issueLd are conflict-free with each other. This makes
+    // doDeqLdQ_XX_deq rules ordered after doIssueLdFromXX rules, and leads to
+    // schedule cycles (because bluespec compiler picks sub-optimal conflicts
+    // to resolve some cycles). Therefore we manually create conflict and
+    // precedence here using preempts.
+    (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromUpdate" *)
+    (* preempts = "doDeqLdQ_Lr_deq, doIssueLdFromIssueQ" *)
+    (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromUpdate" *)
+    (* preempts = "doDeqLdQ_MMIO_deq, doIssueLdFromIssueQ" *)
 
     (* descending_urgency = "doIssueLdFromIssueQ, doIssueLdFromUpdate" *) // prioritize older load
     rule doIssueLdFromUpdate(issueLd.wget matches tagged Valid .info);
@@ -878,10 +878,14 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endrule
 
     // issue MMIO St/Amo when
+    // (0) XXX Not a fence. MMIO bit of an fence entry in SQ may be
+    // uninitialized. For other entries, MMIO bit must be initialized because
+    // the deq entry is computed.
     // (1) not waiting for Lr/Sc/Amo/MMIO resp
     // (2) WEAK: if .rl bit is set, SB is empty
     rule doDeqStQ_MMIO_issue(
         !isValid(lsqDeqSt.fault)
+        && lsqDeqSt.memFunc != Fence
         && lsqDeqSt.isMMIO
         && waitLrScAmoMMIOResp == Invalid
 `ifndef TSO_MM
