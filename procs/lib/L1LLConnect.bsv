@@ -44,6 +44,7 @@ module mkL1LLConnect#(
                 addr: r.addr,
                 fromState: r.fromState,
                 toState: r.toState,
+                canUpToE: r.canUpToE,
                 id: r.id,
                 child: child
             }
