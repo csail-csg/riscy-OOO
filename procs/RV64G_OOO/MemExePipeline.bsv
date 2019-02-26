@@ -676,7 +676,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         ProcRq#(DProcReqId) req = ProcRq {
             id: 0, // id does not matter
             addr: lsqDeqLd.paddr,
-            toState: multicore ? S : M, // in case of single core, just fetch to M
+            toState: E, // Lr fetch to E
             op: Lr,
             byteEn: ?,
             data: ?,
@@ -997,7 +997,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         dMem.procReq.req(ProcRq {
             id: zeroExtend(lsqTag),
             addr: addr,
-            toState: multicore ? S : M, // in case of single core, just fetch to M
+            toState: multicore ? S : E, // in case of single core, just fetch to E
             op: Ld,
             byteEn: ?,
             data: ?,
