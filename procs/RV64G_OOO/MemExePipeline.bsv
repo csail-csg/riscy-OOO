@@ -676,7 +676,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         ProcRq#(DProcReqId) req = ProcRq {
             id: 0, // id does not matter
             addr: lsqDeqLd.paddr,
-            toState: E, // Lr fetch to E
+            // FIXME Fetch Lr to E cannot guarantee forward progress of Lr/Sc
+            // (it must be E in case of self-inv cache)
+            toState: E,
             op: Lr,
             byteEn: ?,
             data: ?,

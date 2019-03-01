@@ -10,7 +10,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--testdir', dest = 'test_dir',
                     required = False, default = '')
 parser.add_argument('--jobs', dest = 'jobs', required = False, default = 1)
-parser.add_argument('--elfgcc', dest = 'elf_gcc', action = 'store_true')
+parser.add_argument('--depld', dest = 'dep_ld_fence', action = 'store_true',
+                    help = 'add fence between dependent loads')
 args = parser.parse_args()
 
 root = os.path.join(os.environ['RISCY_HOME'], 'tools')
@@ -22,6 +23,9 @@ test_dir = '' if args.test_dir == '' else os.path.abspath(args.test_dir)
 # copy initramfs.txt and .config
 shutil.copy(os.path.join(config_dir, 'linux_config'),
             os.path.join(linux_dir, '.config'))
+if args.dep_ld_fence:
+    with open(os.path.join(linux_dir, '.config'), 'a') as fp:
+        fp.write('CONFIG_DEP_LD_REORDER=y\n')
 shutil.copy(os.path.join(config_dir, 'initramfs.txt'), linux_dir)
 
 # append to initramfs.txt with contents in test folder
@@ -54,8 +58,7 @@ cmd = ('cd {}; '.format(build_dir) +
        'rm -rf build-pk; mkdir -p build-pk; cd build-pk; ' +
        '../../riscv-pk/configure ' +
        '--prefix={} '.format(build_dir) +
-       '--host=riscv64-unknown-' +
-       ('elf ' if args.elf_gcc else 'linux-gnu ') +
+       '--host=riscv64-unknown-elf ' +
        '--with-payload={}; '.format(os.path.join(linux_dir, 'vmlinux')) +
        'make -j{}; make install'.format(args.jobs))
 print 'Running: {}'.format(cmd)

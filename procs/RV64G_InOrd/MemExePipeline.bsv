@@ -642,7 +642,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         ProcRq#(DProcReqId) req = ProcRq {
             id: 0, // id does not matter
             addr: lsqDeqLd.paddr,
-            toState: multicore ? S : M, // in case of single core, just fetch to M
+            // FIXME Fetch Lr to E cannot guarantee forward progress of Lr/Sc
+            // (it must be E in case of self-inv cache)
+            toState: E,
             op: Lr,
             byteEn: ?,
             data: ?,
@@ -959,7 +961,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         dMem.procReq.req(ProcRq {
             id: zeroExtend(lsqTag),
             addr: addr,
-            toState: multicore ? S : M, // in case of single core, just fetch to M
+            toState: multicore ? S : E, // in case of single core, just fetch to E
             op: Ld,
             byteEn: ?,
             data: ?,
