@@ -95,10 +95,10 @@ interface CoreIndInv;
 endinterface
 
 interface CoreDeadlock;
-    interface Get#(L1CRqStuck) dCacheCRqStuck;
-    interface Get#(L1PRqStuck) dCachePRqStuck;
-    interface Get#(ICRqStuck) iCacheCRqStuck;
-    interface Get#(IPRqStuck) iCachePRqStuck;
+    interface Get#(L1DCRqStuck) dCacheCRqStuck;
+    interface Get#(L1DPRqStuck) dCachePRqStuck;
+    interface Get#(L1ICRqStuck) iCacheCRqStuck;
+    interface Get#(L1IPRqStuck) iCachePRqStuck;
     interface Get#(RenameStuck) renameInstStuck;
     interface Get#(RenameStuck) renameCorrectPathStuck;
     interface Get#(CommitStuck) commitInstStuck;

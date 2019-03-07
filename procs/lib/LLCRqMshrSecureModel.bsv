@@ -50,33 +50,38 @@ import LLCRqMshr::*;
 
 interface LLCRqMshrSecureModel#(
     numeric type lgBankNum,
-    numeric type childNum, 
     numeric type cRqNum, 
     type wayT,
     type tagT,
+    type dirPendT,
     type reqT // child req type
 );
-    interface LLCRqMshr#(cRqNum, wayT, tagT, Vector#(childNum, DirPend), reqT) mshr;
+    interface LLCRqMshr#(cRqNum, wayT, tagT, dirPendT, reqT) mshr;
 endinterface
 
 //////////////////
 // safe version //
 //////////////////
 module mkLLCRqMshrSecureModel#(
-    function Addr getAddrFromReq(reqT r)
+    function Addr getAddrFromReq(reqT r),
+    function Bool needDownReq(dirPendT dirPend),
+    dirPendT dirPendInitVal
 )(
-    LLCRqMshrSecureModel#(lgBankNum, childNum, cRqNum, wayT, tagT, reqT)
+    LLCRqMshrSecureModel#(lgBankNum, cRqNum, wayT, tagT, dirPendT, reqT)
 ) provisos (
     Alias#(bankIdT, Bit#(lgBankNum)),
     Alias#(cRqIndexT, Bit#(TLog#(cRqNum))),
-    Alias#(slotT, LLCRqSlot#(childNum, wayT, tagT)),
+    Alias#(slotT, LLCRqSlot#(wayT, tagT, dirPendT)),
     Alias#(wayT, Bit#(_waySz)),
     Alias#(tagT, Bit#(_tagSz)),
+    Bits#(dirPendT, _dirPendSz),
     Bits#(reqT, _reqSz),
     NumAlias#(bankNum, TExp#(lgBankNum)),
     Mul#(bankNum, cRqPerBankNum, cRqNum),
     Add#(a__, lgBankNum, AddrSz)
 );
+    slotT slotInitVal = getLLCRqSlotInitVal(dirPendInitVal);
+
     // logical ordering: sendToM < sendRqToC < sendRsToDma/C < mRsDeq < pipelineResp < transfer
     // We put pipelineResp < transfer to cater for deq < enq of cache pipeline
     // EHR ports
@@ -94,7 +99,7 @@ module mkLLCRqMshrSecureModel#(
     // summary bit of dirPend in each entry: asserted when some dirPend[i] = ToSend
     Vector#(cRqNum, Ehr#(3, Bool)) needReqChildVec <- replicateM(mkEhr(False));
     // cRq mshr slots
-    Vector#(cRqNum, Ehr#(3, slotT)) slotVec <- replicateM(mkEhr(defaultValue));
+    Vector#(cRqNum, Ehr#(3, slotT)) slotVec <- replicateM(mkEhr(slotInitVal));
     // data valid bit
     Vector#(cRqNum, Ehr#(3, Bool)) dataValidVec <- replicateM(mkEhr(False));
     // data values
@@ -140,7 +145,7 @@ module mkLLCRqMshrSecureModel#(
 
 `ifdef CHECK_DEADLOCK
     MshrDeadlockChecker#(cRqNum) checker <- mkMshrDeadlockChecker;
-    FIFO#(LLCRqMshrStuck#(childNum, reqT)) stuckQ <- mkFIFO1;
+    FIFO#(LLCRqMshrStuck#(dirPendT, reqT)) stuckQ <- mkFIFO1;
 
     (* fire_when_enabled *)
     rule checkDeadlock;
@@ -160,7 +165,7 @@ module mkLLCRqMshrSecureModel#(
     action
         slotVec[n][ehrPort] <= s;
         // set dirPend summary bit
-        needReqChildVec[n][ehrPort] <= getNeedReqChild(s.dirPend);
+        needReqChildVec[n][ehrPort] <= needDownReq(s.dirPend);
     endaction
     endfunction
 
@@ -181,7 +186,7 @@ module mkLLCRqMshrSecureModel#(
             cRqIndexT n = emptyEntryQ[bank].first;
             reqVec[n][transfer_port] <= r;
             stateVec[n][transfer_port] <= Init;
-            writeSlot(transfer_port, n, defaultValue);
+            writeSlot(transfer_port, n, slotInitVal);
             dataValidVec[n][transfer_port] <= isValid(d);
             dataVec[n][transfer_port] <= validValue(d);
             addrSuccValidVec[n][transfer_port] <= False;

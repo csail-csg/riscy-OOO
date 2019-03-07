@@ -100,8 +100,8 @@ module mkLastLvCRqMshr(
 );
     function Addr getAddr(cRqT r) = r.addr;
     LLCRqMshrSecureModel#(
-        `SIM_LOG_LLC_MSHR_BANK_NUM, LLChildNum, LLCRqNum, LLWay, LLTag, cRqT
-    ) m <- mkLLCRqMshrSecureModel(getAddr);
+        `SIM_LOG_LLC_MSHR_BANK_NUM, LLCRqNum, LLWay, LLTag, Vector#(LLChildNum, DirPend), cRqT
+    ) m <- mkLLCRqMshrSecureModel(getAddr, getNeedReqChild, getDirPendInitVal);
     return m.mshr;
 endmodule
 
@@ -283,7 +283,11 @@ module mkLLCache(LLCache);
     staticAssert(False, "DEBUG_DMA should not be defined");
 `endif
 
+`ifdef SELF_INV_CACHE
+    LLBankWrapper cache <- mkSelfInvLLBank(mkLastLvCRqMshr, mkLLPipeline);
+`else
     LLBankWrapper cache <- mkLLBank(mkLastLvCRqMshr, mkLLPipeline);
+`endif
 
     // perf counters
     Fifo#(1, LLCPerfType) perfReqQ <- mkCFFifo;

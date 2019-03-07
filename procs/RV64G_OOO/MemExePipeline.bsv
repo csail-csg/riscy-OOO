@@ -720,7 +720,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `ifdef SELF_INV_CACHE
         // wait reconcile to be done
         if(lsqDeqLd.acq) begin
-            when(waitReconcile == Lr, noAction)
+            when(waitReconcile == Lr, noAction);
             let unused <- dMem.reconcile.response.get;
             waitReconcile <= None;
         end
@@ -792,7 +792,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `ifdef SELF_INV_CACHE
         // wait reconcile to be done
         if(lsqDeqLd.acq) begin
-            when(waitReconcile == LdMMIO, noAction)
+            when(waitReconcile == LdMMIO, noAction);
             let unused <- dMem.reconcile.response.get;
             waitReconcile <= None;
         end
@@ -824,7 +824,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `ifdef SELF_INV_CACHE
         // wait reconcile to be done
         if(lsqDeqLd.acq) begin
-            when(waitReconcile == LdMMIO, noAction)
+            when(waitReconcile == LdMMIO, noAction);
             let unused <- dMem.reconcile.response.get;
             waitReconcile <= None;
         end
@@ -930,7 +930,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // wait reconcile to be done
         if(lsqDeqSt.acq) begin
             when(waitReconcile == Fence, noAction);
-            let unuse <- dMem.reconcile.response.get;
+            let unused <- dMem.reconcile.response.get;
             waitReconcile <= None;
         end
 `endif
@@ -994,7 +994,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // wait reconcile to be done
         if(lsqDeqSt.acq) begin
             when(waitReconcile == ScAmo, noAction);
-            let unuse <- dMem.reconcile.response.get;
+            let unused <- dMem.reconcile.response.get;
             waitReconcile <= None;
         end
 `endif
@@ -1073,7 +1073,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // wait reconcile to be done
         if(lsqDeqSt.acq) begin
             when(waitReconcile == StMMIO, noAction);
-            let unuse <- dMem.reconcile.response.get;
+            let unused <- dMem.reconcile.response.get;
             waitReconcile <= None;
         end
 `endif
@@ -1104,7 +1104,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // wait reconcile to be done
         if(lsqDeqSt.acq) begin
             when(waitReconcile == StMMIO, noAction);
-            let unuse <- dMem.reconcile.response.get;
+            let unused <- dMem.reconcile.response.get;
             waitReconcile <= None;
         end
 `endif

@@ -221,10 +221,10 @@ module mkDeadlockSync#(
     Clock userClk <- exposeCurrentClock;
     Reset userRst <- exposeCurrentReset;
     SyncFIFOIfc#(LLCStuck) llcCRqStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
-    SyncFIFOIfc#(Tuple2#(CoreId, L1CRqStuck)) dCacheCRqStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
-    SyncFIFOIfc#(Tuple2#(CoreId, L1PRqStuck)) dCachePRqStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
-    SyncFIFOIfc#(Tuple2#(CoreId, ICRqStuck)) iCacheCRqStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
-    SyncFIFOIfc#(Tuple2#(CoreId, IPRqStuck)) iCachePRqStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
+    SyncFIFOIfc#(Tuple2#(CoreId, L1DCRqStuck)) dCacheCRqStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
+    SyncFIFOIfc#(Tuple2#(CoreId, L1DPRqStuck)) dCachePRqStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
+    SyncFIFOIfc#(Tuple2#(CoreId, L1ICRqStuck)) iCacheCRqStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
+    SyncFIFOIfc#(Tuple2#(CoreId, L1IPRqStuck)) iCachePRqStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
     SyncFIFOIfc#(Tuple2#(CoreId, RenameStuck)) renameInstStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
     SyncFIFOIfc#(Tuple2#(CoreId, RenameStuck)) renameCorrectPathStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);
     SyncFIFOIfc#(Tuple2#(CoreId, CommitStuck)) commitInstStuckQ <- mkSyncFifo(1, userClk, userRst, portalClk, portalRst);

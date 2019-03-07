@@ -292,6 +292,7 @@ typedef struct {
     LdQMemFunc         memFunc;
     ByteEn             byteEn;
     Bool               unsignedLd;
+    Bool               acq;
     Bool               rel;
     Maybe#(PhyDst)     dst;
     Addr               paddr;
@@ -2009,6 +2010,7 @@ module mkSplitLSQ(SplitLSQ);
             memFunc: ld_memFunc[deqP],
             byteEn: ld_byteEn[deqP],
             unsignedLd: ld_unsigned[deqP],
+            acq: ld_acq[deqP],
             rel: ld_rel[deqP],
             dst: ld_dst[deqP],
             paddr: ld_paddr_deqLd[deqP],

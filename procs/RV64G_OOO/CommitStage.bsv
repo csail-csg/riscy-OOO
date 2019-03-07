@@ -322,7 +322,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         end
 
         // reconcile I$
-        if(reconcileI) begin;
+        if(reconcileI) begin
             inIfc.setReconcileI;
         end
     endaction
