@@ -31,7 +31,6 @@ import L1CoCache::*;
 import L2Tlb::*;
 import CCTypes::*;
 import CacheUtils::*;
-import LLBank::*;
 import LLCache::*;
 import ProcIF::*;
 import BootRomIF::*;

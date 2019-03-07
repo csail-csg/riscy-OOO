@@ -377,6 +377,11 @@ module mkCore#(CoreId coreId)(Core);
     Reg#(Bool)  flush_caches <- mkReadOnlyReg(False);
     Reg#(Bool)  flush_brpred <- mkReadOnlyReg(False);
 `endif
+`ifdef SELF_INV_CACHE
+    Reg#(Bool)  reconcile_i <- mkReg(False);
+`else
+    Reg#(Bool)  reconcile_i <- mkReadOnlyReg(False);
+`endif
 
     // performance counters
     Reg#(Bool) doStats = coreFix.doStatsIfc; // whether data is collected
@@ -466,6 +471,7 @@ module mkCore#(CoreId coreId)(Core);
         method setFlushReservation = flush_reservation._write(True);
         method setFlushBrPred = flush_brpred._write(True);
         method setFlushCaches = flush_caches._write(True);
+        method setReconcileI = reconcile_i._write(True);
         method killAll = coreFix.killAll;
         method redirectPc = fetchStage.redirect;
         method setFetchWaitRedirect = fetchStage.setWaitRedirect;
@@ -558,11 +564,35 @@ module mkCore#(CoreId coreId)(Core);
     endrule
 `endif
 
+`ifdef SELF_INV_CACHE
+    // Use wires to capture flush regs and empty signals. This is ok because
+    // there cannot be any activity to make empty -> not-empty or need-flush ->
+    // no-need-flush when we are trying to flush.
+    PulseWire doReconcileI <- mkPulseWire;
+
+    // We don't really need to wait for fetch to be empty, but just in case we
+    // back pressure I TLB because I$ is reconciling.
+    rule setDoReconcileI(reconcile_i && fetchStage.emptyForFlush);
+        doReconcileI.send;
+    endrule
+
+    rule reconcileI(doReconcileI);
+        reconcile_i <= False;
+        iMem.reconcile;
+    endrule
+`endif
+
     rule readyToFetch(
-        !flush_reservation && !flush_tlbs && !update_vm_info &&
-        !flush_caches && !flush_brpred &&
-        iTlb.flush_done && dTlb.flush_done &&
-        iMem.flush_done && dMem.flush_done && fetchStage.flush_predictors_done
+        !flush_reservation && !flush_tlbs && !update_vm_info
+        && iTlb.flush_done && dTlb.flush_done
+`ifdef SECURITY
+        && !flush_caches && !flush_brpred
+        && iMem.flush_done && dMem.flush_done
+        && fetchStage.flush_predictors_done
+`endif
+`ifdef SELF_INV_CACHE
+        && !reconcile_i && iMem.reconcile_done
+`endif
     );
         fetchStage.done_flushing();
     endrule

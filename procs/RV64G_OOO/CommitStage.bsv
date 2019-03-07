@@ -80,6 +80,7 @@ interface CommitInput;
     method Action setFlushReservation;
     method Action setFlushBrPred; // security
     method Action setFlushCaches; // security
+    method Action setReconcileI; // recocile I$
     // redirect
     method Action killAll;
     method Action redirectPc(Addr trap_pc);
@@ -252,10 +253,13 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Reg#(Maybe#(CommitTrap)) commitTrap <- mkReg(Invalid); // saves new pc here
 
     // maintain system consistency when system state (CSR) changes or for security
-    function Action makeSystemConsistent(Bool flushTlb, Bool flushSecurity);
+    function Action makeSystemConsistent(Bool flushTlb, Bool flushSecurity, Bool reconcileI);
     action
 `ifndef SECURITY
         flushSecurity = False;
+`endif
+`ifndef SELF_INV_CACHE
+        reconcileI = False;
 `endif
 
 `ifndef DISABLE_SECURE_FLUSH_TLB
@@ -315,6 +319,11 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             end
 `endif
 `endif
+        end
+
+        // reconcile I$
+        if(reconcileI) begin;
+            inIfc.setReconcileI;
         end
     endaction
     endfunction
@@ -389,7 +398,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         // does not include prv info, and it has to flush when prv changes.
         // XXX As approximation, Trap may cause context switch, so flush for
         // security
-        makeSystemConsistent(False, True);
+        makeSystemConsistent(False, True, False);
     endrule
 
     // commit misspeculated load
@@ -483,7 +492,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         // for security
         makeSystemConsistent(
             x.iType == SFence || write_satp, // TODO flush TLB when change sanctum regs?
-            flush_security || x.iType == Sret || x.iType == Mret
+            flush_security || x.iType == Sret || x.iType == Mret,
+            x.iType == FenceI // reconcile I$ for fence.i
         );
 
         // incr inst cnt

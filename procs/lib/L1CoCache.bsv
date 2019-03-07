@@ -24,6 +24,7 @@
 `include "ProcConfig.bsv"
 
 import Vector::*;
+import FIFO::*;
 import ClientServer::*;
 import GetPut::*;
 import Assert::*;
@@ -41,6 +42,10 @@ import L1Bank::*;
 import ICRqMshr::*;
 import IPRqMshr::*;
 import IBank::*;
+import SelfInvL1Pipe::*;
+import SelfInvL1Bank::*;
+import SelfInvIPipe::*;
+import SelfInvIBank::*;
 
 export L1Num;
 export LgL1WayNum;
@@ -48,10 +53,14 @@ export L1WayNum;
 export L1Way;
 
 export DProcReqId;
+export L1DCRqStuck(..);
+export L1DPRqStuck(..);
 export DCoCache(..);
 export mkDCoCache;
 
 export ISupSz;
+export L1ICRqStuck(..);
+export L1IPRqStuck(..);
 export ICoCache(..);
 export mkICoCache;
 
@@ -103,6 +112,31 @@ module mkDPRqMshrWrapper(
     return m;
 endmodule
 
+
+`ifdef SELF_INV_CACHE
+
+typedef `L1D_MAX_HITS DMaxHitNum;
+
+(* synthesize *)
+module mkDPipeline(
+    SelfInvL1Pipe#(LgDBankNum, L1WayNum, DMaxHitNum, DIndex, DTag, DCRqMshrIdx, DPRqMshrIdx)
+);
+    let m <- mkSelfInvL1Pipe;
+    return m;
+endmodule
+
+typedef SelfInvL1Bank#(LgDBankNum, L1WayNum, DIndexSz, DTagSz, DCRqNum, DPRqNum, DMaxHitNum, DProcReqId) DCacheWrapper;
+
+module mkDCacheWrapper#(L1ProcResp#(DProcReqId) procResp)(DCacheWrapper);
+    let m <- mkSelfInvL1Cache(mkDCRqMshrWrapper, mkDPRqMshrWrapper, mkDPipeline, procResp);
+    return m;
+endmodule
+
+typedef SelfInvL1CRqStuck L1DCRqStuck;
+typedef SelfInvL1PRqStuck L1DPRqStuck;
+
+`else // !SELF_INV_CACHE
+
 (* synthesize *)
 module mkDPipeline(
     L1Pipe#(LgDBankNum, L1WayNum, DIndex, DTag, DCRqMshrIdx, DPRqMshrIdx)
@@ -118,6 +152,12 @@ module mkDCacheWrapper#(L1ProcResp#(DProcReqId) procResp)(DCacheWrapper);
     return m;
 endmodule
 
+typedef L1CRqStuck L1DCRqStuck;
+typedef L1PRqStuck L1DPRqStuck;
+
+`endif // SELF_INV_CACHE
+
+
 interface DCoCache;
     interface L1ProcReq#(DProcReqId) procReq;
     method Action flush;
@@ -127,9 +167,13 @@ interface DCoCache;
 
     interface ChildCacheToParent#(L1Way, void) to_parent;
 
+`ifdef SELF_INV_CACHE
+    // reconcile
+    interface Server#(void, void) reconcile;
+`endif
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
-    interface Get#(L1CRqStuck) cRqStuck;
-    interface Get#(L1PRqStuck) pRqStuck;
+    interface Get#(L1DCRqStuck) cRqStuck;
+    interface Get#(L1DPRqStuck) pRqStuck;
 endinterface
 
 module mkDCoCache#(L1ProcResp#(DProcReqId) procResp)(DCoCache);
@@ -148,6 +192,29 @@ module mkDCoCache#(L1ProcResp#(DProcReqId) procResp)(DCoCache);
             data: d
         });
     endrule
+`endif
+
+`ifdef SELF_INV_CACHE
+    // change the reconcile ifc to a FIFO ifc to avoid scheduling issues
+    FIFO#(void) reconcileReqQ <- mkFIFO1;
+    FIFO#(void) reconcileRespQ <- mkFIFO1;
+    Reg#(Bool) waitReconcile <- mkReg(False);
+
+    rule doStartReconcile(!waitReconcile);
+        reconcileReqQ.deq;
+        cache.reconcile;
+        waitReconcile <= True;
+    endrule
+
+    rule doEndReconcile(waitReconcile && cache.reconcile_done);
+        reconcileRespQ.enq(?);
+        waitReconcile <= False;
+    endrule
+
+    interface Server reconcile;
+        interface Put request = toPut(reconcileReqQ);
+        interface Get response = toGet(reconcileRespQ);
+    endinterface
 `endif
 
     interface procReq = cache.procReq;
@@ -225,6 +292,30 @@ module mkICRqMshrWrapper(
     return m;
 endmodule
 
+
+`ifdef SELF_INV_CACHE
+
+(* synthesize *)
+module mkIPipeline(
+    SelfInvIPipe#(LgIBankNum, L1WayNum, IIndex, ITag, ICRqMshrIdx)
+);
+    let m <- mkSelfInvIPipe;
+    return m;
+endmodule
+
+typedef SelfInvIBank#(ISupSz, LgIBankNum, L1WayNum, IIndexSz, ITagSz, ICRqNum) IBankWrapper;
+
+(* synthesize *)
+module mkIBankWrapper(IBankWrapper);
+    let m <- mkSelfInvIBank(0, mkICRqMshrWrapper, mkIPipeline);
+    return m;
+endmodule
+
+typedef SelfInvICRqStuck L1ICRqStuck;
+typedef SelfInvIPRqStuck L1IPRqStuck;
+
+`else // !SELF_INV_CACHE
+
 (* synthesize *)
 module mkIPRqMshrWrapper(
     IPRqMshr#(IPRqNum)
@@ -249,6 +340,12 @@ module mkIBankWrapper(IBankWrapper);
     return m;
 endmodule
 
+typedef ICRqStuck L1ICRqStuck;
+typedef IPRqStuck L1IPRqStuck;
+
+`endif // SELF_INV_CACHE
+
+
 interface ICoCache;
     interface Server#(Addr, Vector#(ISupSz, Maybe#(Instruction))) to_proc;
     method Action flush;
@@ -257,9 +354,14 @@ interface ICoCache;
 
     interface ChildCacheToParent#(L1Way, void) to_parent;
 
+`ifdef SELF_INV_CACHE
+    // reconcile
+    method Action reconcile;
+    method Bool reconcile_done;
+`endif
     // detect deadlock: only in use when macro CHECK_DEADLOCK is defined
-    interface Get#(ICRqStuck) cRqStuck;
-    interface Get#(IPRqStuck) pRqStuck;
+    interface Get#(L1ICRqStuck) cRqStuck;
+    interface Get#(L1IPRqStuck) pRqStuck;
 endinterface
 
 (* synthesize *)
@@ -321,6 +423,11 @@ module mkICoCache(ICoCache);
     endinterface
 
     interface to_parent = cache.to_parent;
+
+`ifdef SELF_INV_CACHE
+    method reconcile = cache.reconcile;
+    method reconcile_done = cache.reconcile_done;
+`endif
 
     interface cRqStuck = cache.cRqStuck;
     interface pRqStuck = cache.pRqStuck;

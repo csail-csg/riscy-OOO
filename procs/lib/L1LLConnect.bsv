@@ -29,7 +29,6 @@ import CacheUtils::*;
 import CCTypes::*;
 import L1CoCache::*;
 import LLCache::*;
-import LLBank::*;
 import CrossBar::*;
 
 module mkL1LLConnect#(

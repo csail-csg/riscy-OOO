@@ -38,6 +38,8 @@ USE_XILINX_FPU ?= true
 CORE_NUM ?= 1
 # TSO or WEAK
 TSO_MM ?= false
+# Use self inv cache? (only for WEAK mm), value is the max hits in D$
+SELF_INV_CACHE ?=
 # security
 SECURITY ?= false
 SECURE_LLC ?= false
@@ -73,9 +75,12 @@ endif
 BUILD_DIR := $(RISCY_HOME)/procs/build/$(PROC).core_$(CORE_NUM).core_$(CORE_SIZE).cache_$(CACHE_SIZE)
 ifeq ($(TSO_MM),true)
 BUILD_DIR := $(BUILD_DIR).tso
+else ifneq($(SELF_INV_CACHE),)
+BUILD_DIR := $(BUILD_DIR).self_inv_$(SELF_INV_CACHE)
 else
 BUILD_DIR := $(BUILD_DIR).weak
 endif
+
 ifeq ($(SECURITY),true)
 BUILD_DIR := $(BUILD_DIR).security
 else ifeq ($(SECURE_LLC),true)
@@ -89,9 +94,11 @@ BUILD_DIR := $(BUILD_DIR).secure_mshr
 else ifeq ($(SECURE_ARBITER),true)
 BUILD_DIR := $(BUILD_DIR).secure_arbiter
 endif
+
 ifeq ($(DISABLE_SECURE_BW),true)
 BUILD_DIR := $(BUILD_DIR).no_secure_bw
 endif
+
 ifeq ($(CHECK_DEADLOCK),true)
 BUILD_DIR := $(BUILD_DIR).check_deadlock
 endif

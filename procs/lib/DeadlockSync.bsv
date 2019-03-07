@@ -36,12 +36,15 @@ import CCTypes::*;
 import L1CRqMshr::*;
 import L1PRqMshr::*;
 import L1Bank::*;
+import SelfInvL1Bank::*;
 import ICRqMshr::*;
 import IPRqMshr::*;
 import IBank::*;
+import SelfInvIBank::*;
 import L1CoCache::*;
 import LLCRqMshr::*;
 import LLBank::*;
+import SelfInvLLBank::*;
 import LLCDmaConnect::*;
 import LLCache::*;
 import FetchStage::*;
@@ -52,10 +55,10 @@ import CommitStage::*;
 
 interface DeadlockIndInv;
     interface Get#(LLCStuck) llcCRqStuck;
-    interface Get#(Tuple2#(CoreId, L1CRqStuck)) dCacheCRqStuck;
-    interface Get#(Tuple2#(CoreId, L1PRqStuck)) dCachePRqStuck;
-    interface Get#(Tuple2#(CoreId, ICRqStuck)) iCacheCRqStuck;
-    interface Get#(Tuple2#(CoreId, IPRqStuck)) iCachePRqStuck;
+    interface Get#(Tuple2#(CoreId, L1DCRqStuck)) dCacheCRqStuck;
+    interface Get#(Tuple2#(CoreId, L1DPRqStuck)) dCachePRqStuck;
+    interface Get#(Tuple2#(CoreId, L1ICRqStuck)) iCacheCRqStuck;
+    interface Get#(Tuple2#(CoreId, L1IPRqStuck)) iCachePRqStuck;
     interface Get#(Tuple2#(CoreId, RenameStuck)) renameInstStuck;
     interface Get#(Tuple2#(CoreId, RenameStuck)) renameCorrectPathStuck;
     interface Get#(Tuple2#(CoreId, CommitStuck)) commitInstStuck;
@@ -82,7 +85,11 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
 
         rule doICachePRqStuck;
             let {c, s} <- inv.iCachePRqStuck.get;
+`ifdef SELF_INV_CACHE
+            doAssert(False, "self inv I$ does not have pRq");
+`else
             ind.iCachePRqStuck(zeroExtend(c), s.addr, pack(s.toState), pack(s.state));
+`endif
         endrule
 
         rule doLLCCRqStuck;
@@ -94,6 +101,16 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
                     tagged Tlb ._i: return TlbDma;
                 endcase);
             endcase);
+`ifdef SELF_INV_CACHE
+            Vector#(LLChildNum, Bit#(2)) pend_tags = replicate(0);
+            if(s.dirPend matches tagged ToSend .c) begin
+                pend_tags[c] = 1;
+            end
+            else if(s.dirPend matches tagged Waiting .c) begin
+                pend_tags[c] = 2;
+            end
+            Vector#(LLChildNum, Bit#(2)) pend_states = replicate(pack(Msi'(S)));
+`else // !SELF_INV_CACHE
             function Bit#(2) getDirPendTag(DirPend d);
                 return (case(d) matches
                     tagged Invalid: return 0;
@@ -101,6 +118,7 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
                     tagged Waiting ._s: return 2;
                 endcase);
             endfunction
+            Vector#(LLChildNum, Bit#(2)) pend_tags = map(getDirPendTag, s.dirPend);
             function Bit#(2) getDirPendVal(DirPend d);
                 return pack(case(d) matches
                     tagged ToSend .s: return s;
@@ -108,11 +126,12 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
                     default: return M;
                 endcase);
             endfunction
+            Vector#(LLChildNum, Msi) pend_states = map(getDirPendVal, s.dirPend);
+`endif // SELF_INV_CACHE
             ind.llcCRqStuck(
                 src, zeroExtend(s.child), s.addr, pack(s.fromState),
                 pack(s.toState), pack(s.state), s.waitP,
-                zeroExtend(pack(map(getDirPendTag, s.dirPend))),
-                zeroExtend(pack(map(getDirPendVal, s.dirPend)))
+                zeroExtend(pack(pend_tags)), zeroExtend(pack(pend_states))
             );
         endrule
 

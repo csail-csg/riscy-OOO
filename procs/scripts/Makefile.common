@@ -29,6 +29,7 @@
 # USE_XILINX_FPU: true or false
 # CORE_NUM
 # TSO_MM: true or false
+# SELF_INV_CACHE: max hits in D$
 # SECURITY: true or false
 # SECURE_LLC: true or false
 # SECURE_FLUSH: true or false
@@ -111,6 +112,9 @@ CONNECTALFLAGS += --bscflags=" -D CACHE_$(CACHE_SIZE) "
 # mem model
 ifeq ($(TSO_MM),true)
 CONNECTALFLAGS += --bscflags=" -D TSO_MM "
+else ifneq($(SELF_INV_CACHE),)
+CONNECTALFLAGS += --bscflags=" -D SELF_INV_CACHE -D L1D_MAX_HITS=$(SELF_INV_CACHE) "
+else
 endif
 
 # security features

@@ -37,6 +37,8 @@ import LLPipe::*;
 import LLCRqMshr::*;
 import LLCRqMshrSecureModel::*;
 import LLBank::*;
+import SelfInvLLPipe::*;
+import SelfInvLLBank::*;
 import L1CoCache::*;
 import LLCDmaConnect::*;
 import Performance::*;
@@ -73,15 +75,16 @@ typedef GetTagSz#(LgLLBankNum, LgLLSetNum) LLTagSz;
 typedef Bit#(LLTagSz) LLTag;
 typedef Bit#(TLog#(LLWayNum)) LLWay;
 
+
 `ifdef USE_LLC_MSHR_SECURE_MODEL
 `ifndef DISABLE_SECURE_BW
 typedef TDiv#(DramMaxReqs, 2) LLCRqNum; // SECURITY: limit MSHR size <= DRAM bandwidth
-`else
+`else // DISABLE_SECURE_BW
 typedef LLWayNum LLCRqNum; // ignore DRAM bandwidth contention, keep using the old mshr size
-`endif
-`else
+`endif // DISABLE_SECURE_BW
+`else // !USE_LLC_MSHR_SECURE_MODEL
 typedef LLWayNum LLCRqNum;
-`endif
+`endif // USE_LLC_MSHR_SECURE_MODEL
 typedef Bit#(TLog#(LLCRqNum)) LLCRqMshrIdx;
 
 // all L1$ are children
@@ -102,19 +105,38 @@ module mkLastLvCRqMshr(
     return m.mshr;
 endmodule
 
-`else
+`else // !USE_LLC_MSHR_SECURE_MODEL
+
+`ifdef SELF_INV_CACHE
 
 (* synthesize *)
 module mkLastLvCRqMshr(
-    LLCRqMshr#(LLChildNum, LLCRqNum, LLWay, LLTag, cRqT)
+    LLCRqMshr#(LLCRqNum, LLWay, LLTag, SelfInvDirPend#(LLChild), cRqT)
 ) provisos(
     Alias#(cRqT, LLRq#(LLCRqId, LLCDmaReqId, LLChild))
 );
     function Addr getAddr(cRqT r) = r.addr;
-    let m <- mkLLCRqMshr(getAddr);
+    let m <- mkLLCRqMshr(getAddr, getSelfInvNeedReqChild, getSelfInvDirPendInitVal);
     return m;
 endmodule
-`endif
+
+`else // !SELF_INV_CACHE
+
+(* synthesize *)
+module mkLastLvCRqMshr(
+    LLCRqMshr#(LLCRqNum, LLWay, LLTag, Vector#(LLChildNum, DirPend), cRqT)
+) provisos(
+    Alias#(cRqT, LLRq#(LLCRqId, LLCDmaReqId, LLChild))
+);
+    function Addr getAddr(cRqT r) = r.addr;
+    let m <- mkLLCRqMshr(getAddr, getNeedReqChild, getDirPendInitVal);
+    return m;
+endmodule
+
+`endif // SELF_INV_CACHE
+
+`endif // USE_LLC_MSHR_SECURE_MODEL
+
 
 `ifdef USE_LLC_ARBITER_SECURE_MODEL
 
@@ -143,7 +165,7 @@ module mkLLPipeline(
 `endif
         showArbiter <= False;
     endrule
-`endif
+`endif // BSIM
 
 `ifdef SIM_LLC_ARBITER_NUM
     // round-robin reg: only allow entry to pipeline when turn == 0. This
@@ -158,7 +180,7 @@ module mkLLPipeline(
     method Action send(pipeInT r) if(turn == 0);
         m.send(r);
     endmethod
-`else
+`else // !SIM_LLC_ARBITER_NUM
     // delay input
     Vector#(SimLLCArbLat, FIFO#(pipeInT)) delayQ <- replicateM(mkFIFO);
 
@@ -168,7 +190,7 @@ module mkLLPipeline(
     mkConnection(toGet(delayQ[valueof(SimLLCArbLat) - 1]).get, m.send);
 
     method send = delayQ[0].enq;
-`endif
+`endif // SIM_LLC_ARBITER_NUM
 
     method notEmpty = m.notEmpty;
     method first = m.first;
@@ -176,7 +198,19 @@ module mkLLPipeline(
     method deqWrite = m.deqWrite;
 endmodule
 
-`else
+`else // !USE_LLC_ARBITER_SECURE_MODEL
+
+`ifdef SELF_INV_CACHE
+
+(* synthesize *)
+module mkLLPipeline(
+    SelfInvLLPipe#(LgLLBankNum, LLChildNum, LLWayNum, LLIndex, LLTag, LLCRqMshrIdx)
+);
+    let m <- mkSelfInvLLPipe;
+    return m;
+endmodule
+
+`else // !SELF_INV_CACHE
 
 (* synthesize *)
 module mkLLPipeline(
@@ -185,11 +219,19 @@ module mkLLPipeline(
     let m <- mkLLPipe;
     return m;
 endmodule
-`endif
 
+`endif // SELF_INV_CACHE
+
+`endif // USE_LLC_ARBITER_SECURE_MODEL
+
+
+`ifdef SELF_INV_CACHE
+typedef SelfInvLLBank#(LgLLBankNum, LLChildNum, LLWayNum, LLIndexSz, LLTagSz, LLCRqNum, LLCRqId, LLCDmaReqId) LLBankWrapper;
+typedef SelfInvLLCRqStuck#(LLChildNum, LLCRqId, LLCDmaReqId) LLCStuck;
+`else // !SELF_INV_CACHE
 typedef LLBank#(LgLLBankNum, LLChildNum, LLWayNum, LLIndexSz, LLTagSz, LLCRqNum, LLCRqId, LLCDmaReqId) LLBankWrapper;
-//typedef MemFifoClient#(LdMemRqId#(LLCRqMshrIdx), void) LLCMemFifoClient;
 typedef LLCRqStuck#(LLChildNum, LLCRqId, LLCDmaReqId) LLCStuck;
+`endif // SELF_INV_CACHE
 
 interface LLCache;
     interface ParentCacheToChild#(LLCRqId, LLChild) to_child;
@@ -233,7 +275,7 @@ function Addr secureRotateAddr(Addr addr) provisos(
     // exchange swap bits with region bits
     return {high, swap, mid, region, low};
 endfunction
-`endif
+`endif // SECURITY
 
 (* synthesize *)
 module mkLLCache(LLCache);
@@ -268,7 +310,7 @@ module mkLLCache(LLCache);
         $fdisplay(stderr, "[LLCache] log LLC partition = %d", valueof(LgLLCPartitionNum));
         showLLCPartition <= False;
     endrule
-`endif
+`endif // BSIM
 
     // rotate addr to achieve LLC set partition
     interface ParentCacheToChild to_child;
@@ -362,7 +404,7 @@ module mkLLCache(LLCache);
     interface cRqStuck = cache.cRqStuck;
 
 `endif // DISABLE_SECURE_LLC
-`else // SECURITY
+`else // !SECURITY
 
     interface to_child = cache.to_child;
     interface dma = cache.dma;

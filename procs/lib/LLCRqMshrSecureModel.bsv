@@ -56,7 +56,7 @@ interface LLCRqMshrSecureModel#(
     type tagT,
     type reqT // child req type
 );
-    interface LLCRqMshr#(childNum, cRqNum, wayT, tagT, reqT) mshr;
+    interface LLCRqMshr#(cRqNum, wayT, tagT, Vector#(childNum, DirPend), reqT) mshr;
 endinterface
 
 //////////////////

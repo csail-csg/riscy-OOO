@@ -68,7 +68,7 @@ module mkMMIOInst(MMIOInst);
     Fifo#(1, Vector#(SupSize, Maybe#(Instruction))) respQ <- mkCFFifo;
     // To prevent inst fetch requests from clogging the network, we limit to at
     // most 1 pending req. The resp for the pending req will be buffered in
-    // pRsQ, no affecting other MMIO accesses.
+    // respQ, no affecting other MMIO accesses.
     Fifo#(1, void) pendQ <- mkCFFifo;
 
     method InstFetchTarget getFetchTarget(Addr phyPc);
