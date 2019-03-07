@@ -75,7 +75,7 @@ endif
 BUILD_DIR := $(RISCY_HOME)/procs/build/$(PROC).core_$(CORE_NUM).core_$(CORE_SIZE).cache_$(CACHE_SIZE)
 ifeq ($(TSO_MM),true)
 BUILD_DIR := $(BUILD_DIR).tso
-else ifneq($(SELF_INV_CACHE),)
+else ifneq ($(SELF_INV_CACHE),)
 BUILD_DIR := $(BUILD_DIR).self_inv_$(SELF_INV_CACHE)
 else
 BUILD_DIR := $(BUILD_DIR).weak

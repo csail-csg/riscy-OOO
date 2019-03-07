@@ -112,7 +112,7 @@ CONNECTALFLAGS += --bscflags=" -D CACHE_$(CACHE_SIZE) "
 # mem model
 ifeq ($(TSO_MM),true)
 CONNECTALFLAGS += --bscflags=" -D TSO_MM "
-else ifneq($(SELF_INV_CACHE),)
+else ifneq ($(SELF_INV_CACHE),)
 CONNECTALFLAGS += --bscflags=" -D SELF_INV_CACHE -D L1D_MAX_HITS=$(SELF_INV_CACHE) "
 else
 endif
