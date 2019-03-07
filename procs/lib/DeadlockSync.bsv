@@ -126,7 +126,7 @@ instance Connectable#(DeadlockIndInv, DeadlockIndication);
                     default: return M;
                 endcase);
             endfunction
-            Vector#(LLChildNum, Msi) pend_states = map(getDirPendVal, s.dirPend);
+            Vector#(LLChildNum, Bit#(2)) pend_states = map(getDirPendVal, s.dirPend);
 `endif // SELF_INV_CACHE
             ind.llcCRqStuck(
                 src, zeroExtend(s.child), s.addr, pack(s.fromState),
@@ -308,10 +308,10 @@ module mkDeadlockSync#(
         endmethod
     endmodule
 
-    Get#(Tuple2#(CoreId, L1CRqStuck)) dCacheCRqStuckNull          <- mkNullGet(clocked_by portalClk, reset_by portalRst);
-    Get#(Tuple2#(CoreId, L1PRqStuck)) dCachePRqStuckNull          <- mkNullGet(clocked_by portalClk, reset_by portalRst);
-    Get#(Tuple2#(CoreId, ICRqStuck)) iCacheCRqStuckNull           <- mkNullGet(clocked_by portalClk, reset_by portalRst);
-    Get#(Tuple2#(CoreId, IPRqStuck)) iCachePRqStuckNull           <- mkNullGet(clocked_by portalClk, reset_by portalRst);
+    Get#(Tuple2#(CoreId, L1DCRqStuck)) dCacheCRqStuckNull          <- mkNullGet(clocked_by portalClk, reset_by portalRst);
+    Get#(Tuple2#(CoreId, L1DPRqStuck)) dCachePRqStuckNull          <- mkNullGet(clocked_by portalClk, reset_by portalRst);
+    Get#(Tuple2#(CoreId, L1ICRqStuck)) iCacheCRqStuckNull           <- mkNullGet(clocked_by portalClk, reset_by portalRst);
+    Get#(Tuple2#(CoreId, L1IPRqStuck)) iCachePRqStuckNull           <- mkNullGet(clocked_by portalClk, reset_by portalRst);
     Get#(LLCStuck) llcCRqStuckNull                                <- mkNullGet(clocked_by portalClk, reset_by portalRst);
     Get#(Tuple2#(CoreId, RenameStuck)) renameInstStuckNull        <- mkNullGet(clocked_by portalClk, reset_by portalRst);
     Get#(Tuple2#(CoreId, RenameStuck)) renameCorrectPathStuckNull <- mkNullGet(clocked_by portalClk, reset_by portalRst);
