@@ -594,14 +594,22 @@ module mkCore#(CoreId coreId)(Core);
 `ifdef SYSTEM_SELF_INV_L1D
     PulseWire doReconcileD <- mkPulseWire;
 
+    Reg#(Bool) waitReconcileD <- mkReg(False);
+
     // We don't really need to wait for lsq empty, but just in case
     rule setDoReconcileD(reconcile_d && lsq.noWrongPathLoads);
         doReconcileD.send;
     endrule
 
-    rule reconcileD(doReconcileD);
+    rule startReconcileD(doReconcileD && !waitReconcileD);
+        coreFix.memExeIfc.reconcile.request.put(?);
+        waitReconcileD <= True;
+    endrule
+
+    rule completeReconcileD(waitReconcileD);
+        let unused <- coreFix.memExeIfc.reconcile.response.get;
+        waitReconcileD <= False;
         reconcile_d <= False;
-        coreFix.memExeIfc.reconcile;
     endrule
 `endif // SYSTEM_SELF_INV_L1D
 `endif // SELF_INV_CACHE
@@ -617,7 +625,7 @@ module mkCore#(CoreId coreId)(Core);
 `ifdef SELF_INV_CACHE
         && !reconcile_i && iMem.reconcile_done
 `ifdef SYSTEM_SELF_INV_L1D
-        && !reconcile_d && coreFix.memExeIfc.reconcile_done
+        && !reconcile_d
 `endif
 `endif
     );

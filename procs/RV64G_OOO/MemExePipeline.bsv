@@ -173,8 +173,7 @@ interface MemExePipeline;
     interface DCoCache dMemIfc;
     interface SpeculationUpdate specUpdate;
 `ifdef SELF_INV_CACHE
-    method Action reconcile;
-    method Bool reconcile_done;
+    interface Server#(void, void) reconcile;
 `endif
     method Data getPerf(ExeStagePerfType t);
 endinterface
@@ -1181,12 +1180,21 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     ));
 
 `ifdef SELF_INV_CACHE
-    method Action reconcile if(waitReconcile == None);
-        waitReconcile <= System;
-    endmethod
-    method Bool reconcile_done;
-        return waitReconcile == None;
-    endmethod
+    interface Server reconcile;
+        interface Put request;
+            method Action put(void x) if(waitReconcile == None);
+                dMem.reconcile.request.put(?);
+                waitReconcile <= System;
+            endmethod
+        endinterface
+        interface Get response;
+            method ActionValue#(void) get if(waitReconcile == System);
+                let unused <- dMem.reconcile.response.get;
+                waitReconcile <= None;
+                return ?;
+            endmethod
+        endinterface
+    endinterface
 `endif
 
     method Data getPerf(ExeStagePerfType t);
