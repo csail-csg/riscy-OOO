@@ -321,7 +321,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 `endif
         end
 
-`ifndef SELF_INV_CACHE
+`ifdef SELF_INV_CACHE
         // reconcile I$
         if(reconcileI) begin
             inIfc.setReconcileI;
