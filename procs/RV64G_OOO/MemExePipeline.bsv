@@ -94,7 +94,7 @@ typedef union tagged {
 } WaitLrScAmoMMIOResp deriving(Bits, Eq, FShow);
 
 typedef enum {
-    None, Lr, LdMMIO, Fence, ScAmo, StMMIO
+    None, Lr, LdMMIO, Fence, ScAmo, StMMIO, System
 } WaitReconcile deriving(Bits, Eq, FShow);
 
 typedef struct {
@@ -172,6 +172,10 @@ interface MemExePipeline;
     interface StoreBuffer stbIfc;
     interface DCoCache dMemIfc;
     interface SpeculationUpdate specUpdate;
+`ifdef SELF_INV_CACHE
+    method Action reconcile;
+    method Bool reconcile_done;
+`endif
     method Data getPerf(ExeStagePerfType t);
 endinterface
 
@@ -1175,6 +1179,16 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         dTlb.specUpdate,
         lsq.specUpdate
     ));
+
+`ifdef SELF_INV_CACHE
+    method Action reconcile if(waitReconcile == None);
+        waitReconcile <= System;
+    endmethod
+    method Bool reconcile_done;
+        return waitReconcile == None;
+    endmethod
+`endif
+
     method Data getPerf(ExeStagePerfType t);
         return (case(t)
 `ifdef PERF_COUNT

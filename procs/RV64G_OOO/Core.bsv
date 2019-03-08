@@ -382,6 +382,15 @@ module mkCore#(CoreId coreId)(Core);
 `else
     Reg#(Bool)  reconcile_i <- mkReadOnlyReg(False);
 `endif
+`ifdef SELF_INV_CACHE
+`ifdef SYSTEM_SELF_INV_L1D
+    Reg#(Bool)  reconcile_d <- mkReg(False);
+`else // !SYSTEM_SELF_INV_L1D
+    Reg#(Bool)  reconcile_d <- mkReadOnlyReg(False);
+`endif // SYSTEM_SELF_INV_L1D
+`else // !SELF_INV_CACHE
+    Reg#(Bool)  reconcile_d <- mkReadOnlyReg(False);
+`endif // SELF_INV_CACHE
 
     // performance counters
     Reg#(Bool) doStats = coreFix.doStatsIfc; // whether data is collected
@@ -472,6 +481,7 @@ module mkCore#(CoreId coreId)(Core);
         method setFlushBrPred = flush_brpred._write(True);
         method setFlushCaches = flush_caches._write(True);
         method setReconcileI = reconcile_i._write(True);
+        method setReconcileD = reconcile_d._write(True);
         method killAll = coreFix.killAll;
         method redirectPc = fetchStage.redirect;
         method setFetchWaitRedirect = fetchStage.setWaitRedirect;
@@ -580,7 +590,21 @@ module mkCore#(CoreId coreId)(Core);
         reconcile_i <= False;
         iMem.reconcile;
     endrule
-`endif
+
+`ifdef SYSTEM_SELF_INV_L1D
+    PulseWire doReconcileD <- mkPulseWire;
+
+    // We don't really need to wait for lsq empty, but just in case
+    rule setDoReconcileD(reconcile_d && lsq.noWrongPathLoads);
+        doReconcileD.send;
+    endrule
+
+    rule reconcileD(doReconcileD);
+        reconcile_d <= False;
+        coreFix.memExeIfc.reconcile;
+    endrule
+`endif // SYSTEM_SELF_INV_L1D
+`endif // SELF_INV_CACHE
 
     rule readyToFetch(
         !flush_reservation && !flush_tlbs && !update_vm_info
@@ -592,6 +616,9 @@ module mkCore#(CoreId coreId)(Core);
 `endif
 `ifdef SELF_INV_CACHE
         && !reconcile_i && iMem.reconcile_done
+`ifdef SYSTEM_SELF_INV_L1D
+        && !reconcile_d && coreFix.memExeIfc.reconcile_done
+`endif
 `endif
     );
         fetchStage.done_flushing();

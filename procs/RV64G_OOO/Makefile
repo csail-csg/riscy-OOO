@@ -40,6 +40,8 @@ CORE_NUM ?= 1
 TSO_MM ?= false
 # Use self inv cache? (only for WEAK mm), value is the max hits in D$
 SELF_INV_CACHE ?=
+# self inv D$ in case of system inst or trap
+SYSTEM_SELF_INV_L1D ?= false
 # security
 SECURITY ?= false
 SECURE_LLC ?= false
@@ -77,6 +79,9 @@ ifeq ($(TSO_MM),true)
 BUILD_DIR := $(BUILD_DIR).tso
 else ifneq ($(SELF_INV_CACHE),)
 BUILD_DIR := $(BUILD_DIR).self_inv_$(SELF_INV_CACHE)
+ifeq ($(SYSTEM_SELF_INV_L1D),true)
+BUILD_DIR := $(BUILD_DIR).system_inv_d
+endif
 else
 BUILD_DIR := $(BUILD_DIR).weak
 endif

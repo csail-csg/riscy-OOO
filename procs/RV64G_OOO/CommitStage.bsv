@@ -81,6 +81,7 @@ interface CommitInput;
     method Action setFlushBrPred; // security
     method Action setFlushCaches; // security
     method Action setReconcileI; // recocile I$
+    method Action setReconcileD; // recocile D$
     // redirect
     method Action killAll;
     method Action redirectPc(Addr trap_pc);
@@ -253,13 +254,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Reg#(Maybe#(CommitTrap)) commitTrap <- mkReg(Invalid); // saves new pc here
 
     // maintain system consistency when system state (CSR) changes or for security
-    function Action makeSystemConsistent(Bool flushTlb, Bool flushSecurity, Bool reconcileI);
+    function Action makeSystemConsistent(Bool flushTlb,
+                                         Bool flushSecurity,
+                                         Bool reconcileI);
     action
 `ifndef SECURITY
         flushSecurity = False;
-`endif
-`ifndef SELF_INV_CACHE
-        reconcileI = False;
 `endif
 
 `ifndef DISABLE_SECURE_FLUSH_TLB
@@ -321,10 +321,16 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 `endif
         end
 
+`ifndef SELF_INV_CACHE
         // reconcile I$
         if(reconcileI) begin
             inIfc.setReconcileI;
         end
+`ifdef SYSTEM_SELF_INV_L1D
+        // FIXME is this reconcile of D$ necessary?
+        inIfc.setReconcileD;
+`endif
+`endif
     endaction
     endfunction
 

@@ -23,9 +23,11 @@ test_dir = '' if args.test_dir == '' else os.path.abspath(args.test_dir)
 # copy initramfs.txt and .config
 shutil.copy(os.path.join(config_dir, 'linux_config'),
             os.path.join(linux_dir, '.config'))
-if args.dep_ld_fence:
-    with open(os.path.join(linux_dir, '.config'), 'a') as fp:
+with open(os.path.join(linux_dir, '.config'), 'a') as fp:
+    if args.dep_ld_fence:
         fp.write('CONFIG_DEP_LD_REORDER=y\n')
+    else:
+        fp.write('CONFIG_DEP_LD_REORDER=n\n')
 shutil.copy(os.path.join(config_dir, 'initramfs.txt'), linux_dir)
 
 # append to initramfs.txt with contents in test folder
