@@ -95,10 +95,10 @@ interface CoreIndInv;
 endinterface
 
 interface CoreDeadlock;
-    interface Get#(L1CRqStuck) dCacheCRqStuck;
-    interface Get#(L1PRqStuck) dCachePRqStuck;
-    interface Get#(ICRqStuck) iCacheCRqStuck;
-    interface Get#(IPRqStuck) iCachePRqStuck;
+    interface Get#(L1DCRqStuck) dCacheCRqStuck;
+    interface Get#(L1DPRqStuck) dCachePRqStuck;
+    interface Get#(L1ICRqStuck) iCacheCRqStuck;
+    interface Get#(L1IPRqStuck) iCachePRqStuck;
     interface Get#(RenameStuck) renameInstStuck;
     interface Get#(RenameStuck) renameCorrectPathStuck;
     interface Get#(CommitStuck) commitInstStuck;
@@ -325,6 +325,20 @@ module mkCore#(CoreId coreId)(Core);
     Reg#(Bool)  flush_tlbs <- mkReg(False);
     Reg#(Bool)  update_vm_info <- mkReg(False);
     Reg#(Bool)  flush_reservation <- mkReg(False);
+`ifdef SELF_INV_CACHE
+    Reg#(Bool)  reconcile_i <- mkReg(False);
+`else
+    Reg#(Bool)  reconcile_i <- mkReadOnlyReg(False);
+`endif
+`ifdef SELF_INV_CACHE
+`ifdef SYSTEM_SELF_INV_L1D
+    Reg#(Bool)  reconcile_d <- mkReg(False);
+`else // !SYSTEM_SELF_INV_L1D
+    Reg#(Bool)  reconcile_d <- mkReadOnlyReg(False);
+`endif // SYSTEM_SELF_INV_L1D
+`else // !SELF_INV_CACHE
+    Reg#(Bool)  reconcile_d <- mkReadOnlyReg(False);
+`endif // SELF_INV_CACHE
 
     // performance counters
     Reg#(Bool) doStats = coreFix.doStatsIfc; // whether data is collected
@@ -411,6 +425,8 @@ module mkCore#(CoreId coreId)(Core);
         method setFlushTlbs = flush_tlbs._write(True);
         method setUpdateVMInfo = update_vm_info._write(True);
         method setFlushReservation = flush_reservation._write(True);
+        method setReconcileI = reconcile_i._write(True);
+        method setReconcileD = reconcile_d._write(True);
         method killAll = coreFix.killAll;
         method redirectPc = fetchStage.redirect;
         method setFetchWaitRedirect = fetchStage.setWaitRedirect;
@@ -459,9 +475,55 @@ module mkCore#(CoreId coreId)(Core);
         end
     endrule
 
+`ifdef SELF_INV_CACHE
+    // Use wires to capture flush regs and empty signals. This is ok because
+    // there cannot be any activity to make empty -> not-empty or need-flush ->
+    // no-need-flush when we are trying to flush.
+    PulseWire doReconcileI <- mkPulseWire;
+
+    // We don't really need to wait for fetch to be empty, but just in case we
+    // back pressure I TLB because I$ is reconciling.
+    rule setDoReconcileI(reconcile_i && fetchStage.emptyForFlush);
+        doReconcileI.send;
+    endrule
+
+    rule reconcileI(doReconcileI);
+        reconcile_i <= False;
+        iMem.reconcile;
+    endrule
+
+`ifdef SYSTEM_SELF_INV_L1D
+    PulseWire doReconcileD <- mkPulseWire;
+
+    Reg#(Bool) waitReconcileD <- mkReg(False);
+
+    // We don't really need to wait for lsq empty, but just in case
+    rule setDoReconcileD(reconcile_d && lsq.noWrongPathLoads);
+        doReconcileD.send;
+    endrule
+
+    rule startReconcileD(doReconcileD && !waitReconcileD);
+        coreFix.memExeIfc.reconcile.request.put(?);
+        waitReconcileD <= True;
+    endrule
+
+    rule completeReconcileD(waitReconcileD);
+        let unused <- coreFix.memExeIfc.reconcile.response.get;
+        waitReconcileD <= False;
+        reconcile_d <= False;
+    endrule
+`endif // SYSTEM_SELF_INV_L1D
+`endif // SELF_INV_CACHE
+
     rule readyToFetch(
-        !flush_reservation && !flush_tlbs && !update_vm_info &&
-        iTlb.flush_done && dTlb.flush_done
+        !flush_reservation && !flush_tlbs && !update_vm_info
+        && iTlb.flush_done && dTlb.flush_done
+`ifdef SELF_INV_CACHE
+        && !reconcile_i && iMem.reconcile_done
+`ifdef SYSTEM_SELF_INV_L1D
+        && !reconcile_d
+`endif
+`endif
     );
         fetchStage.done_flushing();
     endrule

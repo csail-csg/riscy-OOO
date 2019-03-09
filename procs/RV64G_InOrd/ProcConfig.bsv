@@ -82,18 +82,6 @@
 // ==== CACHE SIZE ====
 //
 
-`ifdef CACHE_SMALL
-
-    // L1
-    `define LOG_L1_LINES 8 // 16KB
-    `define LOG_L1_WAYS 3 // 8 ways
-
-    // LLC
-    `define LOG_LLC_LINES 12 // 256KB
-    `define LOG_LLC_WAYS 4 // 16 ways
-
-`endif
-
 `ifdef CACHE_LARGE
 
     // L1
@@ -113,7 +101,7 @@
     `define LOG_L1_WAYS 2 // 4 ways
 
     // LLC
-    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_LINES 15 // 2MB
     `define LOG_LLC_WAYS 4 // 16 ways
 
 `endif
@@ -150,176 +138,29 @@
 
 `endif
 
-`ifdef CORE_SMALL
+`ifdef CORE_INORD
 
     // superscalar
     `define sizeSup 2
 
     // ROB
-    `define ROB_SIZE 64
+    `define ROB_SIZE 32
 
     // speculation
-    `define NUM_EPOCHS 8
-    `define NUM_SPEC_TAGS 8
+    `define NUM_EPOCHS 6
+    `define NUM_SPEC_TAGS 6
 
     // LSQ
-    `define LDQ_SIZE 24
-    `define STQ_SIZE 14
-    `define SB_SIZE 4
-
-    // reservation station sizes
-    `define RS_ALU_SIZE 16
-    `define RS_MEM_SIZE 16
-    `define RS_FPUMULDIV_SIZE 16
-
-`endif
-
-`ifdef CORE_MEDIUM
-
-    // superscalar
-    `define sizeSup 2
-
-    // ROB
-    `define ROB_SIZE 80
-
-    // speculation
-    `define NUM_EPOCHS 12
-    `define NUM_SPEC_TAGS 12
-
-    // LSQ
-    `define LDQ_SIZE 24
-    `define STQ_SIZE 14
-    `define SB_SIZE 4
-
-    // reservation station sizes
-    `define RS_ALU_SIZE 16
-    `define RS_MEM_SIZE 16
-    `define RS_FPUMULDIV_SIZE 16
-
-`endif
-
-`ifdef CORE_SMALL_WIDE
-
-    // superscalar
-    `define sizeSup 4
-
-    // ROB
-    `define ROB_SIZE 64
-
-    // speculation
-    `define NUM_EPOCHS 16
-    `define NUM_SPEC_TAGS 16
-
-    // LSQ
-    `define LDQ_SIZE 24
-    `define STQ_SIZE 14
-    `define SB_SIZE 4
+    `define LDQ_SIZE 12
+    `define STQ_SIZE 8
+    `define SB_SIZE 2
 
     // reservation station sizes
     `define RS_ALU_SIZE 8
-    `define RS_MEM_SIZE 8
-    `define RS_FPUMULDIV_SIZE 16
+    `define RS_MEM_SIZE 8 
+    `define RS_FPUMULDIV_SIZE 8
 
 `endif
-
-`ifdef CORE_BOOM
-    // we extend SMALL to match BOOM's ROB and memory latency, we also increase
-    // spec tags because of increased ROB size
-
-    // superscalar
-    `define sizeSup 2
-
-    // ROB
-    `define ROB_SIZE 80
-
-    // speculation
-    `define NUM_EPOCHS 12
-    `define NUM_SPEC_TAGS 12
-
-    // LSQ
-    `define LDQ_SIZE 24
-    `define STQ_SIZE 14
-    `define SB_SIZE 4
-
-    // reservation station sizes
-    `define RS_ALU_SIZE 16
-    `define RS_MEM_SIZE 16
-    `define RS_FPUMULDIV_SIZE 16
-
-    // change memory latency to 80
-    `undef DRAM_LATENCY
-    `define DRAM_LATENCY 80
-
-`endif
-
-`ifdef CORE_LARGE
-
-    // superscalar
-    `define sizeSup 2
-
-    // ROB
-    `define ROB_SIZE 128
-
-    // speculation
-    `define NUM_EPOCHS 16
-    `define NUM_SPEC_TAGS 32
-
-    // LSQ
-    `define LDQ_SIZE 48
-    `define STQ_SIZE 28
-    `define SB_SIZE 4
-
-    // reservation station sizes
-    `define RS_ALU_SIZE 32
-    `define RS_MEM_SIZE 32
-    `define RS_FPUMULDIV_SIZE 32
-
-`endif
-
-`ifdef CORE_LARGE_WIDE
-
-    // superscalar
-    `define sizeSup 4
-
-    // ROB
-    `define ROB_SIZE 128
-
-    // speculation
-    `define NUM_EPOCHS 16
-    `define NUM_SPEC_TAGS 32
-
-    // LSQ
-    `define LDQ_SIZE 48
-    `define STQ_SIZE 28
-    `define SB_SIZE 4
-
-    // reservation station sizes
-    `define RS_ALU_SIZE 16
-    `define RS_MEM_SIZE 16
-    `define RS_FPUMULDIV_SIZE 32
-
-`endif
-
-//`ifdef CORE_MEDIUM
-//
-//    // ROB
-//    `define ROB_SIZE 96
-//
-//    // speculation
-//    `define NUM_EPOCHS 32
-//    `define NUM_SPEC_TAGS 32
-//
-//    // LSQ
-//    `define LDQ_SIZE 36
-//    `define STQ_SIZE 21
-//    `define SB_SIZE 4
-//
-//    // reservation station sizes
-//    `define RS_ALU_SIZE 24
-//    `define RS_MEM_SIZE 24
-//    `define RS_FPUMULDIV_SIZE 24
-//
-//`endif
 
 //
 // ==== derived parameters ====

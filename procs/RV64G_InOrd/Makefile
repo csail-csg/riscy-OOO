@@ -38,6 +38,10 @@ USE_XILINX_FPU ?= true
 CORE_NUM ?= 1
 # TSO or WEAK
 TSO_MM ?= false
+# Use self inv cache? (only for WEAK mm), value is the max hits in D$
+SELF_INV_CACHE ?=
+# self inv D$ in case of system inst or trap
+SYSTEM_SELF_INV_L1D ?= false
 # default check cache deadlock and rename error
 CHECK_DEADLOCK ?= true
 RENAME_DEBUG ?= true
@@ -61,9 +65,15 @@ endif
 BUILD_DIR := $(RISCY_HOME)/procs/build/$(PROC).core_$(CORE_NUM).core_$(CORE_SIZE).cache_$(CACHE_SIZE)
 ifeq ($(TSO_MM),true)
 BUILD_DIR := $(BUILD_DIR).tso
+else ifneq ($(SELF_INV_CACHE),)
+BUILD_DIR := $(BUILD_DIR).self_inv_$(SELF_INV_CACHE)
+ifeq ($(SYSTEM_SELF_INV_L1D),true)
+BUILD_DIR := $(BUILD_DIR).system_inv_d
+endif
 else
 BUILD_DIR := $(BUILD_DIR).weak
 endif
+
 ifeq ($(CHECK_DEADLOCK),true)
 BUILD_DIR := $(BUILD_DIR).check_deadlock
 endif

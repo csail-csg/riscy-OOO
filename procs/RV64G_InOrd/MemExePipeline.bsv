@@ -93,6 +93,10 @@ typedef union tagged {
     WaitMMIOResp MMIO;
 } WaitLrScAmoMMIOResp deriving(Bits, Eq, FShow);
 
+typedef enum {
+    None, Lr, LdMMIO, Fence, ScAmo, StMMIO, System
+} WaitReconcile deriving(Bits, Eq, FShow);
+
 typedef struct {
     LineDataOffset offset;
     ByteEn shiftedBE;
@@ -158,6 +162,9 @@ interface MemExePipeline;
     interface StoreBuffer stbIfc;
     interface DCoCache dMemIfc;
     interface SpeculationUpdate specUpdate;
+`ifdef SELF_INV_CACHE
+    interface Server#(void, void) reconcile;
+`endif
     method Data getPerf(ExeStagePerfType t);
 endinterface
 
@@ -310,6 +317,17 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     //=======================================================
     // Reservation Station Stuff
     //=======================================================
+
+`ifdef SELF_INV_CACHE
+    // Waiting bit for reconcile to be performed. We set the bit and start
+    // reconcile when we are about to deq an acquire from LSQ. The deq happens
+    // only after reconcile is done. XXX Note that mem resp of Lr/Sc/Amo/MMIO
+    // will not be dequeued unitl cache is reconciled if the Lr/Sc/Amo/MMIO
+    // carries the .aq bit. However, since we only have 1 Lr/Sc/Amo/MMIO in
+    // flight (which is always non-speculative), this won't block the cache or
+    // network.
+    Reg#(WaitReconcile) waitReconcile <- mkReg(None);
+`endif
 
     rule doRegReadMem;
         rsMem.deq;
@@ -656,7 +674,26 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doAssert(!isValid(lsqDeqLd.killed), "cannot be killed");
     endrule
 
+`ifdef SELF_INV_CACHE
+    // issue reconcile to D$ in case of .aq
+    rule doDeqLdQ_Lr_reconcile(
+        waitLrScAmoMMIOResp == Lr &&
+        lsqDeqLd.acq && waitReconcile == None
+    );
+        dMem.reconcile.request.put(?);
+        waitReconcile <= Lr;
+    endrule
+`endif
+
     rule doDeqLdQ_Lr_deq(waitLrScAmoMMIOResp == Lr);
+`ifdef SELF_INV_CACHE
+        // wait reconcile to be done
+        if(lsqDeqLd.acq) begin
+            when(waitReconcile == Lr, noAction);
+            let unused <- dMem.reconcile.response.get;
+            waitReconcile <= None;
+        end
+`endif
         // deq LSQ & reset wait bit
         lsq.deqLd;
         waitLrScAmoMMIOResp <= Invalid;
@@ -703,11 +740,31 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doAssert(lsqDeqLd.memFunc == Ld, "LdQ MMIO is only Ld");
     endrule
 
+`ifdef SELF_INV_CACHE
+    // issue reconcile to D$ in case of .aq
+    rule doDeqLdQ_MMIO_reconcile(
+        waitLrScAmoMMIOResp matches tagged MMIO .waitMMIO &&&
+        waitMMIO.isLd &&&
+        lsqDeqLd.acq &&& waitReconcile == None
+    );
+        dMem.reconcile.request.put(?);
+        waitReconcile <= LdMMIO;
+    endrule
+`endif
+
     rule doDeqLdQ_MMIO_deq(
         waitLrScAmoMMIOResp matches tagged MMIO .waitMMIO &&&
         waitMMIO.isLd &&&
         inIfc.mmioRespVal.valid
     );
+`ifdef SELF_INV_CACHE
+        // wait reconcile to be done
+        if(lsqDeqLd.acq) begin
+            when(waitReconcile == LdMMIO, noAction);
+            let unused <- dMem.reconcile.response.get;
+            waitReconcile <= None;
+        end
+`endif
         inIfc.mmioRespDeq;
         // deq LSQ & reset wait bit
         lsq.deqLd;
@@ -731,6 +788,14 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         waitMMIO.isLd &&&
         !inIfc.mmioRespVal.valid
     );
+`ifdef SELF_INV_CACHE
+        // wait reconcile to be done
+        if(lsqDeqLd.acq) begin
+            when(waitReconcile == LdMMIO, noAction);
+            let unused <- dMem.reconcile.response.get;
+            waitReconcile <= None;
+        end
+`endif
         inIfc.mmioRespDeq;
         // deq LSQ & reset wait bit
         lsq.deqLd;
@@ -807,8 +872,20 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endrule
 `endif
 
-    // deq Fence from SQ. Since we are not using self-invalidation protocols
-    // for now, we can ignore .aq. Only need to check SB in case of .rl.
+    // deq Fence from SQ. need to check .aq and .rl.
+`ifdef SELF_INV_CACHE
+    // reconcile should be issued after release is done
+    rule doDeqStQ_Fence_reconicle(
+        !isValid(lsqDeqSt.fault)
+        && lsqDeqSt.memFunc == Fence
+        && (!lsqDeqSt.rel || stb.isEmpty) // wait release first
+        && lsqDeqSt.acq && waitReconcile == None
+    );
+        dMem.reconcile.request.put(?);
+        waitReconcile <= Fence;
+    endrule
+`endif
+
     rule doDeqStQ_Fence(
         !isValid(lsqDeqSt.fault)
         && lsqDeqSt.memFunc == Fence
@@ -816,6 +893,14 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         && (!lsqDeqSt.rel || stb.isEmpty) // check SB in case of release
 `endif
     );
+`ifdef SELF_INV_CACHE
+        // wait reconcile to be done
+        if(lsqDeqSt.acq) begin
+            when(waitReconcile == Fence, noAction);
+            let unused <- dMem.reconcile.response.get;
+            waitReconcile <= None;
+        end
+`endif
         lsq.deqSt;
         // set ROB executed
         inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, Invalid);
@@ -860,8 +945,26 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display("[doDeqStQ_ScAmo_issue] ", fshow(lsqDeqSt), "; ", fshow(req));
     endrule
 
+`ifdef SELF_INV_CACHE
+    rule doDeqStQ_ScAmo_reconcile(
+        waitLrScAmoMMIOResp == ScAmo &&
+        lsqDeqSt.acq && waitReconcile == None
+    );
+        dMem.reconcile.request.put(?);
+        waitReconcile <= ScAmo;
+    endrule
+`endif
+
     // deq non-MMIO Sc/Amo from LSQ when resp comes
     rule doDeqStQ_ScAmo_deq(waitLrScAmoMMIOResp == ScAmo);
+`ifdef SELF_INV_CACHE
+        // wait reconcile to be done
+        if(lsqDeqSt.acq) begin
+            when(waitReconcile == ScAmo, noAction);
+            let unused <- dMem.reconcile.response.get;
+            waitReconcile <= None;
+        end
+`endif
         // deq LSQ & reset wait bit
         lsq.deqSt;
         waitLrScAmoMMIOResp <= Invalid;
@@ -915,12 +1018,31 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doAssert(lsqDeqSt.memFunc == St || lsqDeqSt.memFunc == Amo, "must be St/Amo");
     endrule
 
+`ifdef SELF_INV_CACHE
+    rule doDeqStQ_MMIO_reconcile(
+        waitLrScAmoMMIOResp matches tagged MMIO .waitMMIO &&&
+        !waitMMIO.isLd &&&
+        lsqDeqSt.acq &&& waitReconcile == None
+    );
+        dMem.reconcile.request.put(?);
+        waitReconcile <= StMMIO;
+    endrule
+`endif
+
     // deq MMIO from StQ when valid resp comes
     rule doDeqStQ_MMIO_deq(
         waitLrScAmoMMIOResp matches tagged MMIO .waitMMIO &&&
         !waitMMIO.isLd &&&
         inIfc.mmioRespVal.valid
     );
+`ifdef SELF_INV_CACHE
+        // wait reconcile to be done
+        if(lsqDeqSt.acq) begin
+            when(waitReconcile == StMMIO, noAction);
+            let unused <- dMem.reconcile.response.get;
+            waitReconcile <= None;
+        end
+`endif
         inIfc.mmioRespDeq;
         // deq LSQ & reset wait bit
         lsq.deqSt;
@@ -943,6 +1065,14 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         !waitMMIO.isLd &&&
         !inIfc.mmioRespVal.valid
     );
+`ifdef SELF_INV_CACHE
+        // wait reconcile to be done
+        if(lsqDeqSt.acq) begin
+            when(waitReconcile == StMMIO, noAction);
+            let unused <- dMem.reconcile.response.get;
+            waitReconcile <= None;
+        end
+`endif
         inIfc.mmioRespDeq;
         // deq LSQ & reset wait bit
         lsq.deqSt;
@@ -1009,6 +1139,25 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         dTlb.specUpdate,
         lsq.specUpdate
     ));
+
+`ifdef SELF_INV_CACHE
+    interface Server reconcile;
+        interface Put request;
+            method Action put(void x) if(waitReconcile == None);
+                dMem.reconcile.request.put(?);
+                waitReconcile <= System;
+            endmethod
+        endinterface
+        interface Get response;
+            method ActionValue#(void) get if(waitReconcile == System);
+                let unused <- dMem.reconcile.response.get;
+                waitReconcile <= None;
+                return ?;
+            endmethod
+        endinterface
+    endinterface
+`endif
+
     method Data getPerf(ExeStagePerfType t);
         return (case(t)
 `ifdef PERF_COUNT

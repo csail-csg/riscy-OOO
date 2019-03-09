@@ -78,6 +78,8 @@ interface CommitInput;
     method Action setFlushTlbs;
     method Action setUpdateVMInfo;
     method Action setFlushReservation;
+    method Action setReconcileI; // recocile I$
+    method Action setReconcileD; // recocile D$
     // redirect
     method Action killAll;
     method Action redirectPc(Addr trap_pc);
@@ -245,7 +247,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Reg#(Maybe#(CommitTrap)) commitTrap <- mkReg(Invalid); // saves new pc here
 
     // maintain system consistency when system state (CSR) changes
-    function Action makeSystemConsistent(Bool flushTlb);
+    function Action makeSystemConsistent(Bool flushTlb, Bool reconcileI);
     action
         if(flushTlb) begin
             inIfc.setFlushTlbs;
@@ -271,6 +273,17 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         when(inIfc.tlbNoPendingReq, noAction);
         // yield load reservation in cache
         inIfc.setFlushReservation;
+
+`ifdef SELF_INV_CACHE
+        // reconcile I$
+        if(reconcileI) begin
+            inIfc.setReconcileI;
+        end
+`ifdef SYSTEM_SELF_INV_L1D
+        // FIXME is this reconcile of D$ necessary?
+        inIfc.setReconcileD;
+`endif
+`endif
     endaction
     endfunction
 
@@ -342,7 +355,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         // system consistency
         // TODO spike flushes TLB here, but perhaps it is because spike's TLB
         // does not include prv info, and it has to flush when prv changes.
-        makeSystemConsistent(False);
+        makeSystemConsistent(False, False);
     endrule
 
     // commit misspeculated load
@@ -428,7 +441,8 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 
         // system consistency
         // flush TLB for SFence.VMA and when SATP CSR is modified
-        makeSystemConsistent(x.iType == SFence || write_satp);
+        makeSystemConsistent(x.iType == SFence || write_satp,
+                             x.iType == FenceI); // reconcile I$ for fence.i
 
         // incr inst cnt
         csrf.incInstret(1);
