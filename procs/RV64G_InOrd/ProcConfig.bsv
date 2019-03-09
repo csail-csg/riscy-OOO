@@ -94,7 +94,19 @@
 
 `endif
 
-`ifdef CACHE_MC
+`ifdef CACHE_MC_1MB
+
+    // L1
+    `define LOG_L1_LINES 9 // 32KB
+    `define LOG_L1_WAYS 2 // 4 ways
+
+    // LLC
+    `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+`endif
+
+`ifdef CACHE_MC_2MB
 
     // L1
     `define LOG_L1_LINES 9 // 32KB
