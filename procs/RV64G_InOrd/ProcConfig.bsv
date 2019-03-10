@@ -122,34 +122,6 @@
 // ==== CORE SIZE ====
 //
 
-`ifdef CORE_TINY
-
-    // superscalar
-    `define sizeSup 2
-
-    // ROB
-    `define ROB_SIZE 48
-
-    // speculation
-    `define NUM_EPOCHS 8
-    `define NUM_SPEC_TAGS 8
-
-    // Smaller L1 TLB
-    `undef TLB_SIZE
-    `define TLB_SIZE 16
-
-    // LSQ
-    `define LDQ_SIZE 18
-    `define STQ_SIZE 11
-    `define SB_SIZE 2
-
-    // reservation station sizes
-    `define RS_ALU_SIZE 10
-    `define RS_MEM_SIZE 10
-    `define RS_FPUMULDIV_SIZE 10
-
-`endif
-
 `ifdef CORE_INORD
 
     // superscalar

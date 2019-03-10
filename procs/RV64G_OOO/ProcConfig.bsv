@@ -113,7 +113,7 @@
 
 `endif
 
-`ifdef CACHE_MC
+`ifdef CACHE_MC_1MB
 
     // L1
     `define LOG_L1_LINES 9 // 32KB
@@ -121,6 +121,18 @@
 
     // LLC
     `define LOG_LLC_LINES 14 // 1MB
+    `define LOG_LLC_WAYS 4 // 16 ways
+
+`endif
+
+`ifdef CACHE_MC_2MB
+
+    // L1
+    `define LOG_L1_LINES 9 // 32KB
+    `define LOG_L1_WAYS 2 // 4 ways
+
+    // LLC
+    `define LOG_LLC_LINES 15 // 2MB
     `define LOG_LLC_WAYS 4 // 16 ways
 
 `endif
@@ -147,7 +159,7 @@
 
     // LSQ
     `define LDQ_SIZE 18
-    `define STQ_SIZE 11
+    `define STQ_SIZE 10
     `define SB_SIZE 2
 
     // reservation station sizes
@@ -166,8 +178,8 @@
     `define ROB_SIZE 64
 
     // speculation
-    `define NUM_EPOCHS 8
-    `define NUM_SPEC_TAGS 8
+    `define NUM_EPOCHS 12
+    `define NUM_SPEC_TAGS 12
 
     // LSQ
     `define LDQ_SIZE 24
@@ -306,27 +318,6 @@
     `define RS_FPUMULDIV_SIZE 32
 
 `endif
-
-//`ifdef CORE_MEDIUM
-//
-//    // ROB
-//    `define ROB_SIZE 96
-//
-//    // speculation
-//    `define NUM_EPOCHS 32
-//    `define NUM_SPEC_TAGS 32
-//
-//    // LSQ
-//    `define LDQ_SIZE 36
-//    `define STQ_SIZE 21
-//    `define SB_SIZE 4
-//
-//    // reservation station sizes
-//    `define RS_ALU_SIZE 24
-//    `define RS_MEM_SIZE 24
-//    `define RS_FPUMULDIV_SIZE 24
-//
-//`endif
 
 //
 // ==== derived parameters ====

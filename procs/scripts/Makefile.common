@@ -29,6 +29,8 @@
 # USE_XILINX_FPU: true or false
 # CORE_NUM
 # TSO_MM: true or false
+# LR_UP_TO_E: true or false
+# NO_LOAD_RESP_E: true or false
 # SELF_INV_CACHE: max hits in D$
 # SYSTEM_SELF_INV_L1D: true or false
 # SECURITY: true or false
@@ -119,6 +121,14 @@ ifeq ($(SYSTEM_SELF_INV_L1D),true)
 CONNECTALFLAGS += --bscflags=" -D SYSTEM_SELF_INV_L1D "
 endif
 else
+endif
+
+# MESI options
+ifeq ($(LR_UP_TO_E),true)
+CONNECTALFLAGS += --bscflags=" -D LR_UP_TO_E "
+endif
+ifeq ($(NO_LOAD_RESP_E),true)
+CONNECTALFLAGS += --bscflags=" -D NO_LOAD_RESP_E "
 endif
 
 # security features

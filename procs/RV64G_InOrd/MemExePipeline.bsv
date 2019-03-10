@@ -660,9 +660,19 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         ProcRq#(DProcReqId) req = ProcRq {
             id: 0, // id does not matter
             addr: lsqDeqLd.paddr,
-            // FIXME Fetch Lr to E cannot guarantee forward progress of Lr/Sc
-            // (it must be E in case of self-inv cache)
+            // Fetch Lr to E cannot guarantee forward progress of Lr/Sc, so by
+            // default we only request Lr for S (in multicore). However, in
+            // self-inv cache, Lr must fetch data to E, because parent does not
+            // track S copies.
+`ifdef SELF_INV_CACHE
             toState: E,
+`else // !SELF_INV_CACHE
+`ifdef LR_UP_TO_E
+            toState: E, // makefile macro forces Lr to upgrade to E
+`else
+            toState: multicore ? S : E,
+`endif
+`endif // SELF_INV_CACHE
             op: Lr,
             byteEn: ?,
             data: ?,

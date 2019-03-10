@@ -285,9 +285,14 @@ module mkLLCache(LLCache);
 
 `ifdef SELF_INV_CACHE
     LLBankWrapper cache <- mkSelfInvLLBank(mkLastLvCRqMshr, mkLLPipeline);
+`else // !SELF_INV_CACHE
+`ifdef NO_LOAD_RESP_E
+    function Bool respLoadWithE(Bool fromMem) = False;
 `else
-    LLBankWrapper cache <- mkLLBank(mkLastLvCRqMshr, mkLLPipeline);
+    function Bool respLoadWithE(Bool fromMem) = fromMem;
 `endif
+    LLBankWrapper cache <- mkLLBank(mkLastLvCRqMshr, mkLLPipeline, respLoadWithE);
+`endif // SELF_INV_CACHE
 
     // perf counters
     Fifo#(1, LLCPerfType) perfReqQ <- mkCFFifo;

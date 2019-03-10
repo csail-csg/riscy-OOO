@@ -38,6 +38,10 @@ USE_XILINX_FPU ?= true
 CORE_NUM ?= 1
 # TSO or WEAK
 TSO_MM ?= false
+# Lr upgrades line to E (no forward progress guarantee)
+LR_UP_TO_E ?= false
+# Forbid LLC from respoding a load (toS) request with E state
+NO_LOAD_RESP_E ?= false
 # Use self inv cache? (only for WEAK mm), value is the max hits in D$
 SELF_INV_CACHE ?=
 # self inv D$ in case of system inst or trap
@@ -47,7 +51,7 @@ CHECK_DEADLOCK ?= true
 RENAME_DEBUG ?= true
 
 # clk frequency depends on core size
-ifneq (,$(filter $(CORE_SIZE),TINY INORD))
+ifneq (,$(filter $(CORE_SIZE),INORD))
 USER_CLK_PERIOD ?= 24
 else
 $(error unsupported CORE_SIZE)
@@ -68,6 +72,14 @@ BUILD_DIR := $(BUILD_DIR).system_inv_d
 endif
 else
 BUILD_DIR := $(BUILD_DIR).weak
+endif
+
+ifeq ($(LR_UP_TO_E),true)
+BUILD_DIR := $(BUILD_DIR).lr_to_e
+endif
+
+ifeq ($(NO_LOAD_RESP_E),true)
+BUILD_DIR := $(BUILD_DIR).no_load_resp_e
 endif
 
 ifeq ($(CHECK_DEADLOCK),true)
