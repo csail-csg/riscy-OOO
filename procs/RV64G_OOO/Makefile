@@ -59,8 +59,8 @@ SIM_LOG_LLC_MSHR_BANK_NUM ?=
 SIM_LLC_ARBITER_NUM ?=
 SIM_LLC_ARBITER_LAT ?=
 # default check cache deadlock and rename error
-CHECK_DEADLOCK ?= false
-RENAME_DEBUG ?= true
+CHECK_DEADLOCK ?= true
+RENAME_DEBUG ?= false
 
 # clk frequency depends on core size
 ifneq (,$(filter $(CORE_SIZE),TINY SMALL BOOM MEDIUM))

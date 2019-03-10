@@ -48,7 +48,7 @@ SELF_INV_CACHE ?=
 SYSTEM_SELF_INV_L1D ?= false
 # default check cache deadlock and rename error
 CHECK_DEADLOCK ?= true
-RENAME_DEBUG ?= true
+RENAME_DEBUG ?= false
 
 # clk frequency depends on core size
 ifneq (,$(filter $(CORE_SIZE),INORD))
