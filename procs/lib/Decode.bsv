@@ -636,16 +636,42 @@ function DecodeResult decode(Instruction inst);
                     dInst.execFunc = tagged Other;
                 end
                 fnFENCE: begin
-                    dInst.iType = Fence;
-                    dInst.execFunc = tagged Mem (MemInst {
-                        mem_func: Fence,
-                        amo_func: None,
-                        unsignedLd: False,
-                        byteEn: replicate(False),
-                        // TODO more precise aq and rl
-                        aq: True,
-                        rl: True
-                    });
+                    // extract bits for P/S IORW
+                    Bool old_st = unpack(inst[26] | inst[24]); // PO, PW
+                    Bool young_ld = unpack(inst[23] | inst[21]); // SI, SR
+                    // get acq/reconcile and rel/commit needed to enforce
+                    // different orderings
+`ifdef TSO_MM
+                    // Orderings enfored by fence in TSO:
+                    // St -> Ld: commit
+                    // Others: N/A
+                    Bool reconcile = False;
+                    Bool commit = old_st && young_ld;
+`else
+                    // Orderings enforced by fence in WMM
+                    // St -> St: commit
+                    // St -> Ld: commit + reconcile
+                    // Ld -> Ld: reconcile
+                    // Ld -> St: N/A
+                    Bool reconcile = young_ld; // reconcile when younger load is in ordering
+                    Bool commit = old_st; // commit when older store is in ordering
+`endif
+                    // set up fence inst
+                    if (reconcile || commit) begin
+                        dInst.iType = Fence;
+                        dInst.execFunc = tagged Mem (MemInst {
+                            mem_func: Fence,
+                            amo_func: None,
+                            unsignedLd: False,
+                            byteEn: replicate(False),
+                            aq: reconcile,
+                            rl: commit
+                        });
+                    end
+                    else begin
+                        dInst.iType = Nop;
+                        dInst.execFunc = tagged Other;
+                    end
                 end
                 default: illegalInst = True;
             endcase
