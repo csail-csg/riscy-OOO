@@ -73,7 +73,7 @@ else
 $(error unsupported CORE_SIZE)
 endif
 
-ifeq (,$(filter $(CACHE_SIZE),SMALL LARGE MC))
+ifeq (,$(filter $(CACHE_SIZE),SMALL LARGE MC_1MB MC_2MB))
 $(error unsupported CACHE_SIZE)
 endif
 
