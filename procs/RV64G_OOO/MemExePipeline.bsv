@@ -205,6 +205,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Count#(Data) exeTlbExcepCnt <- mkCount(0);
     // successful store-cond
     Count#(Data) exeScSuccessCnt <- mkCount(0);
+    // fence count
+    Count#(Data) exeLrScAmoAcqCnt <- mkCount(0);
+    Count#(Data) exeLrScAmoRelCnt <- mkCount(0);
+    Count#(Data) exeFenceCnt <- mkCount(0);
+    Count#(Data) exeFenceAcqCnt <- mkCount(0);
+    Count#(Data) exeFenceRelCnt <- mkCount(0);
 `endif
 
     // reservation station
@@ -718,6 +724,16 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display("[doDeqLdQ_Lr_issue] ", fshow(lsqDeqLd), "; ", fshow(req));
         // check
         doAssert(!isValid(lsqDeqLd.killed), "cannot be killed");
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            if(lsqDeqLd.acq) begin
+                exeLrScAmoAcqCnt.incr(1);
+            end
+            if(lsqDeqLd.rel) begin
+                exeLrScAmoRelCnt.incr(1);
+            end
+        end
+`endif
     endrule
 
 `ifdef SELF_INV_CACHE
@@ -789,6 +805,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
 `ifdef SELF_INV_CACHE
     // issue reconcile to D$ in case of .aq
+    // This is in fact useless because MMIO can only be normal Ld which cannot
+    // have .aq bit
     rule doDeqLdQ_MMIO_reconcile(
         waitLrScAmoMMIOResp matches tagged MMIO .waitMMIO &&&
         waitMMIO.isLd &&&
@@ -953,6 +971,17 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // set ROB executed
         inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, Invalid);
         if(verbose) $display("[doDeqStQ_Fence] ", fshow(lsqDeqSt));
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            exeFenceCnt.incr(1);
+            if(lsqDeqSt.acq) begin
+                exeFenceAcqCnt.incr(1);
+            end
+            if(lsqDeqSt.rel) begin
+                exeFenceRelCnt.incr(1);
+            end
+        end
+`endif
     endrule
 
     // issue non-MMIO Sc/Amo without fault when
@@ -991,6 +1020,16 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         };
         reqLrScAmoQ.enq(req);
         if(verbose) $display("[doDeqStQ_ScAmo_issue] ", fshow(lsqDeqSt), "; ", fshow(req));
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            if(lsqDeqSt.acq) begin
+                exeLrScAmoAcqCnt.incr(1);
+            end
+            if(lsqDeqSt.rel) begin
+                exeLrScAmoRelCnt.incr(1);
+            end
+        end
+`endif
     endrule
 
 `ifdef SELF_INV_CACHE
@@ -1071,6 +1110,16 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display("[doDeqStQ_MMIO_issue] ", fshow(lsqDeqSt), "; ", fshow(req));
         // MMIO may cause exception, must have spec tag, and only can be St/Amo
         doAssert(lsqDeqSt.memFunc == St || lsqDeqSt.memFunc == Amo, "must be St/Amo");
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            if(lsqDeqSt.acq) begin
+                exeLrScAmoAcqCnt.incr(1);
+            end
+            if(lsqDeqSt.rel) begin
+                exeLrScAmoRelCnt.incr(1);
+            end
+        end
+`endif
     endrule
 
 `ifdef SELF_INV_CACHE
@@ -1228,6 +1277,11 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             ExeLdToUseCnt: exeLdToUseCnt;
             ExeTlbExcep: exeTlbExcepCnt;
             ExeScSuccessCnt: exeScSuccessCnt;
+            ExeLrScAmoAcqCnt: exeLrScAmoAcqCnt;
+            ExeLrScAmoRelCnt: exeLrScAmoRelCnt;
+            ExeFenceAcqCnt: exeFenceAcqCnt;
+            ExeFenceRelCnt: exeFenceRelCnt;
+            ExeFenceCnt: exeFenceCnt;
 `endif
             default: 0;
         endcase);

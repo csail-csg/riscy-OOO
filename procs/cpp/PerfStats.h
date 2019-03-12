@@ -211,6 +211,11 @@ public:
         init(ExeStage, ExeLdToUseCnt, "Exe stage load to use num");
         init(ExeStage, ExeTlbExcep, "Exe stage TLB exception num");
         init(ExeStage, ExeScSuccessCnt, "Exe stage sc success num");
+        init(ExeStage, ExeLrScAmoAcqCnt, "Exe stage lr/sc/amo acquire num");
+        init(ExeStage, ExeLrScAmoRelCnt, "Exe stage lr/sc/amo release num");
+        init(ExeStage, ExeFenceAcqCnt, "Exe stage fence acquire num");
+        init(ExeStage, ExeFenceRelCnt, "Exe stage fence release num");
+        init(ExeStage, ExeFenceCnt, "Exe stage fence num");
         init(ExeStage, ExeIntMulCnt, "Exe stage int mul num");
         init(ExeStage, ExeIntDivCnt, "Exe stage int div num");
         init(ExeStage, ExeFpFmaCnt, "Exe stage fp add/mul/fma num");

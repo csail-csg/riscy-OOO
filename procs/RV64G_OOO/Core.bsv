@@ -758,6 +758,8 @@ module mkCore#(CoreId coreId)(Core);
             SupRenameCnt, SpecNoneCycles, SpecNonMemCycles: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
             ExeTlbExcep, ExeScSuccessCnt,
+            ExeLrScAmoAcqCnt, ExeLrScAmoRelCnt,
+            ExeFenceAcqCnt, ExeFenceRelCnt, ExeFenceCnt,
             ExeLdStallByLd, ExeLdStallBySt, ExeLdStallBySB,
             ExeLdForward, ExeLdMemLat, ExeStMemLat,
             ExeLdToUseLat, ExeLdToUseCnt: coreFix.memExeIfc.getPerf(pType);
