@@ -757,7 +757,7 @@ module mkCore#(CoreId coreId)(Core);
         Data data = (case(pType)
             SupRenameCnt, SpecNoneCycles, SpecNonMemCycles: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
-            ExeTlbExcep,
+            ExeTlbExcep, ExeScSuccessCnt,
             ExeLdStallByLd, ExeLdStallBySt, ExeLdStallBySB,
             ExeLdForward, ExeLdMemLat, ExeStMemLat,
             ExeLdToUseLat, ExeLdToUseCnt: coreFix.memExeIfc.getPerf(pType);

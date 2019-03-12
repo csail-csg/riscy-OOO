@@ -29,7 +29,8 @@ import FShow::*;
 typedef enum {
     L1ILdCnt,
     L1ILdMissCnt,
-    L1ILdMissLat
+    L1ILdMissLat,
+    L1IReconcileCnt
 } L1IPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
@@ -41,7 +42,9 @@ typedef enum {
     L1DStMissLat,
     L1DAmoCnt,
     L1DAmoMissCnt,
-    L1DAmoMissLat
+    L1DAmoMissLat,
+    L1DSelfInvCnt, // self inv due to max hits
+    L1DReconcileCnt
 } L1DPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
@@ -50,6 +53,13 @@ typedef enum {
     LLCNormalMemLdCnt,
     LLCNormalMemLdLat,
     LLCMshrBlockCycles // full MSHR blocks new cRq
+    LLCDownRespCnt,
+    LLCDownRespDataCnt,
+    LLCDownReqCnt,
+    LLCUpRespCnt,
+    LLCUpRespDataCnt,
+    LLCDmaLdReqCnt,
+    LLCDmaStReqCnt
 } LLCPerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
@@ -103,6 +113,7 @@ typedef enum {
     ExeLdToUseLat,
     ExeLdToUseCnt,
     ExeTlbExcep,
+    ExeScSuccessCnt,
     ExeIntMulCnt,
     ExeIntDivCnt,
     ExeFpFmaCnt,

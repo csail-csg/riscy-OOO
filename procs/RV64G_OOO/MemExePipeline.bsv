@@ -203,6 +203,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Count#(Data) exeLdToUseCnt <- mkCount(0); // number of Ld resp written to reg file
     // address translate exception
     Count#(Data) exeTlbExcepCnt <- mkCount(0);
+    // successful store-cond
+    Count#(Data) exeScSuccessCnt <- mkCount(0);
 `endif
 
     // reservation station
@@ -1027,6 +1029,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doAssert((lsqDeqSt.memFunc == Sc || lsqDeqSt.memFunc == Amo) &&
                  !lsqDeqSt.isMMIO, "must be non-MMIO Sc/Amo");
         doAssert(!isValid(lsqDeqSt.fault), "no fault");
+        // stats for successful SC
+`ifdef PERF_COUNT
+        if(inIfc.doStats && lsqDeqSt.memFunc == Sc && resp == fromInteger(valueof(ScSuccVal))) begin
+            exeScSuccessCnt.incr(1);
+        end
+`endif
     endrule
 
     // issue MMIO St/Amo when
@@ -1219,6 +1227,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             ExeLdToUseLat: exeLdToUseLat;
             ExeLdToUseCnt: exeLdToUseCnt;
             ExeTlbExcep: exeTlbExcepCnt;
+            ExeScSuccessCnt: exeScSuccessCnt;
 `endif
             default: 0;
         endcase);
