@@ -142,6 +142,7 @@ public:
         init(ICache, L1ILdCnt, "I$ Ld num");
         init(ICache, L1ILdMissCnt, "I$ Ld miss num");
         init(ICache, L1ILdMissLat, "I$ Ld miss total latency");
+        init(ICache, L1IReconcileCnt, "I$ reconcile num");
 
         // DCache
         init(DCache, L1DLdCnt, "D$ Ld num");
@@ -153,6 +154,8 @@ public:
         init(DCache, L1DAmoCnt, "D$ Amo num");
         init(DCache, L1DAmoMissCnt, "D$ Amo miss num");
         init(DCache, L1DAmoMissLat, "D$ Amo miss total latency");
+        init(DCache, L1DSelfInvCnt, "D$ self inv num");
+        init(DCache, L1DReconcileCnt, "D$ reconcile num");
 
         // ITlb
         init(ITlb, L1TlbAccessCnt, "ITlb access num");
@@ -207,6 +210,7 @@ public:
         init(ExeStage, ExeLdToUseLat, "Exe stage load to use total latency");
         init(ExeStage, ExeLdToUseCnt, "Exe stage load to use num");
         init(ExeStage, ExeTlbExcep, "Exe stage TLB exception num");
+        init(ExeStage, ExeScSuccessCnt, "Exe stage sc success num");
         init(ExeStage, ExeIntMulCnt, "Exe stage int mul num");
         init(ExeStage, ExeIntDivCnt, "Exe stage int div num");
         init(ExeStage, ExeFpFmaCnt, "Exe stage fp add/mul/fma num");
@@ -259,6 +263,13 @@ public:
         init(LLC, LLCNormalMemLdCnt, "LLC normal mem load num");
         init(LLC, LLCNormalMemLdLat, "LLC normal mem load total latency");
         init(LLC, LLCMshrBlockCycles, "LLC mshr block cycles");
+        init(LLC, LLCDownRespCnt, "LLC down resp num");
+        init(LLC, LLCDownRespDataCnt, "LLC downgrade resp data num");
+        init(LLC, LLCDownReqCnt, "LLC downgrade req num");
+        init(LLC, LLCUpRespCnt, "LLC upgrade resp num");
+        init(LLC, LLCUpRespDataCnt, "LLC upgrade resp data num");
+        init(LLC, LLCDmaLdReqCnt, "LLC dma load req num");
+        init(LLC, LLCDmaStReqCnt, "LLC dma store req num");
     }
 };
 
