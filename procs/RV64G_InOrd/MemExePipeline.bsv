@@ -130,7 +130,7 @@ interface MemExeInput;
     method Addr rob_getPC(InstTag t);
     method Action rob_setExecuted_doFinishMem(InstTag t, Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
     method Action rob_setExecuted_deqLSQ(InstTag t, Maybe#(Exception) cause, Maybe#(LdKilledBy) ld_killed);
-    method Action rob_setLSQTag(InstTag x, LdStQTag t);
+    method Action rob_setLSQTag(InstTag x, LdStQTag t, Bool isFence);
     // MMIO
     method Bool isMMIOAddr(Addr a);
     method Action mmioReq(MMIOCRq r);
@@ -389,7 +389,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         end
 
         // inform ROB of LSQ tag
-        inIfc.rob_setLSQTag(x.tag, ldstq_tag);
+        Bool isFence = x.mem_inst.mem_func == Fence;
+        inIfc.rob_setLSQTag(x.tag, ldstq_tag, isFence);
 
         // get virtual addr & St/Sc/Amo data
         Addr vaddr = x.rVal1 + signExtend(x.imm);
@@ -405,13 +406,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         let {shiftBE, shiftData} = getShiftedBEData(vaddr, origBE, data);
 
         // update LSQ data now
-        if(ldstq_tag matches tagged St .stTag &&& x.mem_inst.mem_func != Fence) begin
+        if(ldstq_tag matches tagged St .stTag &&& !isFence) begin
             Data d = x.mem_inst.mem_func == Amo ? data : shiftData; // XXX don't shift for AMO
             lsq.updateData(stTag, d);
         end
 
         // Non-Fence insts go to next stage by sending to TLB
-        if(x.mem_inst.mem_func != Fence) begin
+        if(!isFence) begin
             dTlb.procReq(DTlbReq {
                 inst: MemExeToFinish {
                     mem_func: x.mem_inst.mem_func,

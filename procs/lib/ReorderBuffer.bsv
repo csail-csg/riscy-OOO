@@ -105,7 +105,7 @@ interface ReorderBufferRowEhr#(numeric type aluExeNum, numeric type fpuMulDivExe
     method Action setExecuted_doFinishMem(Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
 `ifdef INORDER_CORE
     // in-order core sets LSQ tag after getting out of issue queue
-    method Action setLSQTag(LdStQTag t);
+    method Action setLSQTag(LdStQTag t, Bool isFence);
 `endif
     // get original PC/PPC before execution, EHR port 0 will suffice
     method Addr getOrigPC;
@@ -138,7 +138,12 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
 
     Integer accessCom_deq_port = 0;
     Integer accessCom_finishMem_port = 0; // set memAccessAtCommit
+`ifdef INORDER_CORE
+    Integer accessCom_setLSQTag_port = 1; // enq to LSQ
+    Integer accessCom_enq_port = 2; // init
+`else
     Integer accessCom_enq_port = 1; // init
+`endif
 
     Integer lsqNotified_deq_port = 0;
     Integer lsqNotified_setNotified_port = 0; // set True
@@ -171,7 +176,7 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     Ehr#(TAdd#(3, TAdd#(fpuMulDivExeNum, aluExeNum)), RobInstState) rob_inst_state       <- mkEhr(?);
     Reg#(LdStQTag)                                                  lsqTag               <- mkRegU;
     Ehr#(2, Maybe#(LdKilledBy))                                     ldKilled             <- mkEhr(?);
-    Ehr#(2, Bool)                                                   memAccessAtCommit    <- mkEhr(?);
+    Ehr#(3, Bool)                                                   memAccessAtCommit    <- mkEhr(?);
     Ehr#(2, Bool)                                                   lsqAtCommitNotified  <- mkEhr(?);
     Ehr#(2, Bool)                                                   nonMMIOStDone        <- mkEhr(?);
     Reg#(Bool)                                                      epochIncremented     <- mkRegU;
@@ -238,8 +243,10 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
     endmethod
 
 `ifdef INORDER_CORE
-    method Action setLSQTag(LdStQTag t);
+    method Action setLSQTag(LdStQTag t, Bool isFence);
         lsqTag <= t;
+        memAccessAtCommit[accessCom_setLSQTag_port] <= isFence;
+        doAssert(isFence == (iType == Fence), "fence should match");
     endmethod
 `endif
 
@@ -255,12 +262,15 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         rob_inst_state[state_enq_port] <= x.rob_inst_state;
         epochIncremented <= x.epochIncremented;
         spec_bits[sb_enq_port] <= x.spec_bits;
-`ifndef INORDER_CORE
-        // in-order core sets LSQ tag later
+`ifdef INORDER_CORE
+        // in-order core enqs to LSQ later, so don't set LSQ tag; and other
+        // flags should default to false
+        memAccessAtCommit[accessCom_enq_port] <= False;
+`else
         lsqTag <= x.lsqTag;
+        memAccessAtCommit[accessCom_enq_port] <= x.iType == Fence;
 `endif
         ldKilled[ldKill_enq_port] <= Invalid;
-        memAccessAtCommit[accessCom_enq_port] <= x.iType == Fence;
         lsqAtCommitNotified[lsqNotified_enq_port] <= False;
         nonMMIOStDone[nonMMIOSt_enq_port] <= False;
         // check
@@ -390,7 +400,7 @@ interface SupReorderBuffer#(numeric type aluExeNum, numeric type fpuMulDivExeNum
     method Action setExecuted_doFinishMem(InstTag x, Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
 `ifdef INORDER_CORE
     // in-order core sets LSQ tag after getting out of issue queue
-    method Action setLSQTag(InstTag x, LdStQTag t);
+    method Action setLSQTag(InstTag x, LdStQTag t, Bool isFence);
 `endif
 
     // get original PC/PPC before execution, EHR port 0 will suffice
@@ -946,8 +956,8 @@ module mkSupReorderBuffer#(
     endmethod
 
 `ifdef INORDER_CORE
-    method Action setLSQTag(InstTag x, LdStQTag t);
-        row[x.way][x.ptr].setLSQTag(t);
+    method Action setLSQTag(InstTag x, LdStQTag t, Bool isFence);
+        row[x.way][x.ptr].setLSQTag(t, isFence);
     endmethod
 `endif
 
