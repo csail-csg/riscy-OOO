@@ -284,7 +284,7 @@ module mkCore#(CoreId coreId)(Core);
             method rob_getPC = rob.getOrigPC[valueof(AluExeNum)].get; // last getPC port
             method rob_setExecuted_doFinishMem = rob.setExecuted_doFinishMem;
             method rob_setExecuted_deqLSQ = rob.setExecuted_deqLSQ;
-            method rob_setLSQtag = rob.setLSQTag;
+            method rob_setLSQTag = rob.setLSQTag;
             method isMMIOAddr = mmio.isMMIOAddr;
             method mmioReq = mmio.dataReq;
             method mmioRespVal = mmio.dataRespVal;

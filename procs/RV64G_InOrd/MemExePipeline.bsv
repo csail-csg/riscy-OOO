@@ -336,7 +336,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
         // check store not having dst reg: this is for setting store to be
         // executed after address transation
-        doAssert(!(x.data.mem_func == St && isValid(x.regs.dst)),
+        doAssert(!(x.data.mem_inst.mem_func == St && isValid(x.regs.dst)),
                  "St cannot have dst reg");
         // Mem insts never branch, no spec tag
         doAssert(!isValid(x.spec_tag), "Mem should not carry any spec tag");
@@ -368,13 +368,6 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             },
             spec_bits: x.spec_bits
         });
-
-`ifdef PERF_COUNT
-        // perf: load to use latency
-        if(isLdQMemFunc(x.data.mem_inst.mem_func)) begin
-            ldToUseLatTimer.start(idx);
-        end
-`endif
     endrule
 
     rule doExeMem;
@@ -384,12 +377,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display("[doExeMem] ", fshow(regToExe));
 
         // enq to LSQ
-        Bool isLdQ = isLdQMemFunc(mem_inst.mem_func);
+        Bool isLdQ = isLdQMemFunc(x.mem_inst.mem_func);
         Maybe#(LdStQTag) lsqEnqTag = isLdQ ? lsq.enqLdTag : lsq.enqStTag;
         when(isValid(lsqEnqTag), noAction); // stall if LQ/SQ is full
         LdStQTag ldstq_tag = validValue(lsqEnqTag);
         if(isLdQ) begin
-            lsq.enqLd(x._tag, x.mem_inst, x.dst, regToExe.spec_bits);
+            lsq.enqLd(x.tag, x.mem_inst, x.dst, regToExe.spec_bits);
         end
         else begin
             lsq.enqSt(x.tag, x.mem_inst, x.dst, regToExe.spec_bits);
@@ -413,22 +406,36 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
         // update LSQ data now
         if(ldstq_tag matches tagged St .stTag &&& x.mem_inst.mem_func != Fence) begin
-            Data d = x.mem_func == Amo ? data : shiftData; // XXX don't shift for AMO
+            Data d = x.mem_inst.mem_func == Amo ? data : shiftData; // XXX don't shift for AMO
             lsq.updateData(stTag, d);
         end
 
-        // go to next stage by sending to TLB
-        dTlb.procReq(DTlbReq {
-            inst: MemExeToFinish {
-                mem_func: x.mem_inst.mem_func,
-                tag: x.tag,
-                ldstq_tag: ldstq_tag,
-                shiftedBE: shiftBE,
-                vaddr: vaddr,
-                misaligned: memAddrMisaligned(vaddr, origBE)
-            },
-            specBits: regToExe.spec_bits
-        });
+        // Non-Fence insts go to next stage by sending to TLB
+        if(x.mem_inst.mem_func != Fence) begin
+            dTlb.procReq(DTlbReq {
+                inst: MemExeToFinish {
+                    mem_func: x.mem_inst.mem_func,
+                    tag: x.tag,
+                    ldstq_tag: ldstq_tag,
+                    shiftedBE: shiftBE,
+                    vaddr: vaddr,
+                    misaligned: memAddrMisaligned(vaddr, origBE)
+                },
+                specBits: regToExe.spec_bits
+            });
+        end
+
+`ifdef PERF_COUNT
+        // perf: load to use latency
+        // XXX This perf counter is no longer accurate for two reasons:
+        // 1. The timer should start in RegRead rule, but we don't have LQ
+        // index then, so we start the timer later.
+        // 2. dependent inst may not issue immediately after the load returns
+        // because of in-order issue
+        if(ldstq_tag matches tagged Ld .idx) begin
+            ldToUseLatTimer.start(idx);
+        end
+`endif
     endrule
 
     rule doFinishMem;
