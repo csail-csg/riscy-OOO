@@ -696,7 +696,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                                 rob_inst_state: rob_inst_state,
                                                 lsqTag: ?, // LSQ tag is set later in mem pipeline
                                                 ldKilled: Invalid,
-                                                memAccessAtCommit: False, // set by ROB in case of Fence
+                                                memAccessAtCommit: False, // set later by mem exe pipeline
                                                 lsqAtCommitNotified: False,
                                                 nonMMIOStDone: False,
                                                 epochIncremented: False,
