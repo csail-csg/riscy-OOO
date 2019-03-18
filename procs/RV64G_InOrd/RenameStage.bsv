@@ -558,9 +558,6 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                     // get ROB tag
                     let inst_tag = rob.enqPort[i].getEnqInstTag;
 
-                    // LSQ tag
-                    LdStQTag lsq_tag = ?;
-
                     // check execution pipelines availability
                     // this determines whether this inst can finally be processed
                     // so we will directly take actions on exe pipelines
@@ -622,38 +619,26 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                     end
                     else if (to_mem) begin
                         if (dInst.execFunc matches tagged Mem .mem_inst) begin
-                            Bool isLdQ = isLdQMemFunc(mem_inst.mem_func);
-                            Maybe#(LdStQTag) lsqEnqTag = isLdQ ? lsq.enqLdTag : lsq.enqStTag;
-                            if (!memExeUsed &&& reservationStationMem.canEnq &&&
-                                lsqEnqTag matches tagged Valid .lsqTag) begin
+                            if (!memExeUsed && reservationStationMem.canEnq) begin
                                 // can process, send to Mem rs and LSQ
                                 memExeUsed = True; // mark resource used
-                                lsq_tag = lsqTag; // record LSQ tag
-                                if (dInst.iType != Fence) begin // Fence does not go to RS
-                                    reservationStationMem.enq(ToInorderRS {
-                                        data: MemRSData {
-                                            mem_func: mem_inst.mem_func,
-                                            imm: validValue(dInst.imm),
-                                            ldstq_tag: lsqTag
-                                        },
-                                        regs: phy_regs,
-                                        tag: inst_tag,
-                                        spec_bits: spec_bits,
-                                        spec_tag: spec_tag
-                                    });
-                                end
+                                // Fence also goes to RS, though all of its src
+                                // regs are invalid
+                                reservationStationMem.enq(ToInorderRS {
+                                    data: MemRSData {
+                                        mem_inst: mem_inst,
+                                        imm: validValue(dInst.imm)
+                                    },
+                                    regs: phy_regs,
+                                    tag: inst_tag,
+                                    spec_bits: spec_bits,
+                                    spec_tag: spec_tag
+                                });
                                 doAssert(ppc == pc + 4, "Mem next PC is not PC+4");
                                 doAssert(!isValid(dInst.csr), "Mem never explicitly read/write CSR");
                                 doAssert((dInst.iType != Fence) == isValid(dInst.imm),
                                          "Mem (non-Fence) needs imm for virtual addr");
                                 doAssert(!isValid(spec_tag), "should not have spec tag");
-                                // put in ldstq
-                                if(isLdQ) begin
-                                    lsq.enqLd(inst_tag, mem_inst, phy_regs.dst, spec_bits);
-                                end
-                                else begin
-                                    lsq.enqSt(inst_tag, mem_inst, phy_regs.dst, spec_bits);
-                                end
                             end
                             else begin
                                 // cannot process this inst, stop
@@ -709,7 +694,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
                                                 ////////
                                                 will_dirty_fpu_state: will_dirty_fpu_state,
                                                 rob_inst_state: rob_inst_state,
-                                                lsqTag: lsq_tag,
+                                                lsqTag: ?, // LSQ tag is set later in mem pipeline
                                                 ldKilled: Invalid,
                                                 memAccessAtCommit: False, // set by ROB in case of Fence
                                                 lsqAtCommitNotified: False,

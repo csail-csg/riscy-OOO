@@ -284,6 +284,7 @@ module mkCore#(CoreId coreId)(Core);
             method rob_getPC = rob.getOrigPC[valueof(AluExeNum)].get; // last getPC port
             method rob_setExecuted_doFinishMem = rob.setExecuted_doFinishMem;
             method rob_setExecuted_deqLSQ = rob.setExecuted_deqLSQ;
+            method rob_setLSQtag = rob.setLSQTag;
             method isMMIOAddr = mmio.isMMIOAddr;
             method mmioReq = mmio.dataReq;
             method mmioRespVal = mmio.dataRespVal;
@@ -653,7 +654,9 @@ module mkCore#(CoreId coreId)(Core);
         Data data = (case(pType)
             SupRenameCnt, SpecNoneCycles, SpecNonMemCycles: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
-            ExeTlbExcep,
+            ExeTlbExcep, ExeScSuccessCnt,
+            ExeLrScAmoAcqCnt, ExeLrScAmoRelCnt,
+            ExeFenceAcqCnt, ExeFenceRelCnt, ExeFenceCnt,
             ExeLdStallByLd, ExeLdStallBySt, ExeLdStallBySB,
             ExeLdForward, ExeLdMemLat, ExeStMemLat,
             ExeLdToUseLat, ExeLdToUseCnt: coreFix.memExeIfc.getPerf(pType);

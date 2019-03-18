@@ -28,9 +28,8 @@ import InorderRS::*;
 import SynthParam::*;
 
 typedef struct {
-    MemFunc mem_func;
+    MemInst mem_inst;
     ImmData imm;
-    LdStQTag ldstq_tag;
 } MemRSData deriving(Bits, Eq, FShow);
 
 typedef InorderRS#(`RS_MEM_SIZE, MemRSData) ReservationStationMem;

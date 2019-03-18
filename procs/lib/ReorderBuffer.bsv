@@ -103,6 +103,10 @@ interface ReorderBufferRowEhr#(numeric type aluExeNum, numeric type fpuMulDivExe
     // perform), and non-MMIO St can become Executed (NOTE faulting
     // instructions are not Executed, they are set at deqLSQ time)
     method Action setExecuted_doFinishMem(Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
+`ifdef INORDER_CORE
+    // in-order core sets LSQ tag after getting out of issue queue
+    method Action setLSQTag(LdStQTag t);
+`endif
     // get original PC/PPC before execution, EHR port 0 will suffice
     method Addr getOrigPC;
     method Addr getOrigPredPC;
@@ -233,6 +237,12 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         nonMMIOStDone[nonMMIOSt_finishMem_port] <= non_mmio_st_done;
     endmethod
 
+`ifdef INORDER_CORE
+    method Action setLSQTag(LdStQTag t);
+        lsqTag <= t;
+    endmethod
+`endif
+
     method Action write_enq(ToReorderBuffer x);
         pc <= x.pc;
         iType <= x.iType;
@@ -245,7 +255,10 @@ module mkReorderBufferRowEhr(ReorderBufferRowEhr#(aluExeNum, fpuMulDivExeNum)) p
         rob_inst_state[state_enq_port] <= x.rob_inst_state;
         epochIncremented <= x.epochIncremented;
         spec_bits[sb_enq_port] <= x.spec_bits;
+`ifndef INORDER_CORE
+        // in-order core sets LSQ tag later
         lsqTag <= x.lsqTag;
+`endif
         ldKilled[ldKill_enq_port] <= Invalid;
         memAccessAtCommit[accessCom_enq_port] <= x.iType == Fence;
         lsqAtCommitNotified[lsqNotified_enq_port] <= False;
@@ -375,6 +388,10 @@ interface SupReorderBuffer#(numeric type aluExeNum, numeric type fpuMulDivExeNum
     interface Vector#(fpuMulDivExeNum, ROB_setExecuted_doFinishFpuMulDiv) setExecuted_doFinishFpuMulDiv;
     // doFinishMem, after addr translation
     method Action setExecuted_doFinishMem(InstTag x, Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
+`ifdef INORDER_CORE
+    // in-order core sets LSQ tag after getting out of issue queue
+    method Action setLSQTag(InstTag x, LdStQTag t);
+`endif
 
     // get original PC/PPC before execution, EHR port 0 will suffice
     interface Vector#(TAdd#(1, aluExeNum), ROB_getOrigPC) getOrigPC;
@@ -927,6 +944,12 @@ module mkSupReorderBuffer#(
     );
         row[x.way][x.ptr].setExecuted_doFinishMem(vaddr, access_at_commit, non_mmio_st_done);
     endmethod
+
+`ifdef INORDER_CORE
+    method Action setLSQTag(InstTag x, LdStQTag t);
+        row[x.way][x.ptr].setLSQTag(t);
+    endmethod
+`endif
 
     interface getOrigPC = getOrigPCIfc;
     interface getOrigPredPC = getOrigPredPCIfc;

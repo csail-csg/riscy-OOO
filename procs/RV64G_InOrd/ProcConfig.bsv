@@ -78,6 +78,9 @@
 `define DRAM_MAX_REQS 24
 `define DRAM_LATENCY 120 // model a constant dram latency
 
+// ROB and LSQ behave slightly different in case of in-order core
+`define INORDER_CORE
+
 //
 // ==== CACHE SIZE ====
 //

@@ -1494,8 +1494,11 @@ module mkSplitLSQ(SplitLSQ);
     endmethod
 
     method Action updateData(StQTag t, Data d);
+`ifndef INORDER_CORE
+        // in-order core allocates entry and write data in the same rule
         doAssert(st_valid_updData[t], "entry must be valid");
         doAssert(!st_computed_updData[t], "entry cannot be computed");
+`endif
         st_stData_updData[t] <= d;
     endmethod
 

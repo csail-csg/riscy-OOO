@@ -52,19 +52,10 @@ import LatencyTimer::*;
 
 typedef struct {
     // inst info
-    MemFunc mem_func;
-    ImmData imm;
-    PhyRegs regs;
-    InstTag tag;
-    LdStQTag ldstq_tag;
-} MemDispatchToRegRead deriving(Bits, Eq, FShow);
-
-typedef struct {
-    // inst info
-    MemFunc mem_func;
+    MemInst mem_inst;
     ImmData imm;
     InstTag tag;
-    LdStQTag ldstq_tag;
+    Maybe#(PhyDst) dst;
     // src reg vals
     Data rVal1;
     Data rVal2;
@@ -139,6 +130,7 @@ interface MemExeInput;
     method Addr rob_getPC(InstTag t);
     method Action rob_setExecuted_doFinishMem(InstTag t, Addr vaddr, Bool access_at_commit, Bool non_mmio_st_done);
     method Action rob_setExecuted_deqLSQ(InstTag t, Maybe#(Exception) cause, Maybe#(LdKilledBy) ld_killed);
+    method Action rob_setLSQTag(InstTag x, LdStQTag t);
     // MMIO
     method Bool isMMIOAddr(Addr a);
     method Action mmioReq(MMIOCRq r);
@@ -193,6 +185,14 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Count#(Data) exeLdToUseCnt <- mkCount(0); // number of Ld resp written to reg file
     // address translate exception
     Count#(Data) exeTlbExcepCnt <- mkCount(0);
+    // successful store-cond
+    Count#(Data) exeScSuccessCnt <- mkCount(0);
+    // fence count
+    Count#(Data) exeLrScAmoAcqCnt <- mkCount(0);
+    Count#(Data) exeLrScAmoRelCnt <- mkCount(0);
+    Count#(Data) exeFenceCnt <- mkCount(0);
+    Count#(Data) exeFenceAcqCnt <- mkCount(0);
+    Count#(Data) exeFenceRelCnt <- mkCount(0);
 `endif
 
     // reservation station
@@ -359,10 +359,10 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // go to next stage
         regToExeQ.enq(ToSpecFifo {
             data: MemRegReadToExe {
-                mem_func: x.data.mem_func,
+                mem_inst: x.data.mem_inst,
                 imm: x.data.imm,
                 tag: x.tag,
-                ldstq_tag: x.data.ldstq_tag,
+                dst: x.regs.dst,
                 rVal1: rVal1,
                 rVal2: rVal2
             },
@@ -371,7 +371,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
 `ifdef PERF_COUNT
         // perf: load to use latency
-        if(x.data.ldstq_tag matches tagged Ld .idx) begin
+        if(isLdQMemFunc(x.data.mem_inst.mem_func)) begin
             ldToUseLatTimer.start(idx);
         end
 `endif
@@ -383,13 +383,28 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         let x = regToExe.data;
         if(verbose) $display("[doExeMem] ", fshow(regToExe));
 
+        // enq to LSQ
+        Bool isLdQ = isLdQMemFunc(mem_inst.mem_func);
+        Maybe#(LdStQTag) lsqEnqTag = isLdQ ? lsq.enqLdTag : lsq.enqStTag;
+        when(isValid(lsqEnqTag), noAction); // stall if LQ/SQ is full
+        LdStQTag ldstq_tag = validValue(lsqEnqTag);
+        if(isLdQ) begin
+            lsq.enqLd(x._tag, x.mem_inst, x.dst, regToExe.spec_bits);
+        end
+        else begin
+            lsq.enqSt(x.tag, x.mem_inst, x.dst, regToExe.spec_bits);
+        end
+
+        // inform ROB of LSQ tag
+        inIfc.rob_setLSQTag(x.tag, ldstq_tag);
+
         // get virtual addr & St/Sc/Amo data
         Addr vaddr = x.rVal1 + signExtend(x.imm);
         Data data = x.rVal2;
 
         // get shifted data and BE
         // we can use virtual addr to shift, since page size > dword size
-        ByteEn origBE = lsq.getOrigBE(x.ldstq_tag);
+        ByteEn origBE = x.mem_inst.byteEn;
         function Tuple2#(ByteEn, Data) getShiftedBEData(Addr addr, ByteEn be, Data d);
             Bit#(TLog#(NumBytes)) byteOffset = truncate(addr);
             return tuple2(unpack(pack(be) << byteOffset), d << {byteOffset, 3'b0});
@@ -397,7 +412,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         let {shiftBE, shiftData} = getShiftedBEData(vaddr, origBE, data);
 
         // update LSQ data now
-        if(x.ldstq_tag matches tagged St .stTag) begin
+        if(ldstq_tag matches tagged St .stTag &&& x.mem_inst.mem_func != Fence) begin
             Data d = x.mem_func == Amo ? data : shiftData; // XXX don't shift for AMO
             lsq.updateData(stTag, d);
         end
@@ -405,9 +420,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // go to next stage by sending to TLB
         dTlb.procReq(DTlbReq {
             inst: MemExeToFinish {
-                mem_func: x.mem_func,
+                mem_func: x.mem_inst.mem_func,
                 tag: x.tag,
-                ldstq_tag: x.ldstq_tag,
+                ldstq_tag: ldstq_tag,
                 shiftedBE: shiftBE,
                 vaddr: vaddr,
                 misaligned: memAddrMisaligned(vaddr, origBE)
@@ -682,6 +697,16 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display("[doDeqLdQ_Lr_issue] ", fshow(lsqDeqLd), "; ", fshow(req));
         // check
         doAssert(!isValid(lsqDeqLd.killed), "cannot be killed");
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            if(lsqDeqLd.acq) begin
+                exeLrScAmoAcqCnt.incr(1);
+            end
+            if(lsqDeqLd.rel) begin
+                exeLrScAmoRelCnt.incr(1);
+            end
+        end
+`endif
     endrule
 
 `ifdef SELF_INV_CACHE
@@ -752,6 +777,8 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 
 `ifdef SELF_INV_CACHE
     // issue reconcile to D$ in case of .aq
+    // This is in fact useless because MMIO can only be normal Ld which cannot
+    // have .aq bit
     rule doDeqLdQ_MMIO_reconcile(
         waitLrScAmoMMIOResp matches tagged MMIO .waitMMIO &&&
         waitMMIO.isLd &&&
@@ -915,6 +942,17 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // set ROB executed
         inIfc.rob_setExecuted_deqLSQ(lsqDeqSt.instTag, Invalid, Invalid);
         if(verbose) $display("[doDeqStQ_Fence] ", fshow(lsqDeqSt));
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            exeFenceCnt.incr(1);
+            if(lsqDeqSt.acq) begin
+                exeFenceAcqCnt.incr(1);
+            end
+            if(lsqDeqSt.rel) begin
+                exeFenceRelCnt.incr(1);
+            end
+        end
+`endif
     endrule
 
     // issue non-MMIO Sc/Amo without fault when
@@ -953,6 +991,16 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         };
         reqLrScAmoQ.enq(req);
         if(verbose) $display("[doDeqStQ_ScAmo_issue] ", fshow(lsqDeqSt), "; ", fshow(req));
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            if(lsqDeqSt.acq) begin
+                exeLrScAmoAcqCnt.incr(1);
+            end
+            if(lsqDeqSt.rel) begin
+                exeLrScAmoRelCnt.incr(1);
+            end
+        end
+`endif
     endrule
 
 `ifdef SELF_INV_CACHE
@@ -990,6 +1038,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         doAssert((lsqDeqSt.memFunc == Sc || lsqDeqSt.memFunc == Amo) &&
                  !lsqDeqSt.isMMIO, "must be non-MMIO Sc/Amo");
         doAssert(!isValid(lsqDeqSt.fault), "no fault");
+        // stats for successful SC
+`ifdef PERF_COUNT
+        if(inIfc.doStats && lsqDeqSt.memFunc == Sc && resp == fromInteger(valueof(ScSuccVal))) begin
+            exeScSuccessCnt.incr(1);
+        end
+`endif
     endrule
 
     // issue MMIO St/Amo when
@@ -1026,6 +1080,16 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(verbose) $display("[doDeqStQ_MMIO_issue] ", fshow(lsqDeqSt), "; ", fshow(req));
         // MMIO may cause exception, must have spec tag, and only can be St/Amo
         doAssert(lsqDeqSt.memFunc == St || lsqDeqSt.memFunc == Amo, "must be St/Amo");
+`ifdef PERF_COUNT
+        if(inIfc.doStats) begin
+            if(lsqDeqSt.acq) begin
+                exeLrScAmoAcqCnt.incr(1);
+            end
+            if(lsqDeqSt.rel) begin
+                exeLrScAmoRelCnt.incr(1);
+            end
+        end
+`endif
     endrule
 
 `ifdef SELF_INV_CACHE
@@ -1180,6 +1244,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             ExeLdToUseLat: exeLdToUseLat;
             ExeLdToUseCnt: exeLdToUseCnt;
             ExeTlbExcep: exeTlbExcepCnt;
+            ExeScSuccessCnt: exeScSuccessCnt;
+            ExeLrScAmoAcqCnt: exeLrScAmoAcqCnt;
+            ExeLrScAmoRelCnt: exeLrScAmoRelCnt;
+            ExeFenceAcqCnt: exeFenceAcqCnt;
+            ExeFenceRelCnt: exeFenceRelCnt;
+            ExeFenceCnt: exeFenceCnt;
 `endif
             default: 0;
         endcase);
