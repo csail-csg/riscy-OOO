@@ -132,7 +132,7 @@ typedef enum {
     ExeUserLrScAmoRelCnt,
     ExeUserFenceAcqCnt,
     ExeUserFenceRelCnt,
-    ExeUserFenceCnt,
+    ExeUserFenceCnt
 } MemStagePerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
