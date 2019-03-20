@@ -201,29 +201,37 @@ public:
         init(ExeStage, ExeRedirectBr, "Exe stage redirect branch num");
         init(ExeStage, ExeRedirectJr, "Exe stage redirect jump reg num");
         init(ExeStage, ExeRedirectOther, "Exe stage redirect other num");
-        init(ExeStage, ExeLdStallByLd, "Exe stage stall load num by LdQ");
-        init(ExeStage, ExeLdStallBySt, "Exe stage stall load num by StQ");
-        init(ExeStage, ExeLdStallBySB, "Exe stage stall load num by SB");
-        init(ExeStage, ExeLdForward, "Exe stage load forward num");
-        init(ExeStage, ExeLdMemLat, "Exe stage load mem total latency");
-        init(ExeStage, ExeStMemLat, "Exe stage store mem total latency");
-        init(ExeStage, ExeLdToUseLat, "Exe stage load to use total latency");
-        init(ExeStage, ExeLdToUseCnt, "Exe stage load to use num");
-        init(ExeStage, ExeTlbExcep, "Exe stage TLB exception num");
-        init(ExeStage, ExeScSuccessCnt, "Exe stage sc success num");
-        init(ExeStage, ExeLrScAmoAcqCnt, "Exe stage lr/sc/amo acquire num");
-        init(ExeStage, ExeLrScAmoRelCnt, "Exe stage lr/sc/amo release num");
-        init(ExeStage, ExeFenceAcqCnt, "Exe stage fence acquire num");
-        init(ExeStage, ExeFenceRelCnt, "Exe stage fence release num");
-        init(ExeStage, ExeFenceCnt, "Exe stage fence num");
         init(ExeStage, ExeIntMulCnt, "Exe stage int mul num");
         init(ExeStage, ExeIntDivCnt, "Exe stage int div num");
         init(ExeStage, ExeFpFmaCnt, "Exe stage fp add/mul/fma num");
         init(ExeStage, ExeFpDivCnt, "Exe stage fp div num");
         init(ExeStage, ExeFpSqrtCnt, "Exe stage fp sqrt num");
 
+        // MemStage
+        init(MemStage, ExeLdStallByLd, "Exe stage stall load num by LdQ");
+        init(MemStage, ExeLdStallBySt, "Exe stage stall load num by StQ");
+        init(MemStage, ExeLdStallBySB, "Exe stage stall load num by SB");
+        init(MemStage, ExeLdForward, "Exe stage load forward num");
+        init(MemStage, ExeLdMemLat, "Exe stage load mem total latency");
+        init(MemStage, ExeStMemLat, "Exe stage store mem total latency");
+        init(MemStage, ExeLdToUseLat, "Exe stage load to use total latency");
+        init(MemStage, ExeLdToUseCnt, "Exe stage load to use num");
+        init(MemStage, ExeTlbExcep, "Exe stage TLB exception num");
+        init(MemStage, ExeScSuccessCnt, "Exe stage sc success num");
+        init(MemStage, ExeLrScAmoAcqCnt, "Exe stage lr/sc/amo acquire num");
+        init(MemStage, ExeLrScAmoRelCnt, "Exe stage lr/sc/amo release num");
+        init(MemStage, ExeFenceAcqCnt, "Exe stage fence acquire num");
+        init(MemStage, ExeFenceRelCnt, "Exe stage fence release num");
+        init(MemStage, ExeFenceCnt, "Exe stage fence num");
+        init(MemStage, ExeUserLrScAmoAcqCnt, "Exe stage user lr/sc/amo acquire num");
+        init(MemStage, ExeUserLrScAmoRelCnt, "Exe stage user lr/sc/amo release num");
+        init(MemStage, ExeUserFenceAcqCnt, "Exe stage user fence acquire num");
+        init(MemStage, ExeUserFenceRelCnt, "Exe stage user fence release num");
+        init(MemStage, ExeUserFenceCnt, "Exe stage user fence num");
+
         // ComStage
         init(ComStage, CycleCnt, "cycles");
+        init(ComStage, UserCycleCnt, "user cycles");
         init(ComStage, InstCnt, "instructions");
         init(ComStage, UserInstCnt, "user instructions");
         init(ComStage, SupComUserCnt, "times of superscalar user commit");
@@ -239,6 +247,7 @@ public:
         init(ComStage, ComLdKillBySt, "Com stage kill load num by St");
         init(ComStage, ComLdKillByCache, "Com stage kill load num by cache");
         init(ComStage, ComSysCnt, "Com stage system inst num");
+        init(ComStage, ComEcallCnt, "Com stage ecall num");
         init(ComStage, ExcepCnt, "exception num");
         init(ComStage, InterruptCnt, "interrupt num");
         init(ComStage, FlushTlbCnt, "flush TLB num");

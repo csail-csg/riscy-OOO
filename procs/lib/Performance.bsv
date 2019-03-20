@@ -104,6 +104,15 @@ typedef enum {
     ExeRedirectBr,
     ExeRedirectJr,
     ExeRedirectOther,
+    ExeIntMulCnt,
+    ExeIntDivCnt,
+    ExeFpFmaCnt,
+    ExeFpDivCnt,
+    ExeFpSqrtCnt
+} ExeStagePerfType deriving(Bits, Eq, FShow);
+
+typedef enum {
+    // Too many Exe stage perf counters, split out memory related ones
     ExeLdStallByLd,
     ExeLdStallBySt,
     ExeLdStallBySB,
@@ -119,12 +128,12 @@ typedef enum {
     ExeFenceAcqCnt,
     ExeFenceRelCnt,
     ExeFenceCnt,
-    ExeIntMulCnt,
-    ExeIntDivCnt,
-    ExeFpFmaCnt,
-    ExeFpDivCnt,
-    ExeFpSqrtCnt
-} ExeStagePerfType deriving(Bits, Eq, FShow);
+    ExeUserLrScAmoAcqCnt,
+    ExeUserLrScAmoRelCnt,
+    ExeUserFenceAcqCnt,
+    ExeUserFenceRelCnt,
+    ExeUserFenceCnt,
+} MemStagePerfType deriving(Bits, Eq, FShow);
 
 typedef enum {
     LdQFullCycles,
@@ -140,6 +149,7 @@ typedef enum {
 
 typedef enum {
     CycleCnt,
+    UserCycleCnt,
     InstCnt,
     UserInstCnt,
     SupComUserCnt, // number of cycles that commit user inst cnt > 1
@@ -155,6 +165,7 @@ typedef enum {
     ComLdKillBySt,
     ComLdKillByCache,
     ComSysCnt, // system inst count
+    ComEcallCnt,
     ExcepCnt,
     InterruptCnt,
     FlushTlbCnt,
@@ -189,6 +200,7 @@ typedef enum {
     L2Tlb,
     DecStage,
     ExeStage,
+    MemStage,
     ComStage,
     CoreSize,
     LLC

@@ -335,6 +335,9 @@ module mkCore#(CoreId coreId)(Core);
             method setRegReadyAggr_forward = writeAggr(forwardWrAggrPort);
             method writeRegFile = writeCons(memWrConsPort);
             method doStats = doStatsReg._read;
+            method Bool isPrvUser;
+                return csrf.decodeInfo.prv == prvU;
+            endmethod
         endinterface);
         let memExe <- mkMemExePipeline(memExeInput);
 
@@ -400,6 +403,7 @@ module mkCore#(CoreId coreId)(Core);
     // commit stage (many in CommitStage.bsv)
     // cycle
     Count#(Data) cycleCnt <- mkCount(0);
+    Count#(Data) userCycle <- mkCount(0);
 
     // buffer/tags size
     Count#(Data) ldqFullCycles <- mkCount(0);
@@ -414,9 +418,11 @@ module mkCore#(CoreId coreId)(Core);
 
     // FIFOs to connect performance counters
     FIFO#(ExeStagePerfType) exePerfReqQ <- mkFIFO1;
+    FIFO#(MemStagePerfType) memPerfReqQ <- mkFIFO1;
     FIFO#(ComStagePerfType) comPerfReqQ <- mkFIFO1;
     FIFO#(CoreSizePerfType) sizePerfReqQ <- mkFIFO1;
     Fifo#(1, PerfResp#(ExeStagePerfType)) exePerfRespQ <- mkCFFifo;
+    Fifo#(1, PerfResp#(MemStagePerfType)) memPerfRespQ <- mkCFFifo;
     Fifo#(1, PerfResp#(ComStagePerfType)) comPerfRespQ <- mkCFFifo;
     Fifo#(1, PerfResp#(CoreSizePerfType)) sizePerfRespQ <- mkCFFifo;
 
@@ -637,6 +643,9 @@ module mkCore#(CoreId coreId)(Core);
     (* fire_when_enabled, no_implicit_conditions *)
     rule incCycleCnt(doStats);
         cycleCnt.incr(1);
+        if(csrf.decodeInfo.prv == prvU) begin
+            userCycle.incr(1);
+        end
     endrule
 
     // incr buffer full cycles
@@ -722,6 +731,9 @@ module mkCore#(CoreId coreId)(Core);
             ExeStage: begin
                 exePerfReqQ.enq(unpack(truncate(r.pType)));
             end
+            MemStage: begin
+                memPerfReqQ.enq(unpack(truncate(r.pType)));
+            end
             ComStage: begin
                 comPerfReqQ.enq(unpack(truncate(r.pType)));
             end
@@ -757,12 +769,6 @@ module mkCore#(CoreId coreId)(Core);
         Data data = (case(pType)
             SupRenameCnt, SpecNoneCycles, SpecNonMemCycles: renameStage.getPerf(pType);
             ExeRedirectBr, ExeRedirectJr, ExeRedirectOther: getAluCnt(pType);
-            ExeTlbExcep, ExeScSuccessCnt,
-            ExeLrScAmoAcqCnt, ExeLrScAmoRelCnt,
-            ExeFenceAcqCnt, ExeFenceRelCnt, ExeFenceCnt,
-            ExeLdStallByLd, ExeLdStallBySt, ExeLdStallBySB,
-            ExeLdForward, ExeLdMemLat, ExeStMemLat,
-            ExeLdToUseLat, ExeLdToUseCnt: coreFix.memExeIfc.getPerf(pType);
             ExeIntMulCnt, ExeIntDivCnt,
             ExeFpFmaCnt, ExeFpDivCnt, ExeFpSqrtCnt: getFpuMulDivCnt(pType);
             default: 0;
@@ -773,11 +779,22 @@ module mkCore#(CoreId coreId)(Core);
         });
     endrule
 
+    // handle perf req: mem stage
+    rule readPerfCnt_Mem;
+        let pType <- toGet(memPerfReqQ).get;
+        Data data = coreFix.memExeIfc.getPerf(pType);
+        memPerfRespQ.enq(PerfResp {
+            pType: pType,
+            data: data
+        });
+    endrule
+
     // handle perf req: com stage
     rule readPerfCnt_Com;
         let pType <- toGet(comPerfReqQ).get;
         Data data = (case(pType)
             CycleCnt: cycleCnt;
+            UserCycleCnt: userCycle;
             default: commitStage.getPerf(pType);
         endcase);
         comPerfRespQ.enq(PerfResp {
@@ -862,6 +879,14 @@ module mkCore#(CoreId coreId)(Core);
             let r <- toGet(exePerfRespQ).get;
             resp = Valid(ProcPerfResp {
                 loc: ExeStage,
+                pType: zeroExtend(pack(r.pType)),
+                data: r.data
+            });
+        end
+        else if(memPerfRespQ.notEmpty) begin
+            let r <- toGet(memPerfRespQ).get;
+            resp = Valid(ProcPerfResp {
+                loc: MemStage,
                 pType: zeroExtend(pack(r.pType)),
                 data: r.data
             });

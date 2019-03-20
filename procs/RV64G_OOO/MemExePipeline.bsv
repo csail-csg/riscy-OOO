@@ -161,6 +161,7 @@ interface MemExeInput;
 
     // performance
     method Bool doStats;
+    method Bool isPrvUser;
 endinterface
 
 interface MemExePipeline;
@@ -175,7 +176,7 @@ interface MemExePipeline;
 `ifdef SELF_INV_CACHE
     interface Server#(void, void) reconcile;
 `endif
-    method Data getPerf(ExeStagePerfType t);
+    method Data getPerf(MemStagePerfType t);
 endinterface
 
 module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
@@ -211,6 +212,11 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Count#(Data) exeFenceCnt <- mkCount(0);
     Count#(Data) exeFenceAcqCnt <- mkCount(0);
     Count#(Data) exeFenceRelCnt <- mkCount(0);
+    Count#(Data) exeUserLrScAmoAcqCnt <- mkCount(0);
+    Count#(Data) exeUserLrScAmoRelCnt <- mkCount(0);
+    Count#(Data) exeUserFenceCnt <- mkCount(0);
+    Count#(Data) exeUserFenceAcqCnt <- mkCount(0);
+    Count#(Data) exeUserFenceRelCnt <- mkCount(0);
 `endif
 
     // reservation station
@@ -728,9 +734,15 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(inIfc.doStats) begin
             if(lsqDeqLd.acq) begin
                 exeLrScAmoAcqCnt.incr(1);
+                if(inIfc.isPrvUser) begin
+                    exeUserLrScAmoAcqCnt.incr(1);
+                end
             end
             if(lsqDeqLd.rel) begin
                 exeLrScAmoRelCnt.incr(1);
+                if(inIfc.isPrvUser) begin
+                    exeUserLrScAmoRelCnt.incr(1);
+                end
             end
         end
 `endif
@@ -974,11 +986,20 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
 `ifdef PERF_COUNT
         if(inIfc.doStats) begin
             exeFenceCnt.incr(1);
+            if(inIfc.isPrvUser) begin
+                exeUserFenceCnt.incr(1);
+            end
             if(lsqDeqSt.acq) begin
                 exeFenceAcqCnt.incr(1);
+                if(inIfc.isPrvUser) begin
+                    exeUserFenceAcqCnt.incr(1);
+                end
             end
             if(lsqDeqSt.rel) begin
                 exeFenceRelCnt.incr(1);
+                if(inIfc.isPrvUser) begin
+                    exeUserFenceRelCnt.incr(1);
+                end
             end
         end
 `endif
@@ -1024,9 +1045,15 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(inIfc.doStats) begin
             if(lsqDeqSt.acq) begin
                 exeLrScAmoAcqCnt.incr(1);
+                if(inIfc.isPrvUser) begin
+                    exeUserLrScAmoAcqCnt.incr(1);
+                end
             end
             if(lsqDeqSt.rel) begin
                 exeLrScAmoRelCnt.incr(1);
+                if(inIfc.isPrvUser) begin
+                    exeUserLrScAmoRelCnt.incr(1);
+                end
             end
         end
 `endif
@@ -1114,9 +1141,15 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         if(inIfc.doStats) begin
             if(lsqDeqSt.acq) begin
                 exeLrScAmoAcqCnt.incr(1);
+                if(inIfc.isPrvUser) begin
+                    exeUserLrScAmoAcqCnt.incr(1);
+                end
             end
             if(lsqDeqSt.rel) begin
                 exeLrScAmoRelCnt.incr(1);
+                if(inIfc.isPrvUser) begin
+                    exeUserLrScAmoRelCnt.incr(1);
+                end
             end
         end
 `endif
@@ -1264,7 +1297,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     endinterface
 `endif
 
-    method Data getPerf(ExeStagePerfType t);
+    method Data getPerf(MemStagePerfType t);
         return (case(t)
 `ifdef PERF_COUNT
             ExeLdStallByLd: exeLdStallByLdCnt;
@@ -1282,6 +1315,11 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             ExeFenceAcqCnt: exeFenceAcqCnt;
             ExeFenceRelCnt: exeFenceRelCnt;
             ExeFenceCnt: exeFenceCnt;
+            ExeUserLrScAmoAcqCnt: exeUserLrScAmoAcqCnt;
+            ExeUserLrScAmoRelCnt: exeUserLrScAmoRelCnt;
+            ExeUserFenceAcqCnt: exeUserFenceAcqCnt;
+            ExeUserFenceRelCnt: exeUserFenceRelCnt;
+            ExeUserFenceCnt: exeUserFenceCnt;
 `endif
             default: 0;
         endcase);

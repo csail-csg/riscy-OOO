@@ -166,6 +166,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
     Count#(Data) comLdKillByCacheCnt <- mkCount(0);
     // exception/sys inst related
     Count#(Data) comSysCnt <- mkCount(0);
+    Count#(Data) comEcallCnt <- mkCount(0);
     Count#(Data) excepCnt <- mkCount(0);
     Count#(Data) interruptCnt <- mkCount(0);
     // flush tlb
@@ -508,9 +509,12 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 `ifdef PERF_COUNT
         if(inIfc.doStats) begin
             comSysCnt.incr(1);
+            if(x.iType == Ecall) begin
+                comEcallCnt.incr(1);
+            end
             // inst count stats
             instCnt.incr(1);
-            if(csrf.decodeInfo.prv == 0) begin
+            if(csrf.decodeInfo.prv == prvU) begin
                 userInstCnt.incr(1);
             end
         end
@@ -723,6 +727,7 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
             ComLdKillBySt: comLdKillByStCnt;
             ComLdKillByCache: comLdKillByCacheCnt;
             ComSysCnt: comSysCnt;
+            ComEcallCnt: comEcallCnt;
             ExcepCnt: excepCnt;
             InterruptCnt: interruptCnt;
             FlushTlbCnt: flushTlbCnt;
