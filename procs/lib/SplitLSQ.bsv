@@ -94,6 +94,12 @@ export isStQMemFunc;
 // Because of the pathological case that verify-ptr = deq ptr = enq ptr (when
 // SQ is full), we need to add a verified bit to SQ to distinguish the case of
 // everything verified from the case of nothing verified.
+//
+// The requirement listed above is too conservative. Verification of a store
+// does not need to wait for older load to deq. This is because this
+// verification is used only for load deq, and when a load deqs, all older
+// loads must have gone. We just need to stop store verification at atomics or
+// fences.
 
 // For WEAK, we also need verified bits and verify-ptr for SQ. These are for
 // dequeuing LQ. An LQ entry cannot be dequeud until all older SQ entries have
@@ -522,7 +528,7 @@ endmodule
 module mkSplitLSQ(SplitLSQ);
     // method/rule ordering
     // getHit, findIssue <
-    // (deqLd (TSO ? C : <) verifySt) <
+    // deqLd < verifySt < //(deqLd (TSO ? C : <) verifySt) <
     // cacheEvict <
     // updateAddr <
     // issueLd, getIssueLd <
@@ -1132,7 +1138,7 @@ module mkSplitLSQ(SplitLSQ);
 
     // Verify SQ entry one by one
     // - TSO verify requires:
-    // (1) all older loads are dequeued
+    // (1) all older loads are dequeued -- XXX No longer needed
     // (2) for normal non-MMIO St, addr and data are computed
     // (3) for Sc/Amo/MMIO, it is dequeued (by completing memory access)
     // (4) for Fence, it is dequeued
@@ -1157,24 +1163,24 @@ module mkSplitLSQ(SplitLSQ);
         // entry cannot be verified, because this may block conflicting
         // rules/methods forever.
 `ifdef TSO_MM
-        // TSO: need to figure out if older LQ entry exists
-        LdQTag ldDeqP = ld_deqP_verify;
-        Bool no_older_ld;
-        if(ld_valid_verify[ldDeqP]) begin
-            if(olderStVirTags[ldDeqP] matches tagged Valid .older) begin
-                no_older_ld = older >= stVirTags[verP];
-            end
-            else begin
-                // LQ head has no olderSt, so LQ head is older
-                no_older_ld = False;
-            end
-        end
-        else begin
-            // LQ empty
-            no_older_ld = True;
-        end
-        when(no_older_ld &&
-             st_memFunc[verP] == St &&
+        // // TSO: need to figure out if older LQ entry exists
+        // LdQTag ldDeqP = ld_deqP_verify;
+        // Bool no_older_ld;
+        // if(ld_valid_verify[ldDeqP]) begin
+        //     if(olderStVirTags[ldDeqP] matches tagged Valid .older) begin
+        //         no_older_ld = older >= stVirTags[verP];
+        //     end
+        //     else begin
+        //         // LQ head has no olderSt, so LQ head is older
+        //         no_older_ld = False;
+        //     end
+        // end
+        // else begin
+        //     // LQ empty
+        //     no_older_ld = True;
+        // end
+        // when(no_older_ld &&
+        when(st_memFunc[verP] == St &&
              !st_isMMIO_verify[verP] &&
              st_computed_verify[verP], noAction);
 
