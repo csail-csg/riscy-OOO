@@ -375,6 +375,9 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
         if(inIfc.doStats) begin
             if(trap matches tagged Exception .e) begin
                 excepCnt.incr(1);
+                if(e == EnvCallU) begin
+                    comEcallCnt.incr(1);
+                end
             end
             else begin
                 interruptCnt.incr(1);
@@ -509,9 +512,6 @@ module mkCommitStage#(CommitInput inIfc)(CommitStage);
 `ifdef PERF_COUNT
         if(inIfc.doStats) begin
             comSysCnt.incr(1);
-            if(x.iType == Ecall) begin
-                comEcallCnt.incr(1);
-            end
             // inst count stats
             instCnt.incr(1);
             if(csrf.decodeInfo.prv == prvU) begin
