@@ -243,6 +243,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // wire to issue Ld which just finish addr tranlation
     RWire#(LSQIssueLdInfo) issueLd <- mkRWire;
 
+`ifdef STORE_PREFETCH
+    // wire to issue St which just finishes addr translation
+    RWire#(Addr) stPrefetch <- mkRWire;
+    // FIFO of prefetch req
+    FIFO#(Addr) reqStPrefetchQ <- mkFIFO;
+`endif
+
     // waiting bit for Lr/Sc/Amo/MMIO resp
     Reg#(WaitLrScAmoMMIOResp) waitLrScAmoMMIOResp <- mkReg(Invalid);
 `ifdef TSO_MM
@@ -530,6 +537,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             });
         end
 
+`ifdef STORE_PREFETCH
+        if (non_mmio_st) begin
+            stPrefetch.wset(paddr);
+        end
+`endif
+
 `ifdef PERF_COUNT
         if(isValid(cause) && inIfc.doStats) begin
             exeTlbExcepCnt.incr(1);
@@ -627,6 +640,13 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         // issue the entry that just updates LSQ this cycle
         doIssueLd(info, False);
     endrule
+
+`ifdef STORE_PREFETCH
+    // issue store prefetch: it is ok to drop prefetch if cache is busy
+    rule doIssueStPrefetch(stPrefetch.wget matches tagged Valid .addr);
+        reqStPrefetchQ.enq(addr);
+    endrule
+`endif
 
     // handle load resp
     function Action doRespLd(LdQTag tag, Data data, String rule_name);
@@ -1260,6 +1280,24 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         let r <- toGet(reqLrScAmoQ).get;
         dMem.procReq.req(r);
     endrule
+`ifdef STORE_PREFETCH
+    // prefetch should give way to real mem req
+    (* descending_urgency = "sendLdToMem, sendStPrefetchToMem" *)
+    (* descending_urgency = "sendStToMem, sendStPrefetchToMem" *)
+    (* descending_urgency = "sendLrScAmoToMem, sendStPrefetchToMem" *)
+    rule sendStPrefetchToMem;
+        let addr <- toGet(reqStPrefetchQ).get;
+        dMem.procReq.req(ProcRq {
+            id: 0,
+            addr: addr,
+            toState: E, // prefetch to E
+            op: StPrefetch,
+            byteEn: ?,
+            data: ?,
+            amoInst: ?
+        });
+    endrule
+`endif
 
     //=======================================================
     // End of Load/Store Queue Stuff

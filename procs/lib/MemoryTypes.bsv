@@ -31,7 +31,12 @@ import ClientServer::*;
 
 typedef Data MemResp;
 
-typedef enum{Ld, St, Lr, Sc, Amo} MemOp deriving(Eq,Bits,FShow); // add more ops
+typedef enum {
+    Ld, St, Lr, Sc, Amo
+`ifdef STORE_PREFETCH
+    , StPrefetch
+`endif
+} MemOp deriving(Eq,Bits,FShow); // add more ops
 
 Bit#(3) memB    = 3'b000;
 Bit#(3) memH    = 3'b001;

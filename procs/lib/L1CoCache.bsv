@@ -100,7 +100,10 @@ module mkDCRqMshrWrapper(
     function Addr getAddrFromReq(ProcRq#(DProcReqId) r);
         return r.addr;
     endfunction
-    let m <- mkL1CRqMshr(getAddrFromReq);
+    function Bool isReqToExclusive(ProcRq#(DProcReqId) r);
+        return r.toState >= E;
+    endfunction
+    let m <- mkL1CRqMshr(getAddrFromReq, isReqToExclusive);
     return m;
 endmodule
 
