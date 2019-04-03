@@ -541,7 +541,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
         end
 
 `ifdef STORE_PREFETCH
-        if (non_mmio_st) begin
+        if (non_mmio_st_done) begin
             stPrefetch.wset(paddr);
         end
 `endif
