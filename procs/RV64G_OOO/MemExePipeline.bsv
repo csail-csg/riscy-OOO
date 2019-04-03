@@ -217,6 +217,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     Count#(Data) exeUserFenceCnt <- mkCount(0);
     Count#(Data) exeUserFenceAcqCnt <- mkCount(0);
     Count#(Data) exeUserFenceRelCnt <- mkCount(0);
+`ifdef STORE_PREFETCH
+    Count#(Data) exeDropStPrefetchCnt <- mkCount(0);
+`endif
 `endif
 
     // reservation station
@@ -247,7 +250,7 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     // wire to issue St which just finishes addr translation
     RWire#(Addr) stPrefetch <- mkRWire;
     // FIFO of prefetch req
-    FIFO#(Addr) reqStPrefetchQ <- mkFIFO;
+    Fifo#(2, Addr) reqStPrefetchQ <- mkCFFifo;
 `endif
 
     // waiting bit for Lr/Sc/Amo/MMIO resp
@@ -646,6 +649,12 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
     rule doIssueStPrefetch(stPrefetch.wget matches tagged Valid .addr);
         reqStPrefetchQ.enq(addr);
     endrule
+
+`ifdef PERF_COUNT
+    rule dropStPrefetch(inIfc.doStats && isValid(stPrefetch.wget) && !reqStPrefetchQ.notFull);
+        exeDropStPrefetchCnt.incr(1);
+    endrule
+`endif
 `endif
 
     // handle load resp
@@ -1358,6 +1367,9 @@ module mkMemExePipeline#(MemExeInput inIfc)(MemExePipeline);
             ExeUserFenceAcqCnt: exeUserFenceAcqCnt;
             ExeUserFenceRelCnt: exeUserFenceRelCnt;
             ExeUserFenceCnt: exeUserFenceCnt;
+`ifdef STORE_PREFETCH
+            ExeDropStPrefetchCnt: exeDropStPrefetchCnt;
+`endif
 `endif
             default: 0;
         endcase);

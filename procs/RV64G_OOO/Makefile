@@ -38,6 +38,8 @@ USE_XILINX_FPU ?= true
 CORE_NUM ?= 1
 # TSO or WEAK
 TSO_MM ?= false
+# store prefetch
+STORE_PREFETCH ?= false
 # Lr upgrades line to E (no forward progress guarantee)
 LR_UP_TO_E ?= false
 # Forbid LLC from respoding a load (toS) request with E state
@@ -88,6 +90,13 @@ BUILD_DIR := $(BUILD_DIR).system_inv_d
 endif
 else
 BUILD_DIR := $(BUILD_DIR).weak
+endif
+
+ifeq ($(STORE_PREFETCH),true)
+BUILD_DIR := $(BUILD_DIR).store_prefetch
+ifeq ($(SELF_INV_CACHE),true)
+$(error self inv cache does not support store prefetch)
+endif
 endif
 
 ifeq ($(LR_UP_TO_E),true)

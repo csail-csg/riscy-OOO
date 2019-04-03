@@ -43,6 +43,8 @@ typedef enum {
     L1DAmoCnt,
     L1DAmoMissCnt,
     L1DAmoMissLat,
+    L1DStPrefetchCnt,
+    L1DStPrefetchMissCnt,
     L1DSelfInvCnt, // self inv due to max hits
     L1DReconcileCnt
 } L1DPerfType deriving(Bits, Eq, FShow);
@@ -52,6 +54,8 @@ typedef enum {
     LLCDmaMemLdLat,
     LLCNormalMemLdCnt,
     LLCNormalMemLdLat,
+    LLCDmaMemStCnt,
+    LLCNormalMemStCnt,
     LLCMshrBlockCycles, // full MSHR blocks new cRq
     LLCDownRespCnt,
     LLCDownRespDataCnt,
@@ -132,7 +136,8 @@ typedef enum {
     ExeUserLrScAmoRelCnt,
     ExeUserFenceAcqCnt,
     ExeUserFenceRelCnt,
-    ExeUserFenceCnt
+    ExeUserFenceCnt,
+    ExeDropStPrefetchCnt
 } MemStagePerfType deriving(Bits, Eq, FShow);
 
 typedef enum {

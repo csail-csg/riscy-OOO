@@ -154,6 +154,8 @@ public:
         init(DCache, L1DAmoCnt, "D$ Amo num");
         init(DCache, L1DAmoMissCnt, "D$ Amo miss num");
         init(DCache, L1DAmoMissLat, "D$ Amo miss total latency");
+        init(DCache, L1DStPrefetchCnt, "D$ StPrefetch num");
+        init(DCache, L1DStPrefetchMissCnt, "D$ StPrefetch miss num");
         init(DCache, L1DSelfInvCnt, "D$ self inv num");
         init(DCache, L1DReconcileCnt, "D$ reconcile num");
 
@@ -228,6 +230,7 @@ public:
         init(MemStage, ExeUserFenceAcqCnt, "Exe stage user fence acquire num");
         init(MemStage, ExeUserFenceRelCnt, "Exe stage user fence release num");
         init(MemStage, ExeUserFenceCnt, "Exe stage user fence num");
+        init(MemStage, ExeDropStPrefetchCnt, "Exe stage drop store prefetch num");
 
         // ComStage
         init(ComStage, CycleCnt, "cycles");
@@ -276,8 +279,10 @@ public:
         init(LLC, LLCDmaMemLdLat, "LLC DMA mem load total latency");
         init(LLC, LLCNormalMemLdCnt, "LLC normal mem load num");
         init(LLC, LLCNormalMemLdLat, "LLC normal mem load total latency");
+        init(LLC, LLCDmaMemStCnt, "LLC DMA mem store num");
+        init(LLC, LLCNormalMemStCnt, "LLC normal mem store num");
         init(LLC, LLCMshrBlockCycles, "LLC mshr block cycles");
-        init(LLC, LLCDownRespCnt, "LLC down resp num");
+        init(LLC, LLCDownRespCnt, "LLC downgrade resp num");
         init(LLC, LLCDownRespDataCnt, "LLC downgrade resp data num");
         init(LLC, LLCDownReqCnt, "LLC downgrade req num");
         init(LLC, LLCUpRespCnt, "LLC upgrade resp num");
