@@ -72,6 +72,15 @@ typedef `LOG_L1_WAYS LgL1WayNum;
 typedef TExp#(LgL1WayNum) L1WayNum;
 typedef Bit#(LgL1WayNum) L1Way;
 
+`ifdef L1_CACHE_LRU
+typedef TrueLruRepInfo#(L1WayNum) L1RepInfo;
+function module#(RWBramCore#(indexT, L1RepInfo)) mkL1RepRam = mkRWBramCore;
+function module#(ReplacePolicy#(L1WayNum, L1RepInfo)) mkL1RepPolicy = mkTrueLruReplace;
+`else
+typedef RandRepInfo L1RepInfo;
+function module#(RWBramCore#(indexT, L1RepInfo)) mkL1RepRam = mkRandRepRam;
+function module#(ReplacePolicy#(L1WayNum, L1RepInfo)) mkL1RepPolicy = mkRandomReplace;
+`endif
 
 ////////
 // D$ //
@@ -122,13 +131,15 @@ typedef `L1D_MAX_HITS DMaxHitNum;
 
 (* synthesize *)
 module mkDPipeline(
-    SelfInvL1Pipe#(LgDBankNum, L1WayNum, DMaxHitNum, DIndex, DTag, DCRqMshrIdx, DPRqMshrIdx)
+    SelfInvL1Pipe#(LgDBankNum, L1WayNum, DMaxHitNum, DIndex, DTag, L1RepInfo, DCRqMshrIdx, DPRqMshrIdx)
 );
-    let m <- mkSelfInvL1Pipe;
+    RWBramCore#(DIndex, L1RepInfo) repRam <- mkL1RepRam;
+    ReplacePolicy#(L1WayNum, L1RepInfo) repPolicy <- mkL1RepPolicy;
+    let m <- mkSelfInvL1Pipe(repRam, repPolicy);
     return m;
 endmodule
 
-typedef SelfInvL1Bank#(LgDBankNum, L1WayNum, DIndexSz, DTagSz, DCRqNum, DPRqNum, DMaxHitNum, DProcReqId) DCacheWrapper;
+typedef SelfInvL1Bank#(LgDBankNum, L1WayNum, DIndexSz, DTagSz, DCRqNum, DPRqNum, DMaxHitNum, L1RepInfo, DProcReqId) DCacheWrapper;
 
 module mkDCacheWrapper#(L1ProcResp#(DProcReqId) procResp)(DCacheWrapper);
     let m <- mkSelfInvL1Cache(mkDCRqMshrWrapper, mkDPRqMshrWrapper, mkDPipeline, procResp);
@@ -142,13 +153,15 @@ typedef SelfInvL1PRqStuck L1DPRqStuck;
 
 (* synthesize *)
 module mkDPipeline(
-    L1Pipe#(LgDBankNum, L1WayNum, DIndex, DTag, DCRqMshrIdx, DPRqMshrIdx)
+    L1Pipe#(LgDBankNum, L1WayNum, DIndex, DTag, L1RepInfo, DCRqMshrIdx, DPRqMshrIdx)
 );
-    let m <- mkL1Pipe;
+    RWBramCore#(DIndex, L1RepInfo) repRam <- mkL1RepRam;
+    ReplacePolicy#(L1WayNum, L1RepInfo) repPolicy <- mkL1RepPolicy;
+    let m <- mkL1Pipe(repRam, repPolicy);
     return m;
 endmodule
 
-typedef L1Bank#(LgDBankNum, L1WayNum, DIndexSz, DTagSz, DCRqNum, DPRqNum, DProcReqId) DCacheWrapper;
+typedef L1Bank#(LgDBankNum, L1WayNum, DIndexSz, DTagSz, DCRqNum, DPRqNum, L1RepInfo, DProcReqId) DCacheWrapper;
 
 module mkDCacheWrapper#(L1ProcResp#(DProcReqId) procResp)(DCacheWrapper);
     let m <- mkL1Cache(mkDCRqMshrWrapper, mkDPRqMshrWrapper, mkDPipeline, procResp);
@@ -300,13 +313,15 @@ endmodule
 
 (* synthesize *)
 module mkIPipeline(
-    SelfInvIPipe#(LgIBankNum, L1WayNum, IIndex, ITag, ICRqMshrIdx)
+    SelfInvIPipe#(LgIBankNum, L1WayNum, IIndex, ITag, L1RepInfo, ICRqMshrIdx)
 );
-    let m <- mkSelfInvIPipe;
+    RWBramCore#(IIndex, L1RepInfo) repRam <- mkL1RepRam;
+    ReplacePolicy#(L1WayNum, L1RepInfo) repPolicy <- mkL1RepPolicy;
+    let m <- mkSelfInvIPipe(repRam, repPolicy);
     return m;
 endmodule
 
-typedef SelfInvIBank#(ISupSz, LgIBankNum, L1WayNum, IIndexSz, ITagSz, ICRqNum) IBankWrapper;
+typedef SelfInvIBank#(ISupSz, LgIBankNum, L1WayNum, IIndexSz, ITagSz, ICRqNum, L1RepInfo) IBankWrapper;
 
 (* synthesize *)
 module mkIBankWrapper(IBankWrapper);
@@ -329,13 +344,15 @@ endmodule
 
 (* synthesize *)
 module mkIPipeline(
-    L1Pipe#(LgIBankNum, L1WayNum, IIndex, ITag, ICRqMshrIdx, IPRqMshrIdx)
+    L1Pipe#(LgIBankNum, L1WayNum, IIndex, ITag, L1RepInfo, ICRqMshrIdx, IPRqMshrIdx)
 );
-    let m <- mkL1Pipe;
+    RWBramCore#(IIndex, L1RepInfo) repRam <- mkL1RepRam;
+    ReplacePolicy#(L1WayNum, L1RepInfo) repPolicy <- mkL1RepPolicy;
+    let m <- mkL1Pipe(repRam, repPolicy);
     return m;
 endmodule
 
-typedef IBank#(ISupSz, LgIBankNum, L1WayNum, IIndexSz, ITagSz, ICRqNum, IPRqNum) IBankWrapper;
+typedef IBank#(ISupSz, LgIBankNum, L1WayNum, IIndexSz, ITagSz, ICRqNum, IPRqNum, L1RepInfo) IBankWrapper;
 
 (* synthesize *)
 module mkIBankWrapper(IBankWrapper);

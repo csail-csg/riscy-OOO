@@ -29,6 +29,7 @@
 # USE_XILINX_FPU: true or false
 # CORE_NUM
 # TSO_MM: true or false
+# L1_CACHE_LRU: true or false
 # STORE_PREFETCH: true or false
 # LR_UP_TO_E: true or false
 # NO_LOAD_RESP_E: true or false
@@ -122,6 +123,11 @@ ifeq ($(SYSTEM_SELF_INV_L1D),true)
 CONNECTALFLAGS += --bscflags=" -D SYSTEM_SELF_INV_L1D "
 endif
 else
+endif
+
+# L1 cache LRU replace
+ifeq ($(L1_CACHE_LRU),true)
+CONNECTALFLAGS += --bscflags=" -D L1_CACHE_LRU "
 endif
 
 # store prefetch

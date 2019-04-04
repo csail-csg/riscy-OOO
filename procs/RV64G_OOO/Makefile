@@ -38,6 +38,8 @@ USE_XILINX_FPU ?= true
 CORE_NUM ?= 1
 # TSO or WEAK
 TSO_MM ?= false
+# L1 cache LRU replace
+L1_CACHE_LRU ?= true
 # store prefetch
 STORE_PREFETCH ?= false
 # Lr upgrades line to E (no forward progress guarantee)
@@ -90,6 +92,10 @@ BUILD_DIR := $(BUILD_DIR).system_inv_d
 endif
 else
 BUILD_DIR := $(BUILD_DIR).weak
+endif
+
+ifeq ($(L1_CACHE_LRU),true)
+BUILD_DIR := $(BUILD_DIR).l1_cache_lru
 endif
 
 ifeq ($(STORE_PREFETCH),true)
