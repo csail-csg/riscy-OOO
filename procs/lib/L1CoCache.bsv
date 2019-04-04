@@ -46,6 +46,9 @@ import SelfInvL1Pipe::*;
 import SelfInvL1Bank::*;
 import SelfInvIPipe::*;
 import SelfInvIBank::*;
+import RWBramCore::*;
+import LruReplace::*;
+import RandomReplace::*;
 
 export L1Num;
 export LgL1WayNum;
@@ -74,7 +77,7 @@ typedef Bit#(LgL1WayNum) L1Way;
 
 `ifdef L1_CACHE_LRU
 typedef TrueLruRepInfo#(L1WayNum) L1RepInfo;
-function module#(RWBramCore#(indexT, L1RepInfo)) mkL1RepRam = mkRWBramCore;
+function module#(RWBramCore#(indexT, L1RepInfo)) mkL1RepRam provisos(Bits#(indexT, indexSz)) = mkRWBramCore;
 function module#(ReplacePolicy#(L1WayNum, L1RepInfo)) mkL1RepPolicy = mkTrueLruReplace;
 `else
 typedef RandRepInfo L1RepInfo;
