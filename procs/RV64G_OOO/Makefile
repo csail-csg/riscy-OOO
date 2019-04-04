@@ -96,6 +96,8 @@ endif
 
 ifeq ($(L1_CACHE_LRU),true)
 BUILD_DIR := $(BUILD_DIR).l1_cache_lru
+else
+BUILD_DIR := $(BUILD_DIR).l1_cache_rand
 endif
 
 ifeq ($(STORE_PREFETCH),true)
