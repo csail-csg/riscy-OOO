@@ -1,4 +1,4 @@
-TESTS = SB MP
+TESTS = SB MP MP_addr
 
 BIN_DIR := bin
 DUMP_DIR := dump
