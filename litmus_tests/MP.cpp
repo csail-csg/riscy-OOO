@@ -10,9 +10,12 @@ volatile uint64_t start1 __attribute__ ((aligned (64))) = 0;
 volatile uint64_t flag __attribute__ ((aligned (64))) = 0;
 volatile uint64_t data __attribute__ ((aligned (64))) = 0;
 
+volatile int sync __attribute__ ((aligned (64))) = 0;
+
+volatile int zero __attribute__ ((aligned (64))) = 0;
+
 unsigned long long test_num = 0;
-int delay_range_st = 0;
-int delay_range_ld = 0;
+int delay_range_st = 10; // default 10
 unsigned long long count_fd[4] = {0, 0, 0, 0};
 
 // t0: St data = 1; Fence; St flag = 1
@@ -29,6 +32,11 @@ void *thread0(void *p) {
         int delay = abs(rand()) % delay_range_st;
         flag = 0; // fetch flag to cache
 
+        // wait for the other core to be ready
+        __sync_fetch_and_add(&sync, 1);
+        while (sync != 2) {
+            __sync_synchronize();
+        }
         __sync_synchronize();
         
         // some random delay
@@ -57,18 +65,24 @@ void *thread1(void *res) {
         __sync_synchronize();
 
         // prepare
-        int delay = abs(rand()) % delay_range_st;
-        uint64_t temp = data; // fetch data to cache
+        data = 0; // fetch data to cache
 
+        // wait for the other core to be ready
+        __sync_fetch_and_add(&sync, 1);
+        while (sync != 2) {
+            __sync_synchronize();
+        }
         __sync_synchronize();
         
-        // some random delay
-        for (int i = 0; i < delay; i++) {
-            asm volatile ("nop");
-        }
+        // fake pointer chasing to delay the address computation of flag
+        int temp = 0;
+        temp = *(&zero + temp);
+        temp = *(&zero + temp);
+        temp = *(&zero + temp);
+        temp = *(&zero + temp);
 
         // real test
-        uint64_t f = flag;
+        uint64_t f = *(&flag + temp);
         uint64_t d = data;
 
         count_fd[((f & 0x01ULL) << 1) | (d & 0x01ULL)]++;
@@ -81,9 +95,16 @@ void *thread1(void *res) {
     return 0;
 }
 
+void *thread2(void *p) {
+    while (true) {
+        zero = 0;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
-    if (argc != 4) {
-        fprintf(stderr, "Usage: %s TEST_NUM DELAY_RANGE_ST DELAY_RANGE_LD\n", argv[0]);
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s TEST_NUM [DELAY_RANGE_ST=10]\n", argv[0]);
         return 0;
     }
 
@@ -100,8 +121,9 @@ int main(int argc, char **argv) {
     }
 
     test_num = std::stoull(argv[1]);
-    delay_range_st = atoi(argv[2]);
-    delay_range_ld = atoi(argv[3]);
+    if (argc >= 3) {
+        delay_range_st = atoi(argv[2]);
+    }
 
     pthread_t t0;
     {
@@ -141,10 +163,31 @@ int main(int argc, char **argv) {
         }
         pthread_attr_destroy(&attr);
     }
+    pthread_t t2;
+    {
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        cpu_set_t cpu;
+        CPU_ZERO(&cpu);
+        CPU_SET(3, &cpu); // t2 - core 3
+        int r = pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpu);
+        if (r) {
+            fprintf(stderr, "fail to set affinity for t2\n");
+            exit(-1);
+        }
+        r = pthread_create(&t2, &attr, thread2, NULL);
+        if (r) {
+            fprintf(stderr, "fail to create t2\n");
+            exit(-1);
+        }
+        pthread_attr_destroy(&attr);
+    }
+
 
     for (unsigned long long i = 0; i < test_num; i++) {
         flag = 0;
         data = 0;
+        sync = 0;
         __sync_synchronize();
         start0 = 1;
         start1 = 1;
