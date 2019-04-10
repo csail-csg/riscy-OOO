@@ -1,4 +1,4 @@
-TESTS = SB
+TESTS = SB MP MP_addr
 
 BIN_DIR := bin
 DUMP_DIR := dump
@@ -10,6 +10,8 @@ PREFIX = riscv64-unknown-linux-gnu-
 
 CXX = $(PREFIX)g++
 OBJDUMP = $(PREFIX)objdump
+
+LINUX_JOBS ?= 16
 
 all: $(BINS) $(DUMPS)
 
@@ -29,6 +31,10 @@ $(BIN_DIR):
 
 $(DUMP_DIR):
 	mkdir -p $@
+
+linux:
+	$(RISCY_HOME)/tools/build-linux.py --testdir $(BIN_DIR) --jobs $(LINUX_JOBS)
+	cp $(RISCY_TOOLS)/build-pk/bbl .
 
 clean:
 	rm -rf $(BIN_DIR) $(DUMP_DIR)

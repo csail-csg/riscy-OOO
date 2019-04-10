@@ -2,23 +2,24 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <string>
+#include <stdint.h>
 
-volatile int start0 __attribute__ ((aligned (64))) = 0;
-volatile int start1 __attribute__ ((aligned (64))) = 0;
+volatile uint64_t start0 __attribute__ ((aligned (64))) = 0;
+volatile uint64_t start1 __attribute__ ((aligned (64))) = 0;
 
-volatile int res_a __attribute__ ((aligned (64))) = 0;
-volatile int res_b __attribute__ ((aligned (64))) = 0;
+volatile uint64_t flag __attribute__ ((aligned (64))) = 0;
+volatile uint64_t data __attribute__ ((aligned (64))) = 0;
 
 volatile int sync __attribute__ ((aligned (64))) = 0;
 
-volatile int a __attribute__ ((aligned (64))) = 0;
-volatile int b __attribute__ ((aligned (64))) = 0;
+volatile int zero __attribute__ ((aligned (64))) = 0;
 
 unsigned long long test_num = 0;
-int delay_range = 10; // default 10
+int delay_range_st = 10; // default 10
+unsigned long long count_fd[4] = {0, 0, 0, 0};
 
-// t0: St a = 1; Ld b = 0
-// t1: St b = 1; Ld a = 0
+// t0: St data = 1; Fence; St flag = 1
+// t1: St flag = 1; Ld data = 0
 
 void *thread0(void *p) {
     for (unsigned long long i = 0; i < test_num; i++) {
@@ -28,8 +29,8 @@ void *thread0(void *p) {
         __sync_synchronize();
 
         // prepare
-        int delay = abs(rand()) % delay_range;
-        b = 0; // fetch b to cache
+        int delay = abs(rand()) % delay_range_st;
+        flag = 0; // fetch flag to cache
 
         // wait for the other core to be ready
         __sync_fetch_and_add(&sync, 1);
@@ -44,8 +45,9 @@ void *thread0(void *p) {
         }
 
         // real test
-        a = 1;
-        res_b = b;
+        data = 1;
+        __sync_synchronize();
+        flag = 1;
 
         // signal done
         __sync_synchronize();
@@ -63,8 +65,7 @@ void *thread1(void *res) {
         __sync_synchronize();
 
         // prepare
-        int delay = abs(rand()) % delay_range;
-        a = 0; // fetch a to cache
+        data = 0; // fetch data to cache
 
         // wait for the other core to be ready
         __sync_fetch_and_add(&sync, 1);
@@ -73,14 +74,18 @@ void *thread1(void *res) {
         }
         __sync_synchronize();
         
-        // some random delay
-        for (int i = 0; i < delay; i++) {
-            asm volatile ("nop");
-        }
+        // fake pointer chasing to delay the address computation of flag
+        int temp = 0;
+        temp = *(&zero + temp);
+        temp = *(&zero + temp);
+        temp = *(&zero + temp);
+        temp = *(&zero + temp);
 
         // real test
-        b = 1;
-        res_a = a;
+        uint64_t f = *(&flag + temp);
+        uint64_t d = data;
+
+        count_fd[((f & 0x01ULL) << 1) | (d & 0x01ULL)]++;
 
         // signal done
         __sync_synchronize();
@@ -90,9 +95,16 @@ void *thread1(void *res) {
     return 0;
 }
 
+void *thread2(void *p) {
+    while (true) {
+        zero = 0;
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s TEST_NUM [DELAY_RANGE=10]\n", argv[0]);
+        fprintf(stderr, "Usage: %s TEST_NUM [DELAY_RANGE_ST=10]\n", argv[0]);
         return 0;
     }
 
@@ -110,10 +122,8 @@ int main(int argc, char **argv) {
 
     test_num = std::stoull(argv[1]);
     if (argc >= 3) {
-        delay_range = atoi(argv[2]);
+        delay_range_st = atoi(argv[2]);
     }
-
-    long long unsigned count_ab[4] = {0, 0, 0, 0};
 
     pthread_t t0;
     {
@@ -153,12 +163,30 @@ int main(int argc, char **argv) {
         }
         pthread_attr_destroy(&attr);
     }
+    pthread_t t2;
+    {
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        cpu_set_t cpu;
+        CPU_ZERO(&cpu);
+        CPU_SET(3, &cpu); // t2 - core 3
+        int r = pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpu);
+        if (r) {
+            fprintf(stderr, "fail to set affinity for t2\n");
+            exit(-1);
+        }
+        r = pthread_create(&t2, &attr, thread2, NULL);
+        if (r) {
+            fprintf(stderr, "fail to create t2\n");
+            exit(-1);
+        }
+        pthread_attr_destroy(&attr);
+    }
+
 
     for (unsigned long long i = 0; i < test_num; i++) {
-        res_a = 1;
-        res_b = 1;
-        a = 0;
-        b = 0;
+        flag = 0;
+        data = 0;
         sync = 0;
         __sync_synchronize();
         start0 = 1;
@@ -168,14 +196,12 @@ int main(int argc, char **argv) {
             __sync_synchronize();
         }
         __sync_synchronize();
-
-        count_ab[((res_a & 0x01) << 1) | (res_b & 0x01)]++;
     }
 
     printf("test num %llu\n", test_num);
-    printf("a 0 b 0: %llu\n", count_ab[0]);
-    printf("a 0 b 1: %llu\n", count_ab[1]);
-    printf("a 1 b 0: %llu\n", count_ab[2]);
-    printf("a 1 b 1: %llu\n", count_ab[3]);
+    printf("f 0 d 0: %llu \n", count_fd[0]);
+    printf("f 0 d 1: %llu \n", count_fd[1]);
+    printf("f 1 d 0: %llu \n", count_fd[2]);
+    printf("f 1 d 1: %llu \n", count_fd[3]);
     return 0;
 }
