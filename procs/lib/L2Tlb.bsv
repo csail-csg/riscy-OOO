@@ -594,7 +594,7 @@ module mkL2Tlb(L2Tlb::L2Tlb);
             // access falls into protected address range (that I don't have permission) -> fault
             pageFault("SANCTUM protected address range");
         end
-        else if((getAddrRegions(newPTBase, leafPTE, walkLevel) & mrbm) == 0) begin
+        else if((getAddrRegions(newPTBase, leafPTE, walkLevel) & mrbm) != (getAddrRegions(newPTBase, leafPTE, walkLevel))) begin
             // access falls outiside regions belong to me -> fault
             pageFault("SANCTUM protected address range");
         end
