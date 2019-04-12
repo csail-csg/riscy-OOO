@@ -112,7 +112,7 @@ function Addr getAddrRegions(Addr addr, Bool isLeaf, PageWalkLevel level) provis
 );
     Addr res = (1 << (addr[30:25]));
     if (isLeaf && (level == 2)) begin // giga pages cross multiple regions
-        res = ((addr[30] == 1'b1) ? 64'hFFFFFFFF00000000 : 64'h00000000FFFFFFFF); // Assume 64 x 32-MB regions
+        res = ((addr[31] == 1'b1) ? 64'hFFFFFFFF00000000 : 64'h00000000FFFFFFFF); // Assume 64 x 32-MB regions
     end
     return res;
 endfunction
