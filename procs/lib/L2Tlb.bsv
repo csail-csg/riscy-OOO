@@ -452,7 +452,8 @@ module mkL2Tlb(L2Tlb::L2Tlb);
         PageWalkLevel level = resp.startLevel;
         Ppn rootPPN = vm_info.basePPN; // root of page table
 `ifdef SECURITY
-        Bool isEnclave = (zeroExtend({cRq.vpn, PageOffset'0}) & vm_info.sanctum_evmask) == vm_info.sanctum_evbase;
+        PageOffset rightZeroes = 0;
+        Bool isEnclave = (zeroExtend({cRq.vpn, rightZeroes}) & vm_info.sanctum_evmask) == vm_info.sanctum_evbase;
         if(isEnclave) begin
             rootPPN = vm_info.sanctum_ebasePPN; // enclave has its own root of page table
         end
