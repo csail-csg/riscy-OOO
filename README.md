@@ -348,7 +348,7 @@ Here we list some importand directories:
 However, both processors are no longer maintained, so please ignore these two folders.
 
 ## VC707 FPGA
-** We have not tested VC707 FPGA for a while, so it is recommonded to use AWS FPGAs.**
+**We have not tested VC707 FPGA for a while, so it is recommonded to use AWS FPGAs.**
 
 It is also possible to run the design on a VC707 FPGA, but the VC707 FPGA can only hold 1 core.
 We connect a VC707 FPGA to a Ubuntu machine through PCIe.
