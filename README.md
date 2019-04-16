@@ -19,6 +19,8 @@ How to get started with this repository (should work on both Ubuntu 14.04 and 16
         $ export BLUESPECDIR=$BSPATH/lib
         $ export PATH=$BSPATH/bin:$PATH
         $ export LM_LICENSE_FILE=<your bluespec license>
+        
+    The Bluespec compiler is not an open-source software, but academia users can get free licences by contacting Bluespec, Inc. (https://bluespec.com/).
 
     The Bluespec compiler uses the shared library `libgmp.so.3`, but Ubuntu does not provide this version of the library. To fix this, we can just creat a link for `libgmp.so.10`:
     
@@ -58,6 +60,8 @@ The version of Verilator in the Ubuntu package lacks certain features, so we use
         $ sudo apt-get install verilator connectal
 
 - Copy DDR3 IP from Bluespec installation (environment variable `$BLUESPECDIR` should have been set).
+This step is needed only if we are going to run the processor on VC707 FPGA.
+Currently we recommond using AWS FPGA which does not require this step.
 
         $ cd $RISCY_HOME/fpgautils/xilinx/vc707/ddr3_1GB_bluespec
         $ ./copy_verilog.sh
@@ -113,7 +117,7 @@ If CORE_NUM is not specified, we build for 1 core by default.
         $ cd $RISCY_HOME/procs/RV64G_OOO
         $ make build.verilator CORE_NUM=$N -j20
 
-    The build result will be an executable `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/verilator/bin/ubuntu.exe`.
+    The build result will be an executable `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.l1_cache_lru.check_deadlock/verilator/bin/ubuntu.exe`.
     Strings after `core_$N`in the folder name reflects the processor configurations: core size is `SMALL`, cache size is `LARGE`, and the memory model is a weak model.
     Refer to the [Other build configurations](#other-build-configurations) section for the meaning of these configurations.
 
@@ -161,13 +165,13 @@ Here are the steps to setup C4.
 
 - Get the AWS HDK repo (https://github.com/aws/aws-fpga).
 It should be put at `~/aws-fpga`.
-We are using commit `111191a7b4cffa6f135671f1f1863ff2567b1861` of the HDK repo (shell version 1.4.5).
-Here is our way of setup the AWS HDK repo:
+We are using shell version 1.4.5.
+We have created a fork for the HDK repo, so we can directly clone from the fork:
 
         $ cd ~
-        $ git clone https://github.com/aws/aws-fpga.git
+        $ git clone https://github.com/csail-csg/aws-fpga.git
         $ cd aws-fpga
-        $ git checkout 111191a7b4cffa6f135671f1f1863ff2567b1861 -b riscy-OOO
+        $ git checkout riscy-OOO
 
 - Make sure that Xilinx synthesis tool `vivado` is in PATH.
 The vivado version we are using on AWS is `v2018.2_AR71275_op`.
@@ -194,10 +198,10 @@ We need to pass in the path for device tree compiler to the makefile to help lat
 
         $ cd $RISCY_HOME/procs/RV64G_OOO
         $ make gen.awsf1 CORE_NUM=$N DTC_PATH=/usr/bin/dtc
-        $ cd ../build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/awsf1
+        $ cd ../build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.l1_cache_lru.check_deadlock/awsf1
         $ make bits -j16
 
-    After the build finishes, we can find out the IDs of the FPGA image in `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/awsf1/build/scripts/fpga_image_ids.json`, i.e., FPGA image ID `afi-xxx` and FPGA image global ID `agfi-yyy`.
+    After the build finishes, we can find out the IDs of the FPGA image in `$RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.l1_cache_lru.check_deadlock/awsf1/build/scripts/fpga_image_ids.json`, i.e., FPGA image ID `afi-xxx` and FPGA image global ID `agfi-yyy`.
 
 - Wait for the FPGA image to be available.
 We run the following command on C4 to monitor the state of the FPGA image.
@@ -224,12 +228,12 @@ Here are the steps to setup F1:
 
 - Setup shared file system with F1 (e.g., using EFS).
 
-- Get the AWS HDK repo (https://github.com/aws/aws-fpga), and install SDK.
+- Get the AWS HDK repo and install SDK.
 
         $ cd ~
-        $ git clone https://github.com/aws/aws-fpga.git
+        $ git clone https://github.com/csail-csg/aws-fpga.git
         $ cd aws-fpga
-        $ git checkout 111191a7b4cffa6f135671f1f1863ff2567b1861 -b riscy-OOO
+        $ git checkout riscy-OOO
         $ source sdk_setup.sh
 
 - Build RISC-V front-end server.
@@ -246,7 +250,7 @@ Here are the steps to setup F1:
 ### Run on the FPGA of F1
 - Finish compilation of software part.
 
-        $ cd $RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/awsf1
+        $ cd $RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.l1_cache_lru.check_deadlock/awsf1
         $ make exe
  
 - Program FPGA.
@@ -257,7 +261,7 @@ Here are the steps to setup F1:
 We need to copy the bbl (e.g., `tools/RV64G/build-pk/bbl`) and boot rom (e.g., `procs/rom/out/rom_core_$N`) to F1.
 The following command boots Linux with 2GB memory.
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.check_deadlock/awsf1/bin/ubuntu.exe --core-num $N --mem-size 2048 --ignore-user-stucks 1000000 --rom /path/to/rom_core_$N --elf /path/to/bbl
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_$N.core_SMALL.cache_LARGE.weak.l1_cache_lru.check_deadlock/awsf1/bin/ubuntu.exe --core-num $N --mem-size 2048 --ignore-user-stucks 1000000 --rom /path/to/rom_core_$N --elf /path/to/bbl
     
     The processor detects potential deadlock by checking if a user level instruction has been executed during a period of time.
     This will output a lot of "deadlock" warnings when the processor is booting linux or idling in shell.
@@ -273,7 +277,7 @@ The following command boots Linux with 2GB memory.
 For example, the makefile can be invoked in the following way to build for C4:
 
     $ cd $RISCY_HOME/procs/RV64G_OOO
-    $ make gen.awsf1 CORE_NUM=$N DTC_PATH=/usr/bin/dtc CORE_SIZE=<SMALL/MEDIUM/LARGE/...> CACHE_SIZE=<SMALL/MEDIUM/LARGE/...> TSO_MM=<true/false> CHECK_DEADLOCK=<true/false> RENAME_DEBUG=<true/false> USER_CLK_PERIOD=<clock period in ns>
+    $ make gen.awsf1 CORE_NUM=$N DTC_PATH=/usr/bin/dtc CORE_SIZE=<TINY/SMALL/MEDIUM/...> CACHE_SIZE=<LARGE/MC_2MB/...> TSO_MM=<true/false> STORE_PREFETCH=<true/false> CHECK_DEADLOCK=<true/false> USER_CLK_PERIOD=<clock period in ns>
 
 Below are the expanations for these options.
 It should be noted that these options can also be applied when building for simulation (i.e., for `make build.verilator`).
@@ -290,13 +294,12 @@ Default value is `LARGE`.
 If set to `true`, the processor implements TSO; otherwise, the processor implements a weak memroy model *WMM* (https://doi.org/10.1109/PACT.2017.29).
 Default is `false`.
 
+- `STORE_PREFETCH`: enable prefetch of exlusive cache permissions for store instructions.
+This can be used to improve the performance of TSO (i.e., in case of `TSO_MM=true`).
+Default value is `false`.
+
 - `CHECK_DEADLOCK`: enable or disable the check on potential deadlock.
 If set to `true`, the processor sends out a message to host software in case an instruction has been stuck at the ROB head for too long or a memory access has been stuck at cache MSHR for too long.
-Otherwise, no such check will be performed.
-Default is `true`.
-
-- `RENAME_DEBUG`: enable or disable checks on register renaming.
-If set to `true`, the commit stage of the processor will perform simple checks on the register renaming of the committing instruction, and sends a message to host software if the checks fail.
 Otherwise, no such check will be performed.
 Default is `true`.
 
@@ -305,15 +308,13 @@ The default value depends on the `CORE_SIZE` configuration.
 It is recommended to make the clock period a multple of 8, because the AWS FPGA shell clock period is 8ns, and an async reset signal in our design is derived from the FPGA shell reset.
 Doing so can prevent Xilinx Vivado from overconstraining the timing related to this async reset.
 
-As an example, when we build the 4-core TSO multiprocessor on AWS, we invoke the makefile in the following way (we suggest to use c4.8xlarge to build this 4-core processor because c4.4xlarge may run out of memory):
+As an example, when we build the 4-core TSO multiprocessor on AWS, we invoke the makefile in the following way:
 
     $ cd $RISCY_HOME/procs/RV64G_OOO
-    $ make gen.awsf1 CORE_NUM=4 DTC_PATH=/usr/bin/dtc CORE_SIZE=TINY CACHE_SIZE=MC TSO_MM=true CHECK_DEADLOCK=false RENAME_DEBUG=false USER_CLK_PERIOD=40
+    $ make gen.awsf1 CORE_NUM=4 DTC_PATH=/usr/bin/dtc CORE_SIZE=TINY CACHE_SIZE=MC_2MB TSO_MM=true STORE_PREFETCH=true USER_CLK_PERIOD=32
 
-Since 4 OOO cores will make the FPGA pretty congested, we use the smallest core and cache configurations (`TINY` and `MC`, respectively), and we turn off the checks for deadlock and renaming.
-We also lower down the clock frequency to 25MHz (i.e., 40ns period).
-If the synthesis fails because of not enough resources, we can try to tweak the synthesis strategy in `'aws-fpga/hdk/common/shell_v04261818/build/scripts/strategy_DEFAULT.tcl`.
-For example, we can turn on `phys_opt` (i.e., `set phys_opt = 1` instead of `=0`).
+Since 4 OOO cores will make the FPGA pretty congested, we use the smallest core and cache configurations (`TINY` and `MC_2MB`, respectively).
+We also increase the clock period to 32ns.
 
 ## Performance Counter
 To collect performance data, we have deployed many performance counters in the processor design, and these counters can be queried by host software (see `$RISCY_HOME/procs/cpp/PerfStats.h`).
@@ -337,13 +338,18 @@ Here we list some importand directories:
 
 - `$RISCY_HOME/coherence/src`: contains the BSV sources for the coherent caches.
 
-- `RISCY_HOME/fpgautils`: contains files to generate Xilinx FPGA IP blocks (e.g., floating-point units) and BSV wrappers.
+- `$RISCY_HOME/fpgautils`: contains files to generate Xilinx FPGA IP blocks (e.g., floating-point units) and BSV wrappers.
 
-- `RISCY_HOME/connectal`: contains the Connectal repo, which is the framework we are using for software-FPGA communication.
+- `$RISCY_HOME/connectal`: contains the Connectal repo, which is the framework we are using for software-FPGA communication.
 
-- `RISCY_HOME/tools`: contains the RISC-V toolchain, the Linux kernel, and some prebuilt Linux images.
+- `$RISCY_HOME/tools`: contains the RISC-V toolchain, the Linux kernel, and some prebuilt Linux images.
+
+**Obsolete directories**: `$RISCY_HOME/procs/RV64G_MultiCycle` and `$RISCY_HOME/procs/RV64G_InOrder` contain multi-cycle and in-order processors derived from the OOO processor, respectively.
+However, both processors are no longer maintained, so please ignore these two folders.
 
 ## VC707 FPGA
+** We have not tested VC707 FPGA for a while, so it is recommonded to use AWS FPGAs.**
+
 It is also possible to run the design on a VC707 FPGA, but the VC707 FPGA can only hold 1 core.
 We connect a VC707 FPGA to a Ubuntu machine through PCIe.
 The Ubuntu machine should be setup following the steps in the [Getting Started on a Local Ubuntu Machine](#getting-started-on-a-local-ubuntu-machine) section.
@@ -361,13 +367,13 @@ VC707 shoud only be able to hold 1 core.
         $ cd $RISCY_HOME/procs/RV64G_OOO
         $ make build.vc707 CORE_NUM=1 USER_CLK_PERIOD=40 # use a slower clock
 
-    The build result will be in `$RISCY_HOME/procs/build/RV64G_OOO.core_1.core_SMALL.cache_LARGE.weak.deadlock_check/vc707/bin`.
+    The build result will be in `$RISCY_HOME/procs/build/RV64G_OOO.core_1.core_SMALL.cache_LARGE.weak.l1_cache_lru.deadlock_check/vc707/bin`.
     The other build options can be passed to the makefile as in AWS.
     
 - Boot Linux on FPGA.
 Since VC707 only has 1GB DRAM, we boot Linux with 1GB memory.
 
-        $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.core_SMALL.cache_LARGE.weak.check_deadlock/vc707/bin/ubuntu.exe --core-num 1 --mem-size 1024  --ignore-user-stucks 1000000 --rom /path/to/rom_core_$N --elf /path/to/bbl
+        $ $RISCY_HOME/procs/build/RV64G_OOO.core_1.core_SMALL.cache_LARGE.weak.l1_cache_lru.check_deadlock/vc707/bin/ubuntu.exe --core-num 1 --mem-size 1024  --ignore-user-stucks 1000000 --rom /path/to/rom_core_$N --elf /path/to/bbl
 
     The above command will automaticall program the FPGA.
     If it is the first time to program the VC707 FPGA, the program may fail to run.
