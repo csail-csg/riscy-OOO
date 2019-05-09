@@ -170,7 +170,7 @@ typedef struct {
     // verified. This is only meaningful when olderSt is valid.
     Bool             olderStVerified;
     // The store that the Ld reads from. If invalid, then the load reads from
-    // memory. This only meaning when done = True.
+    // memory. This only meaning when executing = True.
     Maybe#(StQTag)   readFrom;
 
     // ===================
