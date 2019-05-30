@@ -44,8 +44,6 @@ import LatencyTimer::*;
 
 // for SV39 only
 
-// curretly L2 TLB is just a blocking page walker
-
 // interface with memory (LLC)
 typedef L2TlbReqIdx TlbMemReqId;
 
@@ -190,8 +188,9 @@ module mkL2Tlb(L2Tlb::L2Tlb);
     Reg#(VMInfo) vm_info_D <- mkReg(defaultValue);
 
     // Memory Queues for page table walks
+    // Need to have enough resp buffering to prevent clogging the memory system
     Fifo#(2, TlbMemReq) memReqQ <- mkCFFifo;
-    Fifo#(2, TlbLdResp) respLdQ <- mkCFFifo;
+    Fifo#(L2TlbReqNum, TlbLdResp) respLdQ <- mkCFFifo;
     // When a mem resp comes, we first process the initiating req, then process
     // other reqs that in WaitPeer.
     Reg#(Maybe#(L2TlbReqIdx)) respForOtherReq <- mkReg(Invalid);
