@@ -1,6 +1,9 @@
-# RISC-V Out-of-Order Processors
+# RiscyOO: RISC-V Out-of-Order Processors
 
-This repository contains an OOO RISC-V processor written in Bluespec System Verilog (BSV).
+This repository contains the RiscyOO processor written in Bluespec System Verilog (BSV).
+RiscyOO implements the RISC-V 64-bit instruction set with the IMAFD extensions, i.e., RV64G.
+It is a out-of-order superscalar cache-coherent multiprocessor which can boot multicore Linux and AWS F1 FPGA.
+The design document for the processor can be found at https://github.com/csail-csg/RiscyOO_design_doc.
 
 ## Getting Started on a Local Ubuntu Machine
 
@@ -96,10 +99,11 @@ We can build the image as follows:
     (We can only fit 4 OOO cores on FPGA.)
     Change `$RISCY_HOME/tools/configs/linux_config` to support more CPUs (the upper bound should be 32).
     
-    We have put some prebuilt Linux images (bbls) containing the PARSEC benchmarks in `tools/images`.
+    We have put some prebuilt Linux images (bbls) containing the [PARSEC](https://parsec.cs.princeton.edu/) benchmarks in `tools/images`.
     The sources files of PARSEC benchmarks that we are using can be found at https://github.com/csail-csg/parsec.
-    Unfortunately, we cannot release the prebuilt images for SPEC benchmarks due to license issues.
-    
+    We have also cross-compiled the [GAP](http://gap.cs.berkeley.edu/benchmark.html) benchmarks, which can be found at https://github.com/csail-csg/gapbs.
+    Unfortunately, we cannot release the prebuilt images or the source code of SPEC benchmarks due to license issues.
+        
 - Build boot rom.
 The processor uses a small boot rom to load the Linux image to its memory.
 We can build the boot rom as follows:
