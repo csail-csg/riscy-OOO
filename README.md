@@ -331,6 +331,13 @@ This is a better way than using `ctrl-c` to exit Linux, because using `ctrl-c` w
 `$RISCY_HOME/riscv_custom/riscv_cumstom.h` contains C macros to set these two CSRs, and `$RISCY_HOME/riscv_custom/terminate` contains a simple C program to shutdown the processor using the `terminate` CSR.
 This program is always included into the Linux image built using our script (see the [Getting Started on a Local Ubuntu Machine](#getting-started-on-a-local-ubuntu-machine) section).
 
+## Known Issues
+
+- When booting a BBL of a large size on a multicore implementation, the processor may output false deadlock warnings while the BBL is tranferred from the x86 host to the FPGA.
+These warnings are because of the unfair arbitration between MMIO requests from different cores.
+Core 0 keeps sending MMIO requests to check if the transfer of BBL is done, and this prevents other cores from using MMIO requests to fetch instructions from the boot rom.
+These false deadlock warnings happens only during the transfer of BBL, and do not affect functionality or performance measurement.
+
 ## Directory Structure
 Here we list some importand directories:
 
