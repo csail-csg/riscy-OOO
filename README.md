@@ -383,6 +383,8 @@ Since VC707 only has 1GB DRAM, we boot Linux with 1GB memory.
     If it is the first time to program the VC707 FPGA, the program may fail to run.
     Just reboot the machine and re-run the above command.
 
-## Publication
+## Publications
 
-Sizhuo Zhang, Andrew Wright, Thomas Bourgeat, Arvind. "Composable Building Blocks to Open up Processor Design." In the 51st IEEE/ACM International Symposium on Microarchitecture (MICRO), October, 2018.
+- Sizhuo Zhang, Andrew Wright, Thomas Bourgeat, Arvind. "Composable Building Blocks to Open up Processor Design." In IEEE Micro, Volume 39, Issue 3, May-June 2019.
+
+- Sizhuo Zhang, Andrew Wright, Thomas Bourgeat, Arvind. "Composable Building Blocks to Open up Processor Design." In the 51st IEEE/ACM International Symposium on Microarchitecture (MICRO), October, 2018.
