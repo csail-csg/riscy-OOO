@@ -954,7 +954,7 @@ module mkRenameStage#(RenameInput inIfc)(RenameStage);
             SupRenameCnt: supRenameCnt;
 `ifdef SECURITY
             SpecNoneCycles: specNoneCycles;
-            SpecNonMemCycles: specNoneCycles;
+            SpecNonMemCycles: specNonMemCycles;
 `endif
 `endif
             default: 0;
